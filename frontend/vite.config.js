@@ -8,7 +8,7 @@ const parseAllowedHosts = () => {
     : ['localhost', '127.0.0.1']
 }
 
-const productionBackend = 'https://testiie.indrainstitute.com'
+const productionBackend = 'https://iiepulse.indrainstitute.com'
 
 export default defineConfig({
   plugins: [react()],

@@ -1,6 +1,6 @@
 import re
 
-from django.db.models import Q
+from django.db.models import Q, Count
 
 from .models import Batches, CompletedStudent, Students
 
@@ -109,16 +109,33 @@ def completed_students_for_staff(staff):
 
 
 def canonical_branch_count_rows(qs, field='branch'):
+    rows = (
+        qs.exclude(**{f'{field}__isnull': True})
+        .exclude(**{field: ''})
+        .values(field)
+        .annotate(count=Count('pk'))
+        .order_by(field)
+    )
+
     counts = {}
-    for value in qs.exclude(**{f'{field}__isnull': True}).exclude(**{field: ''}).values_list(field, flat=True):
-        key = canonical_branch(value)
+
+    for row in rows:
+        key = canonical_branch(row[field])
+
         if key:
-            counts[key] = counts.get(key, 0) + 1
+            counts[key] = counts.get(key, 0) + row['count']
+
     branch_order = ['100ft', 'hopes', 'kuniyamuthur']
+
     return [
         {'branch': branch, 'count': count}
         for branch, count in sorted(
             counts.items(),
-            key=lambda item: (branch_order.index(item[0]) if item[0] in branch_order else len(branch_order), item[0])
+            key=lambda item: (
+                branch_order.index(item[0])
+                if item[0] in branch_order
+                else len(branch_order),
+                item[0]
+            )
         )
     ]

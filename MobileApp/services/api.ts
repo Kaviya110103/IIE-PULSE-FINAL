@@ -2,8 +2,8 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
 import { Platform } from "react-native";
 
-const PRODUCTION_API = "https://testiie.indrainstitute.com/api/";
-const LOCAL_LAN_API = "https://testiie.indrainstitute.com/api/";
+const PRODUCTION_API = "https://iiepulse.indrainstitute.com/api/";
+const LOCAL_LAN_API = "https://iiepulse.indrainstitute.com/api/";
 const DEFAULT_API = Platform.OS === "web" ? PRODUCTION_API : LOCAL_LAN_API;
 
 function normalizeApiBaseUrl(url: string) {
