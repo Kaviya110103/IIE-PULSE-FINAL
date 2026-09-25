@@ -820,7 +820,7 @@ function HomeContent({
               <ThemedText style={styles.flashText} numberOfLines={2}>
                 {headline?.message ||
                   newsError ||
-                  "Admin posted news will appear here."}
+                  "Latest technology news will appear here."}
               </ThemedText>
             </Animated.View>
             </Pressable>
@@ -1103,7 +1103,7 @@ function NewsModule({
             <View style={styles.newsSummaryCopy}>
               <ThemedText style={styles.newsSummaryTitle}>Latest Updates</ThemedText>
               <ThemedText style={styles.newsSummaryText}>
-                {sortedNews.length} announcement{sortedNews.length === 1 ? "" : "s"} from IIE
+                {sortedNews.length} live technology update{sortedNews.length === 1 ? "" : "s"}
               </ThemedText>
             </View>
           </View>
@@ -1119,7 +1119,7 @@ function NewsModule({
                   <Image source={{ uri: item.image }} style={styles.newsImage} />
                 ) : (
                   <View style={styles.newsImageFallback}>
-                    <Ionicons name="megaphone-outline" size={24} color="#5523D2" />
+                    <Ionicons name="newspaper-outline" size={24} color="#5523D2" />
                   </View>
                 )}
                 <View style={styles.newsTitleWrap}>
@@ -1136,25 +1136,47 @@ function NewsModule({
           ))}
         </View>
       ) : (
-        <EmptyRow text="No news posted yet." />
+        <EmptyRow text="No technology news available yet." />
       )}
     </ModulePanel>
   );
 }
 
 function NewsDetailModule({ item }: { item: NewsItem }) {
+  const sourceLabel = item.source || "Google News";
+  const articleUrl = item.originalUrl || item.original_url;
+  const publishedAt = item.publishedDate || item.published_at || item.created_at;
+
   return (
     <ModulePanel title="News Details" icon="newspaper-outline">
       <View style={styles.newsDetailCard}>
-        {item.image ? (
-          <Pressable onPress={() => openMedia(item.image)}>
-            <Image source={{ uri: item.image }} style={styles.newsDetailImage} />
-          </Pressable>
-        ) : null}
+        <View style={styles.newsDetailHero}>
+          {item.image ? (
+            <Pressable onPress={() => openMedia(item.image)} style={styles.newsDetailImageWrap}>
+              <Image source={{ uri: item.image }} style={styles.newsDetailImage} />
+            </Pressable>
+          ) : (
+            <View style={styles.newsDetailHeroFallback}>
+              <Ionicons name="newspaper-outline" size={38} color="#FFFFFF" />
+            </View>
+          )}
+          <View style={styles.newsDetailHeroOverlay}>
+            <View style={styles.newsDetailCategoryPill}>
+              <Ionicons name="flash-outline" size={13} color="#FFFFFF" />
+              <ThemedText style={styles.newsDetailCategoryText}>Technology</ThemedText>
+            </View>
+          </View>
+        </View>
 
-        <View style={styles.newsDetailDatePill}>
-          <Ionicons name="time-outline" size={14} color="#5523D2" />
-          <ThemedText style={styles.newsDetailDate}>{formatNewsDate(item.created_at)}</ThemedText>
+        <View style={styles.newsDetailMetaRow}>
+          <View style={styles.newsDetailSourcePill}>
+            <Ionicons name="radio-outline" size={14} color="#5523D2" />
+            <ThemedText style={styles.newsDetailSource} numberOfLines={1}>{sourceLabel}</ThemedText>
+          </View>
+          <View style={styles.newsDetailDatePill}>
+            <Ionicons name="time-outline" size={14} color="#6B7280" />
+            <ThemedText style={styles.newsDetailDate}>{formatNewsDate(publishedAt)}</ThemedText>
+          </View>
         </View>
 
         <ThemedText style={styles.newsDetailTitle}>{item.title}</ThemedText>
@@ -1163,12 +1185,20 @@ function NewsDetailModule({ item }: { item: NewsItem }) {
           {renderLinkedMessage(item.message, styles.newsDetailMessage, styles.messageLink)}
         </View>
 
-        {item.image ? (
-          <Pressable style={styles.newsDetailAttachment} onPress={() => openMedia(item.image)}>
-            <Ionicons name="image-outline" size={18} color="#FFFFFF" />
-            <ThemedText style={styles.newsDetailAttachmentText}>Open attachment</ThemedText>
-          </Pressable>
-        ) : null}
+        <View style={styles.newsDetailActionBar}>
+          {item.image ? (
+            <Pressable style={styles.newsDetailSecondaryAction} onPress={() => openMedia(item.image)}>
+              <Ionicons name="image-outline" size={18} color="#5523D2" />
+              <ThemedText style={styles.newsDetailSecondaryText}>Image</ThemedText>
+            </Pressable>
+          ) : null}
+          {articleUrl ? (
+            <Pressable style={styles.newsDetailPrimaryAction} onPress={() => Linking.openURL(articleUrl)}>
+              <ThemedText style={styles.newsDetailPrimaryText}>Read Article</ThemedText>
+              <Ionicons name="open-outline" size={18} color="#FFFFFF" />
+            </Pressable>
+          ) : null}
+        </View>
       </View>
     </ModulePanel>
   );
@@ -3382,58 +3412,119 @@ const styles = StyleSheet.create({
   },
   newsDetailCard: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 18,
-    padding: 16,
+    borderRadius: 24,
+    padding: 12,
     borderWidth: 1,
-    borderColor: "#E9D5FF",
-    shadowColor: "#5523D2",
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 3,
+    borderColor: "#E5E7EB",
+    shadowColor: "#111827",
+    shadowOpacity: 0.12,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 6,
+  },
+  newsDetailHero: {
+    minHeight: 214,
+    borderRadius: 22,
+    overflow: "hidden",
+    backgroundColor: "#1E1635",
+    marginBottom: 14,
+  },
+  newsDetailImageWrap: {
+    width: "100%",
+    height: 214,
   },
   newsDetailImage: {
     width: "100%",
-    height: 190,
-    borderRadius: 16,
+    height: "100%",
     backgroundColor: "#EDE9FE",
-    marginBottom: 14,
   },
-  newsDetailDatePill: {
-    alignSelf: "flex-start",
+  newsDetailHeroFallback: {
+    width: "100%",
+    height: 214,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#5523D2",
+  },
+  newsDetailHeroOverlay: {
+    position: "absolute",
+    left: 14,
+    right: 14,
+    bottom: 14,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  newsDetailCategoryPill: {
     minHeight: 32,
     borderRadius: 16,
-    backgroundColor: "#F5F3FF",
+    paddingHorizontal: 12,
+    backgroundColor: "rgba(17, 24, 39, 0.78)",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  newsDetailCategoryText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  newsDetailMetaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 8,
+    marginHorizontal: 4,
+    marginBottom: 12,
+  },
+  newsDetailSourcePill: {
+    maxWidth: "62%",
+    minHeight: 34,
+    borderRadius: 17,
+    backgroundColor: "#F4F0FF",
     paddingHorizontal: 12,
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    marginBottom: 12,
+  },
+  newsDetailSource: {
+    color: "#5523D2",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  newsDetailDatePill: {
+    minHeight: 34,
+    borderRadius: 17,
+    backgroundColor: "#F3F4F6",
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
   },
   newsDetailDate: {
-    color: "#5523D2",
+    color: "#6B7280",
     fontSize: 12,
     fontWeight: "900",
   },
   newsDetailTitle: {
     color: "#111827",
-    fontSize: 23,
-    lineHeight: 30,
+    fontSize: 24,
+    lineHeight: 32,
     fontWeight: "900",
+    marginHorizontal: 4,
   },
   newsDetailMessageBox: {
-    borderRadius: 16,
-    backgroundColor: "#FBF9FF",
+    borderRadius: 20,
+    backgroundColor: "#FAFAFA",
     borderWidth: 1,
-    borderColor: "#E9D5FF",
-    padding: 14,
-    marginTop: 14,
+    borderColor: "#E5E7EB",
+    padding: 16,
+    marginTop: 16,
   },
   newsDetailMessage: {
     color: "#374151",
-    fontSize: 14,
-    lineHeight: 23,
-    fontWeight: "700",
+    fontSize: 15,
+    lineHeight: 25,
+    fontWeight: "600",
   },
   messageLink: {
     color: "#5523D2",
@@ -3442,18 +3533,41 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     textDecorationLine: "underline",
   },
-  newsDetailAttachment: {
-    minHeight: 46,
-    borderRadius: 14,
+  newsDetailActionBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 16,
+  },
+  newsDetailPrimaryAction: {
+    flex: 1,
+    minHeight: 50,
+    borderRadius: 18,
     backgroundColor: "#5523D2",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-    marginTop: 14,
   },
-  newsDetailAttachmentText: {
+  newsDetailPrimaryText: {
     color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  newsDetailSecondaryAction: {
+    minWidth: 96,
+    minHeight: 50,
+    borderRadius: 18,
+    backgroundColor: "#F4F0FF",
+    borderWidth: 1,
+    borderColor: "#E9D5FF",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+  },
+  newsDetailSecondaryText: {
+    color: "#5523D2",
     fontSize: 13,
     fontWeight: "900",
   },

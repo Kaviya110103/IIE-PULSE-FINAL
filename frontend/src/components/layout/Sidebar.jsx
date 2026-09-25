@@ -269,6 +269,7 @@ function StudentNav() {
       <NavItem to="/student/announcements" icon="fa-bullhorn" label="Announcements" />
       <NavItem to="/student/attendance" icon="fa-user-check" label="Attendance" />
       <NavItem to="/student/batches" icon="fa-layer-group" label="My Batches" />
+      <NavItem to="/student/challenge" icon="fa-bolt" label="15-Day Challenge" />
       <NavGroup icon="fa-flask" label="Tests & Quizzes">
         <SubLink to="/student/tests" label="Upcoming Tests" />
         <SubLink to="/student/quiz" label="Excel Quizzes" />

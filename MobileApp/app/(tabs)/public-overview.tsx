@@ -18,6 +18,7 @@ import api from "@/services/api";
 
 const PUBLIC_PRACTICE_RESULTS_KEY = "public_practice_results";
 const googleFormUrl = "https://forms.gle/nKXHiEnnZHZeegig7";
+const OVERVIEW_STALE_MS = 60_000;
 
 type PracticeQuiz = {
   id: number;
@@ -64,13 +65,17 @@ export default function PublicOverview() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [displayName, setDisplayName] = useState("Learner");
-  const [username, setUsername] = useState("public");
   const [quizzes, setQuizzes] = useState<PracticeQuiz[]>([]);
   const [results, setResults] = useState<PublicPracticeResult[]>([]);
   const [errorMsg, setErrorMsg] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [lastLoadedAt, setLastLoadedAt] = useState(0);
 
-  const loadOverview = async () => {
+  const loadOverview = useCallback(async (force = false) => {
+    if (!force && lastLoadedAt && Date.now() - lastLoadedAt < OVERVIEW_STALE_MS) {
+      return;
+    }
+
     try {
       setErrorMsg("");
       const token = await AsyncStorage.getItem("access_token");
@@ -82,7 +87,6 @@ export default function PublicOverview() {
       const sessionRaw = await AsyncStorage.getItem("guest_session");
       const session = sessionRaw ? JSON.parse(sessionRaw) : {};
       const sessionUsername = session?.username || "public";
-      setUsername(sessionUsername);
       setDisplayName(session?.name || session?.username || "Learner");
 
       const storedRaw = await AsyncStorage.getItem(PUBLIC_PRACTICE_RESULTS_KEY);
@@ -101,18 +105,19 @@ export default function PublicOverview() {
         setQuizzes([]);
         setErrorMsg(error?.response?.data?.error || "Practice tests not loaded.");
       }
+      setLastLoadedAt(Date.now());
     } catch (error: any) {
       setErrorMsg(error?.message || "Could not load overview.");
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [lastLoadedAt, router]);
 
   useFocusEffect(
     useCallback(() => {
       loadOverview();
-    }, [])
+    }, [loadOverview])
   );
 
   const stats = useMemo(() => {
@@ -134,7 +139,7 @@ export default function PublicOverview() {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadOverview();
+    await loadOverview(true);
   };
 
   const showRegisterPrompt = () => {
@@ -454,6 +459,7 @@ const styles = StyleSheet.create({
     borderRadius: 26,
     backgroundColor: "#5523D2",
     padding: 18,
+    overflow: "hidden",
     shadowColor: "#5523D2",
     shadowOpacity: 0.3,
     shadowRadius: 16,
@@ -580,12 +586,12 @@ const styles = StyleSheet.create({
   statsGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    justifyContent: "space-between",
     gap: 10,
     marginTop: 14,
   },
   statCard: {
-    width: "48%",
+    flexBasis: "48%",
+    flexGrow: 1,
     minHeight: 122,
     borderRadius: 20,
     backgroundColor: "#FFFFFF",

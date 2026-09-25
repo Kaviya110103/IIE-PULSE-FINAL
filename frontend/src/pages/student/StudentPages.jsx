@@ -245,6 +245,535 @@ export function StudentStyles() {
         font-weight: 500;
       }
 
+      .student-live-news-card {
+        position: relative;
+        overflow: hidden;
+        border: 1px solid rgba(46,196,182,.16);
+        background:
+          radial-gradient(circle at 12% 0%, rgba(244,169,64,.12), transparent 24%),
+          radial-gradient(circle at 88% 8%, rgba(46,196,182,.18), transparent 28%),
+          linear-gradient(135deg, rgba(15,27,45,.98), rgba(24,43,68,.96));
+        color: #fff;
+      }
+      .student-live-news-card::before {
+        content: '';
+        position: absolute;
+        inset: -45% auto auto -18%;
+        width: 42%;
+        height: 210%;
+        transform: rotate(18deg);
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,.12), transparent);
+        animation: studentNewsSweep 5.8s ease-in-out infinite;
+        pointer-events: none;
+      }
+      .student-live-news-card .student-card-header {
+        position: relative;
+        border-bottom-color: rgba(255,255,255,.12);
+      }
+      .student-live-news-card .student-card-header h5 {
+        color: #fff;
+      }
+      .student-live-news-card .student-card-header h5::before {
+        content: '';
+        display: inline-block;
+        width: 9px;
+        height: 9px;
+        margin-right: 9px;
+        border-radius: 999px;
+        background: ${T.teal};
+        box-shadow: 0 0 0 0 rgba(46,196,182,.7);
+        animation: studentNewsLivePulse 1.65s infinite;
+      }
+      .student-news-refresh {
+        border: 1px solid rgba(255,255,255,.18);
+        background: rgba(255,255,255,.1);
+        color: #fff;
+        border-radius: 999px;
+        padding: 7px 12px;
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 12px;
+        font-weight: 800;
+        cursor: pointer;
+        backdrop-filter: blur(10px);
+        transition: transform .18s ease, background .18s ease;
+      }
+      .student-news-refresh:hover {
+        transform: translateY(-1px);
+        background: rgba(255,255,255,.16);
+      }
+      .student-news-refresh:disabled {
+        opacity: .65;
+        cursor: wait;
+      }
+      .student-live-news-body {
+        position: relative;
+        padding: 14px 22px 18px;
+      }
+      .student-news-carousel {
+        display: grid;
+        grid-template-columns: 42px minmax(0, 1fr) 42px;
+        align-items: center;
+        gap: 13px;
+      }
+      .student-news-control {
+        width: 42px;
+        height: 42px;
+        border: 1px solid rgba(255,255,255,.16);
+        border-radius: 16px;
+        background: rgba(255,255,255,.09);
+        color: #fff;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: transform .18s ease, background .18s ease, border-color .18s ease;
+      }
+      .student-news-control:hover:not(:disabled) {
+        transform: translateY(-2px) scale(1.03);
+        background: rgba(255,255,255,.16);
+        border-color: rgba(46,196,182,.45);
+      }
+      .student-news-control:disabled {
+        opacity: .45;
+        cursor: default;
+      }
+      .student-news-slide-window {
+        position: relative;
+        min-height: 126px;
+        overflow: hidden;
+        border-radius: 20px;
+      }
+      .student-news-slide {
+        position: relative;
+        min-height: 126px;
+        padding: 16px 18px;
+        border-radius: 20px;
+        border: 1px solid rgba(255,255,255,.14);
+        background:
+          linear-gradient(90deg, rgba(255,255,255,.11), rgba(255,255,255,.07)),
+          rgba(255,255,255,.08);
+        box-shadow: 0 14px 30px rgba(0,0,0,.14);
+        backdrop-filter: blur(14px);
+        display: grid;
+        grid-template-columns: 52px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 15px;
+        animation:
+          studentNewsSlideIn .48s ease both,
+          studentNewsFlash 2.7s ease-in-out infinite;
+      }
+      .student-news-slide::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: -30%;
+        width: 24%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,.13), transparent);
+        transform: skewX(-18deg);
+        animation: studentNewsSlideShine 3.8s ease-in-out infinite;
+      }
+      .student-news-image {
+        width: 52px;
+        height: 52px;
+        border-radius: 16px;
+        object-fit: cover;
+        position: relative;
+        z-index: 1;
+      }
+      .student-news-icon {
+        width: 52px;
+        height: 52px;
+        border-radius: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(244,169,64,.18);
+        color: ${T.amberLight};
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,.12);
+        position: relative;
+        z-index: 1;
+      }
+      .student-news-icon i {
+        animation: studentNewsIconPulse 2.4s ease-in-out infinite;
+      }
+      .student-news-content {
+        position: relative;
+        min-width: 0;
+        z-index: 1;
+      }
+      .student-news-meta {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        color: rgba(248,250,252,.72);
+        font-size: 10px;
+        font-weight: 800;
+        margin-bottom: 6px;
+        text-transform: uppercase;
+      }
+      .student-news-source {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        min-width: 0;
+      }
+      .student-news-source span:first-child {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .student-news-badge {
+        flex: 0 0 auto;
+        padding: 3px 7px;
+        border-radius: 999px;
+        background: rgba(232,72,85,.9);
+        color: #fff;
+        font-size: 9px;
+        font-weight: 900;
+        letter-spacing: .03em;
+      }
+      .student-news-content h6 {
+        margin: 0;
+        color: #fff;
+        font-size: 15px;
+        line-height: 1.28;
+        font-family: 'DM Sans';
+        font-weight: 800;
+        display: -webkit-box;
+        -webkit-line-clamp: 1;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+      .student-news-content p {
+        margin: 6px 0 0;
+        color: rgba(248,250,252,.76);
+        font-size: 12px;
+        line-height: 1.42;
+        display: -webkit-box;
+        -webkit-line-clamp: 1;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+      .student-news-link {
+        position: relative;
+        z-index: 1;
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        color: #fff;
+        font-size: 12px;
+        font-weight: 800;
+        text-decoration: none;
+        white-space: nowrap;
+      }
+      .student-news-link i {
+        transition: transform .18s ease;
+      }
+      .student-news-link:hover i {
+        transform: translate(2px, -2px);
+      }
+      .student-news-skeleton {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 14px;
+      }
+      .student-news-skeleton span {
+        min-height: 126px;
+        border-radius: 20px;
+        background: linear-gradient(90deg, rgba(255,255,255,.06), rgba(255,255,255,.16), rgba(255,255,255,.06));
+        background-size: 220% 100%;
+        animation: studentNewsPulse 1.25s ease-in-out infinite;
+      }
+      .student-news-dots {
+        display: flex;
+        justify-content: center;
+        gap: 7px;
+        margin-top: 12px;
+      }
+      .student-news-dot {
+        width: 7px;
+        height: 7px;
+        border: 0;
+        padding: 0;
+        border-radius: 999px;
+        background: rgba(255,255,255,.34);
+        cursor: pointer;
+        transition: width .2s ease, background .2s ease;
+      }
+      .student-news-dot.active {
+        width: 23px;
+        background: ${T.teal};
+      }
+      @keyframes studentNewsSweep {
+        0%, 42% { transform: translateX(-40%) rotate(18deg); opacity: 0; }
+        52% { opacity: 1; }
+        72%, 100% { transform: translateX(360%) rotate(18deg); opacity: 0; }
+      }
+      @keyframes studentNewsLivePulse {
+        0% { box-shadow: 0 0 0 0 rgba(46,196,182,.7); }
+        70% { box-shadow: 0 0 0 9px rgba(46,196,182,0); }
+        100% { box-shadow: 0 0 0 0 rgba(46,196,182,0); }
+      }
+      @keyframes studentNewsSlideIn {
+        0% { opacity: 0; transform: translateX(32px) scale(.985); }
+        100% { opacity: 1; transform: translateX(0) scale(1); }
+      }
+      @keyframes studentNewsFlash {
+        0%, 100% { border-color: rgba(255,255,255,.14); box-shadow: 0 14px 30px rgba(0,0,0,.14); }
+        50% { border-color: rgba(46,196,182,.44); box-shadow: 0 18px 38px rgba(46,196,182,.14); }
+      }
+      @keyframes studentNewsSlideShine {
+        0%, 35% { left: -30%; opacity: 0; }
+        50% { opacity: 1; }
+        80%, 100% { left: 108%; opacity: 0; }
+      }
+      @keyframes studentNewsIconPulse {
+        0%, 100% { transform: scale(1); opacity: .9; }
+        50% { transform: scale(1.12); opacity: 1; }
+      }
+      @keyframes studentNewsPulse {
+        0% { background-position: 0% 50%; }
+        100% { background-position: 220% 50%; }
+      }
+      @media (max-width: 640px) {
+        .student-live-news-body {
+          padding: 14px;
+        }
+        .student-news-carousel {
+          grid-template-columns: 36px minmax(0, 1fr) 36px;
+          gap: 8px;
+        }
+        .student-news-control {
+          width: 36px;
+          height: 36px;
+          border-radius: 13px;
+        }
+        .student-news-slide {
+          grid-template-columns: minmax(0, 1fr);
+          min-height: 118px;
+          padding: 14px;
+        }
+        .student-news-image,
+        .student-news-icon {
+          display: none;
+        }
+        .student-news-link {
+          margin-top: 8px;
+        }
+      }
+
+      .student-challenge-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 18px;
+      }
+      .student-challenge-card,
+      .student-challenge-play {
+        border-radius: 18px;
+        border: 1px solid ${T.border};
+        background: #fff;
+        box-shadow: ${T.shadow};
+      }
+      .student-challenge-card {
+        padding: 20px;
+        overflow: hidden;
+        position: relative;
+      }
+      .student-challenge-card::before {
+        content: '';
+        position: absolute;
+        inset: 0 0 auto 0;
+        height: 4px;
+        background: linear-gradient(90deg, ${T.teal}, ${T.amber}, ${T.rose});
+      }
+      .student-challenge-card-top {
+        display: flex;
+        gap: 14px;
+        align-items: flex-start;
+      }
+      .student-challenge-icon,
+      .student-challenge-state-icon {
+        width: 46px;
+        height: 46px;
+        border-radius: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+        background: linear-gradient(135deg, ${T.navy}, ${T.teal});
+        box-shadow: 0 12px 28px rgba(46,196,182,.18);
+      }
+      .student-challenge-kicker {
+        color: ${T.teal};
+        font-size: 11px;
+        font-weight: 900;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+      }
+      .student-challenge-card h4,
+      .student-challenge-hero h3,
+      .student-challenge-question-card h3 {
+        margin: 4px 0;
+        color: ${T.navy};
+        font-weight: 900;
+      }
+      .student-challenge-card p,
+      .student-challenge-hero p,
+      .student-challenge-state p {
+        margin: 0;
+        color: ${T.slate};
+      }
+      .student-challenge-progress {
+        height: 9px;
+        border-radius: 999px;
+        background: rgba(15,27,45,.08);
+        overflow: hidden;
+        margin: 18px 0 14px;
+      }
+      .student-challenge-progress span {
+        display: block;
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, ${T.teal}, ${T.amber});
+      }
+      .student-challenge-mini {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-bottom: 18px;
+      }
+      .student-challenge-mini span,
+      .student-challenge-hero-stats span {
+        padding: 7px 10px;
+        border-radius: 999px;
+        background: rgba(15,27,45,.06);
+        color: ${T.slate};
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .student-challenge-play {
+        overflow: hidden;
+      }
+      .student-challenge-hero {
+        padding: 22px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        background:
+          radial-gradient(circle at 8% 0%, rgba(244,169,64,.14), transparent 28%),
+          linear-gradient(135deg, rgba(15,27,45,.98), rgba(26,46,74,.94));
+      }
+      .student-challenge-hero h3,
+      .student-challenge-hero p {
+        color: #fff;
+      }
+      .student-challenge-hero-stats {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+      .student-challenge-hero-stats span {
+        color: #fff;
+        background: rgba(255,255,255,.12);
+      }
+      .student-challenge-state {
+        padding: 34px 22px;
+        text-align: center;
+      }
+      .student-challenge-state-icon {
+        margin: 0 auto 14px;
+      }
+      .student-challenge-state h3 {
+        color: ${T.navy};
+        margin: 0 0 8px;
+        font-weight: 900;
+      }
+      .student-challenge-question-card {
+        margin: 22px;
+        padding: 22px;
+        border: 1px solid ${T.border};
+        border-radius: 18px;
+        background: #fff;
+      }
+      .student-challenge-question-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        color: ${T.teal};
+        font-size: 12px;
+        font-weight: 900;
+        text-transform: uppercase;
+      }
+      .student-challenge-session {
+        margin-top: 12px;
+        color: ${T.slate};
+        font-size: 13px;
+        font-weight: 700;
+      }
+      .student-challenge-options {
+        display: grid;
+        gap: 11px;
+        margin-top: 18px;
+      }
+      .student-challenge-option {
+        border: 1px solid ${T.border};
+        border-radius: 14px;
+        background: #fff;
+        color: ${T.navy};
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 13px 14px;
+        text-align: left;
+        font-weight: 700;
+        cursor: pointer;
+        transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+      }
+      .student-challenge-option:hover,
+      .student-challenge-option.selected {
+        transform: translateY(-2px);
+        border-color: rgba(46,196,182,.5);
+        box-shadow: 0 12px 26px rgba(46,196,182,.12);
+      }
+      .student-challenge-option span {
+        width: 30px;
+        height: 30px;
+        border-radius: 10px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+        background: ${T.navy};
+        flex: 0 0 30px;
+      }
+      .student-challenge-option.selected span {
+        background: ${T.teal};
+      }
+      .student-challenge-actions {
+        padding: 0 22px 22px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        color: ${T.slate};
+        font-weight: 800;
+      }
+      @media (max-width: 720px) {
+        .student-challenge-hero,
+        .student-challenge-actions {
+          flex-direction: column;
+          align-items: stretch;
+        }
+      }
+
       .student-modal-overlay {
         position: fixed;
         inset: 0;
@@ -442,6 +971,9 @@ const STUDENT_FEEDBACK_LAST_PROMPT_KEY = 'iie_student_feedback_last_prompt_at'
 
 export function StudentDashboard() {
   const [data, setData] = useState(null)
+  const [liveNews, setLiveNews] = useState([])
+  const [activeNewsIndex, setActiveNewsIndex] = useState(0)
+  const [newsLoading, setNewsLoading] = useState(true)
   const [loading, setLoading] = useState(true)
   const [showFeedbackPrompt, setShowFeedbackPrompt] = useState(false)
   const feedbackTimerRef = useRef(null)
@@ -450,6 +982,35 @@ export function StudentDashboard() {
   useEffect(() => {
     api.get('/dashboard/student/').then(r => setData(r.data)).finally(() => setLoading(false))
   }, [])
+
+  useEffect(() => {
+    let alive = true
+    setNewsLoading(true)
+    api.get('/news/?refresh=1')
+      .then(r => {
+        if (!alive) return
+        const rows = Array.isArray(r.data?.results) ? r.data.results : Array.isArray(r.data) ? r.data : []
+        setLiveNews(rows.slice(0, 4))
+        setActiveNewsIndex(0)
+      })
+      .catch(() => {
+        if (alive) setLiveNews([])
+      })
+      .finally(() => {
+        if (alive) setNewsLoading(false)
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (liveNews.length <= 1) return undefined
+    const timer = setInterval(() => {
+      setActiveNewsIndex(index => (index + 1) % liveNews.length)
+    }, 4200)
+    return () => clearInterval(timer)
+  }, [liveNews.length])
 
   const scheduleFeedbackPrompt = (delay = STUDENT_FEEDBACK_INTERVAL_MS) => {
     if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current)
@@ -472,6 +1033,15 @@ export function StudentDashboard() {
     scheduleFeedbackPrompt()
   }
 
+  const moveNews = direction => {
+    if (!liveNews.length) return
+    setActiveNewsIndex(index => (
+      direction === 'next'
+        ? (index + 1) % liveNews.length
+        : (index - 1 + liveNews.length) % liveNews.length
+    ))
+  }
+
   if (loading) return <div className="student-root"><StudentStyles /><StudentSpin /></div>
 
   const assignedBatchIds = new Set()
@@ -489,6 +1059,7 @@ export function StudentDashboard() {
     { label: 'Announcements', value: data?.announcements_count ?? data?.announcements?.length ?? 0, icon: 'fa-bullhorn', color: T.teal, bgColor: 'rgba(46,196,182,0.1)', to: '/student/announcements' },
     { label: 'Attendance %', value: `${data?.attendance_percentage ?? 0}%`, icon: 'fa-calendar-check', color: T.sage, bgColor: 'rgba(76,175,129,0.1)', to: '/student/attendance' },
     { label: 'My Batches', value: assignedBatchesCount, icon: 'fa-layer-group', color: T.navy, bgColor: 'rgba(15,27,45,0.1)', to: '/student/batches' },
+    { label: '15-Day Challenge', value: 'Play', icon: 'fa-bolt', color: T.amber, bgColor: 'rgba(244,169,64,0.12)', to: '/student/challenge' },
     { label: 'Completed Sessions', value: data?.completed_sessions_count ?? 0, icon: 'fa-check-double', color: T.sage, bgColor: 'rgba(76,175,129,0.1)', to: '/student/sessions' },
     { label: 'Tests', value: data?.tests_count ?? 0, icon: 'fa-file-alt', color: T.navy, bgColor: 'rgba(15,27,45,0.1)', to: '/student/tests' },
     { label: 'Quizzes', value: data?.quizzes_count ?? 0, icon: 'fa-question-circle', color: T.teal, bgColor: 'rgba(46,196,182,0.1)', to: '/student/quiz' },
@@ -510,6 +1081,108 @@ export function StudentDashboard() {
           style={{ width: '100%', height: '72vh', border: 0, borderRadius: 12, background: '#fff' }}
         />
       </StudentModal>
+      <div className="student-card student-live-news-card">
+        <StudentSectionHeader
+          title="📰 Live Technology News"
+          count={liveNews.length}
+          actions={
+            <button
+              className="student-news-refresh"
+              type="button"
+              onClick={() => {
+                setNewsLoading(true)
+                api.get('/news/?refresh=1')
+                  .then(r => {
+                    const rows = Array.isArray(r.data?.results) ? r.data.results : Array.isArray(r.data) ? r.data : []
+                    setLiveNews(rows.slice(0, 4))
+                    setActiveNewsIndex(0)
+                  })
+                  .catch(() => toast.error('Failed to load live news'))
+                  .finally(() => setNewsLoading(false))
+              }}
+              disabled={newsLoading}
+            >
+              <i className={`fas ${newsLoading ? 'fa-spinner fa-spin' : 'fa-sync-alt'}`} />
+              {newsLoading ? 'Loading' : 'Refresh'}
+            </button>
+          }
+        />
+        <div className="student-live-news-body">
+          {newsLoading && liveNews.length === 0 ? (
+            <div className="student-news-skeleton">
+              {[0, 1, 2].map(i => <span key={i} />)}
+            </div>
+          ) : liveNews.length === 0 ? (
+            <StudentEmpty msg="No live news available right now." icon="fa-newspaper" />
+          ) : (
+            <div>
+              {(() => {
+                const item = liveNews[activeNewsIndex] || liveNews[0]
+                const publishedAt = item.published_at || item.publishedDate || item.created_at
+                const link = item.original_url || item.originalUrl
+                const image = item.image_url || item.imageUrl || item.image
+                return (
+                  <div className="student-news-carousel">
+                    <button
+                      type="button"
+                      className="student-news-control"
+                      onClick={() => moveNews('prev')}
+                      disabled={liveNews.length <= 1}
+                    >
+                      <i className="fas fa-chevron-left" />
+                    </button>
+                    <div className="student-news-slide-window">
+                      <article key={item.id || `${item.title}-${activeNewsIndex}`} className="student-news-slide">
+                        {image ? (
+                          <img className="student-news-image" src={image} alt="" />
+                        ) : (
+                          <div className="student-news-icon">
+                            <i className="fas fa-bolt" />
+                          </div>
+                        )}
+                        <div className="student-news-content">
+                          <div className="student-news-meta">
+                            <div className="student-news-source">
+                              <span>{item.source || 'Google News'}</span>
+                              <span className="student-news-badge">Latest</span>
+                            </div>
+                            <span>{publishedAt ? new Date(publishedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : 'Live'}</span>
+                          </div>
+                          <h6>{item.title}</h6>
+                          <p>{item.message || 'Latest technology update from live news feed.'}</p>
+                        </div>
+                        {link && (
+                          <a href={link} target="_blank" rel="noreferrer" className="student-news-link">
+                            Read more <i className="fas fa-arrow-up-right-from-square" />
+                          </a>
+                        )}
+                      </article>
+                    </div>
+                    <button
+                      type="button"
+                      className="student-news-control"
+                      onClick={() => moveNews('next')}
+                      disabled={liveNews.length <= 1}
+                    >
+                      <i className="fas fa-chevron-right" />
+                    </button>
+                  </div>
+                )
+              })()}
+              <div className="student-news-dots">
+                {liveNews.map((item, idx) => (
+                  <button
+                    key={item.id || idx}
+                    type="button"
+                    className={`student-news-dot ${activeNewsIndex === idx ? 'active' : ''}`}
+                    onClick={() => setActiveNewsIndex(idx)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
       <div className="student-stat-grid">
         {stats.map((stat, idx) => (
           <div
@@ -570,6 +1243,237 @@ export function StudentDashboard() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function StudentLoginRatingHistory() {
+  const [weeks, setWeeks] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    api.get('/student/login-rating/history/?limit=8')
+      .then(r => setWeeks(r.data?.weeks || []))
+      .catch(() => toast.error('Failed to load login star history'))
+      .finally(() => setLoading(false))
+  }, [])
+
+  const formatWeek = week => {
+    if (!week?.week_start || !week?.week_end) return 'Week'
+    return `${new Date(week.week_start).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })} - ${new Date(week.week_end).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}`
+  }
+
+  return (
+    <div className="student-root">
+      <StudentStyles />
+      <StudentPageHeader title="⭐ Login Star History" sub="Previous weekly login ratings" />
+      {loading ? <StudentSpin /> : (
+        <div className="student-card">
+          <StudentSectionHeader title="Previous Weeks" count={weeks.length} />
+          <div style={{ padding: 22, display: 'grid', gap: 14 }}>
+            {weeks.length === 0 ? <StudentEmpty msg="No previous ratings yet." icon="fa-star" /> : weeks.map(week => (
+              <div key={week.week_start} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: 16, border: `1px solid ${T.border}`, borderRadius: 14, background: '#fff' }}>
+                <div>
+                  <div style={{ fontWeight: 800, color: T.navy }}>{formatWeek(week)}</div>
+                  <div style={{ fontSize: 12, color: T.slate, marginTop: 4 }}>2 logins per day earns 1 star</div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ display: 'flex', gap: 3 }}>
+                    {[0, 1, 2, 3, 4].map(i => <i key={i} className={i < (week.stars || 0) ? 'fas fa-star' : 'far fa-star'} style={{ color: i < (week.stars || 0) ? '#f59e0b' : '#d8c7a2' }} />)}
+                  </div>
+                  <strong style={{ color: T.navy }}>{week.stars || 0}/5</strong>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function StudentChallenge() {
+  const [challenges, setChallenges] = useState([])
+  const [selected, setSelected] = useState(null)
+  const [today, setToday] = useState(null)
+  const [answers, setAnswers] = useState({})
+  const [currentIndex, setCurrentIndex] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [dayLoading, setDayLoading] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+
+  const loadChallenges = () => {
+    setLoading(true)
+    api.get('/student/challenge/')
+      .then(r => setChallenges(r.data?.results || r.data || []))
+      .catch(() => toast.error('Failed to load challenge details'))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => { loadChallenges() }, [])
+
+  const openChallenge = challenge => {
+    setSelected(challenge)
+    setToday(null)
+    setAnswers({})
+    setCurrentIndex(0)
+    setDayLoading(true)
+    api.get('/student/challenge/today/', { params: { course_id: challenge.course, batch_id: challenge.batch } })
+      .then(r => setToday(r.data))
+      .catch(err => toast.error(err.response?.data?.error || 'Unable to open challenge'))
+      .finally(() => setDayLoading(false))
+  }
+
+  const submitDay = async () => {
+    const day = today?.day
+    const questions = day?.questions || []
+    if (!day || questions.length !== 5) return
+    if (Object.keys(answers).length !== 5) {
+      toast.error('Please answer all 5 questions')
+      return
+    }
+    setSubmitting(true)
+    try {
+      const payload = questions.map(q => ({ question_id: q.question, selected_answer: answers[q.question] }))
+      const res = await api.post(`/student/challenge/day/${day.id}/submit/`, { answers: payload })
+      setToday(res.data)
+      setSelected(res.data?.challenge || selected)
+      toast.success('Challenge submitted!')
+      loadChallenges()
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Submit failed')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const activeDay = today?.day
+  const questions = activeDay?.questions || []
+  const currentQuestion = questions[currentIndex]
+  const activeChallenge = today?.challenge || selected
+  const isCompleted = today?.state === 'completed' || activeDay?.status === 'completed'
+
+  const ChallengeCard = ({ challenge }) => {
+    const progress = Math.min(100, Number(challenge.progress_percentage || 0))
+    return (
+      <div className="student-challenge-card">
+        <div className="student-challenge-card-top">
+          <div className="student-challenge-icon"><i className="fas fa-bolt" /></div>
+          <div>
+            <div className="student-challenge-kicker">15-Day Challenge</div>
+            <h4>{challenge.course_name || 'Course Challenge'}</h4>
+            <p>{challenge.batch_code || challenge.batch_number || 'Assigned batch'}</p>
+          </div>
+        </div>
+        <div className="student-challenge-progress">
+          <span style={{ width: `${progress}%` }} />
+        </div>
+        <div className="student-challenge-mini">
+          <span><strong>{challenge.completed_days || 0}/15</strong> Days</span>
+          <span><strong>{challenge.current_streak || 0}</strong> Streak</span>
+          <span><strong>{challenge.completed_sessions || 0}/{challenge.total_sessions || 0}</strong> Sessions</span>
+        </div>
+        <button className="student-btn student-btn-primary" onClick={() => openChallenge(challenge)}>
+          {challenge.status === 'completed' ? 'View Achievement' : challenge.start_date ? 'Continue Challenge' : 'Start Challenge'}
+        </button>
+      </div>
+    )
+  }
+
+  const ChallengeState = ({ icon, title, text }) => (
+    <div className="student-challenge-state">
+      <div className="student-challenge-state-icon"><i className={`fas ${icon}`} /></div>
+      <h3>{title}</h3>
+      <p>{text}</p>
+      {activeChallenge && (
+        <div className="student-challenge-mini" style={{ justifyContent: 'center' }}>
+          <span><strong>{activeChallenge.current_streak || 0}</strong> Streak</span>
+          <span><strong>{activeChallenge.completed_days || 0}/15</strong> Completed</span>
+        </div>
+      )}
+    </div>
+  )
+
+  if (loading) return <div className="student-root"><StudentStyles /><StudentSpin /></div>
+
+  return (
+    <div className="student-root">
+      <StudentStyles />
+      <StudentPageHeader
+        title="⚡ 15-Day Challenge"
+        sub="Daily gamified MCQ practice from your completed sessions"
+        btn={selected && <button className="student-btn student-btn-ghost" onClick={() => { setSelected(null); setToday(null) }}>Back to Challenges</button>}
+      />
+
+      {!selected ? (
+        <div className="student-challenge-grid">
+          {challenges.length === 0 ? <StudentEmpty msg="No challenge courses available yet." icon="fa-bolt" /> : challenges.map(challenge => (
+            <ChallengeCard key={`${challenge.course}-${challenge.batch}`} challenge={challenge} />
+          ))}
+        </div>
+      ) : dayLoading ? <StudentSpin /> : (
+        <div className="student-challenge-play">
+          <div className="student-challenge-hero">
+            <div>
+              <div className="student-challenge-kicker">15-Day Challenge</div>
+              <h3>{activeChallenge?.course_name || 'Daily Practice'}</h3>
+              <p>{activeChallenge?.batch_code || activeChallenge?.batch_number || 'Assigned batch'}</p>
+            </div>
+            <div className="student-challenge-hero-stats">
+              <span>{activeChallenge?.completed_days || 0}/15 Done</span>
+              <span>{activeChallenge?.current_streak || 0} Streak</span>
+            </div>
+          </div>
+
+          {today?.state === 'insufficient_questions' ? (
+            <ChallengeState icon="fa-hourglass-half" title="Challenge Not Ready" text="Your completed sessions do not have enough challenge questions yet. Please try again later." />
+          ) : today?.state === 'outside_window' ? (
+            <ChallengeState icon="fa-calendar-times" title="Challenge Window Closed" text="This challenge is outside the active window." />
+          ) : isCompleted ? (
+            <ChallengeState icon="fa-trophy" title={activeChallenge?.status === 'completed' ? 'Challenge Completed!' : `Day ${activeDay?.day_number || activeChallenge?.completed_days || 0} Complete`} text={`Score ${activeDay?.score ?? activeChallenge?.total_score ?? 0}/${activeDay?.total_questions || 5}`} />
+          ) : activeDay && currentQuestion ? (
+            <>
+              <div className="student-challenge-question-card">
+                <div className="student-challenge-question-top">
+                  <span>Day {activeDay.day_number}/15</span>
+                  <span>Question {currentIndex + 1} of {questions.length}</span>
+                </div>
+                <div className="student-challenge-session">
+                  Session {currentQuestion.source_session_number || '-'} · {currentQuestion.source_session_title || 'Completed topic'}
+                </div>
+                <h3>{currentQuestion.question_text}</h3>
+                <div className="student-challenge-options">
+                  {currentQuestion.options.map(option => {
+                    const selectedAnswer = answers[currentQuestion.question] === option.key
+                    return (
+                      <button
+                        key={option.key}
+                        type="button"
+                        className={`student-challenge-option ${selectedAnswer ? 'selected' : ''}`}
+                        onClick={() => setAnswers(prev => ({ ...prev, [currentQuestion.question]: option.key }))}
+                      >
+                        <span>{option.key}</span>
+                        {option.text}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+              <div className="student-challenge-actions">
+                <button className="student-btn student-btn-ghost" disabled={currentIndex === 0} onClick={() => setCurrentIndex(i => Math.max(i - 1, 0))}>Previous</button>
+                <span>{Object.keys(answers).length}/5 answered</span>
+                {currentIndex < questions.length - 1 ? (
+                  <button className="student-btn student-btn-primary" onClick={() => setCurrentIndex(i => i + 1)}>Next</button>
+                ) : (
+                  <button className="student-btn student-btn-primary" disabled={submitting} onClick={submitDay}>{submitting ? 'Submitting...' : 'Submit'}</button>
+                )}
+              </div>
+            </>
+          ) : (
+            <ChallengeState icon="fa-circle-question" title="No Challenge Today" text="There is no active challenge available for this course and batch." />
+          )}
         </div>
       )}
     </div>

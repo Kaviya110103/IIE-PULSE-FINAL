@@ -221,6 +221,16 @@ export type NewsItem = {
   title: string;
   message: string;
   image?: string | null;
+  image_url?: string | null;
+  imageUrl?: string | null;
+  source?: string;
+  published_at?: string;
+  publishedDate?: string;
+  original_url?: string;
+  originalUrl?: string;
+  category?: string;
+  news_type?: string;
+  newsType?: string;
   created_at?: string;
 };
 
@@ -231,6 +241,93 @@ export type CalendarEvent = {
   event_time: string;
   message: string;
   created_at?: string;
+};
+
+export type StudentChallengeSummary = {
+  id?: number | null;
+  course: number;
+  course_name?: string;
+  batch: number;
+  batch_number?: string;
+  batch_code?: string;
+  start_date?: string | null;
+  status: "active" | "completed" | string;
+  current_streak: number;
+  longest_streak: number;
+  completed_days: number;
+  total_score: number;
+  total_questions: number;
+  progress_percentage?: number;
+  completed_sessions?: number;
+  total_sessions?: number;
+  current_day?: number | null;
+  next_day?: number | null;
+  today_available?: boolean;
+  review_only?: boolean;
+  completion_date?: string | null;
+  calendar_days_taken?: number | null;
+  final_score_percentage?: number;
+  quick_completion?: boolean;
+  achievement?: {
+    id: number;
+    badge_code: string;
+    badge_title: string;
+    completed_days: number;
+    final_score_percentage: number;
+    calendar_days_taken: number;
+    completed_at: string;
+  } | null;
+};
+
+export type StudentChallengeQuestion = {
+  id: number;
+  question_order: number;
+  question: number;
+  source_session_number?: number;
+  source_session_title?: string;
+  question_text: string;
+  options: { key: "A" | "B" | "C" | "D"; text: string }[];
+};
+
+export type StudentChallengeDay = {
+  id: number;
+  day_number: number;
+  challenge_date: string;
+  status: "assigned" | "completed" | string;
+  score: number;
+  total_questions: number;
+  started_at?: string | null;
+  completed_at?: string | null;
+  questions: StudentChallengeQuestion[];
+};
+
+export type StudentChallengeToday = {
+  state: "assigned" | "completed" | "insufficient_questions" | "outside_window" | string;
+  message?: string;
+  challenge: StudentChallengeSummary;
+  day: StudentChallengeDay | null;
+};
+
+export type StudentBatchSummary = {
+  id: number;
+  batch_number?: string;
+  batch_code?: string;
+  course_id?: number;
+  course_name?: string;
+  course_name_display?: string;
+  faculty_name?: string;
+  trainer_names?: string[];
+  batch_time?: string;
+  timing?: string;
+  start_date?: string;
+  end_date?: string;
+  total_sessions?: number;
+  completed_sessions?: number;
+  progress_percentage?: number;
+  status?: string;
+  assignment_role?: string;
+  is_current_assignment?: boolean;
+  is_previous_assignment?: boolean;
 };
 
 export type ReferralPayload = {
@@ -719,6 +816,65 @@ export async function getCalendarEvents() {
   };
 }
 
+export async function getStudentChallenges() {
+  try {
+    const response = await api.get("student/challenge/");
+    const results = Array.isArray(response.data?.results) ? response.data.results : [];
+    return { success: true, data: results as StudentChallengeSummary[], error: "" };
+  } catch (error: any) {
+    return {
+      success: false,
+      data: [] as StudentChallengeSummary[],
+      error: getApiErrorMessage(error, "Unable to load challenge details."),
+    };
+  }
+}
+
+export async function getStudentBatches() {
+  try {
+    const response = await api.get("student/batches/");
+    const results = Array.isArray(response.data?.results) ? response.data.results : [];
+    return { success: true, data: results as StudentBatchSummary[], error: "" };
+  } catch (error: any) {
+    return {
+      success: false,
+      data: [] as StudentBatchSummary[],
+      error: getApiErrorMessage(error, "Unable to load assigned batches."),
+    };
+  }
+}
+
+export async function getTodayChallenge(courseId: number | string, batchId: number | string) {
+  try {
+    const response = await api.get("student/challenge/today/", {
+      params: { course_id: courseId, batch_id: batchId },
+    });
+    return { success: true, data: response.data as StudentChallengeToday, error: "" };
+  } catch (error: any) {
+    return {
+      success: false,
+      data: null as StudentChallengeToday | null,
+      error: getApiErrorMessage(error, "Unable to open today's challenge."),
+    };
+  }
+}
+
+export async function submitChallengeDay(
+  dayId: number | string,
+  answers: { question_id: number; selected_answer: string }[]
+) {
+  try {
+    const response = await api.post(`student/challenge/day/${dayId}/submit/`, { answers });
+    return { success: true, data: response.data as StudentChallengeToday, error: "" };
+  } catch (error: any) {
+    return {
+      success: false,
+      data: null as StudentChallengeToday | null,
+      error: getApiErrorMessage(error, "Unable to submit challenge answers."),
+    };
+  }
+}
+
 export async function getPublicHomeContent() {
   try {
     const [galleryResult, vlogResult, newsResult, calendarResult] =
@@ -731,10 +887,16 @@ export async function getPublicHomeContent() {
         ...item,
         video: resolveMediaUrl(item.video, baseUrl),
       })),
-      fetchListWithFallback<NewsItem>("news/", "NEWS", (item, baseUrl) => ({
-        ...item,
-        image: item.image ? resolveMediaUrl(item.image, baseUrl) : item.image,
-      })),
+      fetchListWithFallback<NewsItem>("news/?refresh=1", "NEWS", (item, baseUrl) => {
+        const remoteImage = item.imageUrl || item.image_url || item.image;
+        return {
+          ...item,
+          image: remoteImage ? resolveMediaUrl(remoteImage, baseUrl) : remoteImage,
+          created_at: item.publishedDate || item.published_at || item.created_at,
+          originalUrl: item.originalUrl || item.original_url,
+          newsType: item.newsType || item.news_type,
+        };
+      }),
       fetchListWithFallback<CalendarEvent>("calendar-events/", "CALENDAR", (item) => item),
     ]);
 

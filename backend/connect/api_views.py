@@ -175,6 +175,7 @@ from .models import (
     CompletedStudent, ReassignedStudentRecord, SessionCompletionRequest, TestResult,FeePaymentRequest,
     GalleryItem, VlogItem, NewsItem, CalendarEvent, Referral,
     PublicUser, PublicUserActivity, PublicPracticeResult,
+    StudentChallenge, StudentChallengeDay,
 )
 from .serializers import (
     CourseSerializer, EmployeeSerializer,
@@ -189,7 +190,17 @@ from .serializers import (
     SessionCompletionRequestSerializer, LoginSerializer,
     GalleryItemSerializer, VlogItemSerializer, NewsItemSerializer,
     CalendarEventSerializer, ReferralSerializer, CounselorAnnouncementSerializer, strip_unsupported_mysql_chars,
+    StudentChallengeSummarySerializer, StudentChallengeDaySerializer,
+    StudentChallengeHistorySerializer, StudentChallengeSubmitSerializer,
 )
+from .services.challenge_service import (
+    ChallengeValidationError,
+    get_or_create_today_challenge_day,
+    get_or_create_student_challenge,
+    get_student_course_batch_pairs,
+    submit_challenge_day,
+)
+from .services.challenge_ai import ChallengeAIError, generate_questions_for_completed_session
 
 
 def get_tokens_for_user(user):
@@ -1498,6 +1509,171 @@ def student_weekly_login_rating_history(request):
     return Response({'weeks': weeks})
 
 
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def student_challenge_summary(request):
+    student = get_current_student_for_request(request)
+    if not student:
+        return Response({'error': 'Student not found'}, status=404)
+
+    summaries = []
+    for course, batch in get_student_course_batch_pairs(student):
+        challenge = StudentChallenge.objects.filter(
+            student=student,
+            course=course,
+            batch=batch,
+        ).first()
+        if not challenge:
+            challenge = StudentChallenge(
+                student=student,
+                course=course,
+                batch=batch,
+                status='active',
+            )
+        summaries.append(StudentChallengeSummarySerializer(challenge).data)
+
+    return Response({'results': summaries})
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def student_challenge_today(request):
+    student = get_current_student_for_request(request)
+    if not student:
+        return Response({'error': 'Student not found'}, status=404)
+
+    try:
+        course = Courses.objects.get(id=request.query_params.get('course_id'))
+        batch = Batches.objects.get(id=request.query_params.get('batch_id'))
+    except (Courses.DoesNotExist, Batches.DoesNotExist, TypeError, ValueError):
+        return Response({'error': 'Valid course_id and batch_id are required.'}, status=400)
+
+    try:
+        result = get_or_create_today_challenge_day(student, course, batch)
+    except ChallengeValidationError as exc:
+        return Response({'error': str(exc)}, status=403)
+
+    return Response({
+        'state': result['state'],
+        'message': result['message'],
+        'challenge': StudentChallengeSummarySerializer(result['challenge']).data,
+        'day': StudentChallengeDaySerializer(result['day']).data if result['day'] else None,
+    })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def student_challenge_submit_day(request, day_id):
+    student = get_current_student_for_request(request)
+    if not student:
+        return Response({'error': 'Student not found'}, status=404)
+
+    try:
+        challenge_day = StudentChallengeDay.objects.select_related('challenge').get(id=day_id)
+    except StudentChallengeDay.DoesNotExist:
+        return Response({'error': 'Challenge day not found'}, status=404)
+
+    serializer = StudentChallengeSubmitSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+
+    try:
+        completed_day = submit_challenge_day(
+            student,
+            challenge_day,
+            serializer.validated_data['answers'],
+        )
+    except ChallengeValidationError as exc:
+        return Response({'error': str(exc)}, status=400)
+
+    completed_day = StudentChallengeDay.objects.select_related('challenge').prefetch_related(
+        'day_questions__question',
+        'day_questions__question__source_session',
+    ).get(id=completed_day.id)
+    return Response({
+        'message': 'Challenge day submitted successfully.',
+        'challenge': StudentChallengeSummarySerializer(completed_day.challenge).data,
+        'day': StudentChallengeDaySerializer(completed_day).data,
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def student_challenge_history(request):
+    student = get_current_student_for_request(request)
+    if not student:
+        return Response({'error': 'Student not found'}, status=404)
+
+    challenges = StudentChallenge.objects.filter(student=student).select_related('course', 'batch')
+    course_id = request.query_params.get('course_id')
+    batch_id = request.query_params.get('batch_id')
+    if course_id:
+        challenges = challenges.filter(course_id=course_id)
+    if batch_id:
+        challenges = challenges.filter(batch_id=batch_id)
+
+    results = []
+    for challenge in challenges:
+        days = StudentChallengeDay.objects.filter(challenge=challenge).order_by('day_number')
+        results.append({
+            'challenge': StudentChallengeSummarySerializer(challenge).data,
+            'days': StudentChallengeHistorySerializer(days, many=True).data,
+        })
+
+    return Response({'results': results})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def generate_challenge_questions(request):
+    if not is_staff_employee(request.user):
+        return Response({'error': 'Only staff or admin users can generate challenge questions.'}, status=403)
+
+    try:
+        session_id = int(request.data.get('session_id'))
+    except (TypeError, ValueError):
+        return Response({'error': 'Valid session_id is required.'}, status=400)
+
+    try:
+        count = int(request.data.get('count', 5))
+    except (TypeError, ValueError):
+        count = 5
+
+    try:
+        session = CourseSession.objects.select_related(
+            'batch',
+            'batch__course_name',
+            'completed_by',
+        ).get(id=session_id)
+    except CourseSession.DoesNotExist:
+        return Response({'error': 'Course session not found.'}, status=404)
+
+    employee = Employee.objects.filter(user=request.user).first()
+    is_admin = is_admin_user(request.user)
+    if employee and not is_admin:
+        is_batch_trainer = _is_batch_trainer(session.batch, employee)
+        if not is_batch_trainer and session.completed_by_id != employee.id:
+            return Response({'error': 'You do not have access to this session.'}, status=403)
+
+    try:
+        result = generate_questions_for_completed_session(session, count=count)
+    except ChallengeValidationError as exc:
+        return Response({'error': str(exc)}, status=400)
+    except ChallengeAIError as exc:
+        logger.warning('Challenge question generation failed for session_id=%s: %s', session_id, exc)
+        return Response({'error': str(exc)}, status=503)
+
+    return Response({
+        'message': 'Challenge question generation completed.',
+        'session_id': session.id,
+        'created_count': len(result['created']),
+        'skipped_count': len(result['skipped']),
+        'requested_count': result['requested_count'],
+        'validated_count': result['validated_count'],
+        'created_question_ids': [question.id for question in result['created']],
+        'skipped': result['skipped'],
+    })
+
+
 class CounselorDashboardView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -1642,14 +1818,26 @@ class VlogItemDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 
 class NewsItemListCreateView(generics.ListCreateAPIView):
-    queryset = NewsItem.objects.all().order_by('-created_at')
     serializer_class = NewsItemSerializer
     parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get_queryset(self):
+        if self.request.method == 'GET':
+            from .news_rss import live_technology_news_queryset
+            return live_technology_news_queryset()
+        return NewsItem.objects.all().order_by('-created_at')
 
     def get_permissions(self):
         if self.request.method == 'GET':
             return [AllowAny()]
         return [IsAdminUser()]
+
+    def list(self, request, *args, **kwargs):
+        from .news_rss import refresh_live_technology_news
+
+        force_refresh = str(request.query_params.get('refresh', '')).lower() in {'1', 'true', 'yes'}
+        refresh_live_technology_news(force=force_refresh)
+        return super().list(request, *args, **kwargs)
 
     def perform_create(self, serializer):
         serializer.save(uploaded_by=self.request.user)
@@ -2907,8 +3095,6 @@ def assign_staff_to_student(request, student_id):
 
         assigned_batches = []
         if batch_ids:
-            previous_batch = student.assigned_batch
-            existing_session_state = _student_session_state_by_number(student, previous_batch)
             batches = list(Batches.objects.filter(id__in=batch_ids).select_related('course_name', 'faculty'))
             found_ids = {batch.id for batch in batches}
             if len(found_ids) != len(batch_ids):
@@ -2965,8 +3151,7 @@ def assign_staff_to_student(request, student_id):
                     print(f"? Sessions available for batch {batch.id}: {sessions.count()}")
 
                 batch_session_state = _batch_session_state_by_number(batch)
-                student_session_state = _merge_state_maps(batch_session_state, existing_session_state)
-                _apply_student_session_state_to_batch(student, batch, student_session_state, reset_existing=True)
+                _apply_student_session_state_to_batch(student, batch, batch_session_state, reset_existing=True)
 
                 # -- Create fee record -----------------------------------------
                 course_fee = batch.course_name.fee if batch.course_name and batch.course_name.fee else 0

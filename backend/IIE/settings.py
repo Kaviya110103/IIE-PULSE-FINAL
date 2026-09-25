@@ -20,7 +20,7 @@ def env_list(key, default=None, sep=','):
 
 LOCAL_DOMAIN = os.getenv('LOCAL_DOMAIN', '127.0.0.1:8000').strip()
 LOCAL_LAN_DOMAIN = os.getenv('LOCAL_LAN_DOMAIN', '127.0.0.1:8000').strip()
-DEPLOYMENT_DOMAIN = os.getenv('DEPLOYMENT_DOMAIN', '127.0.0.1:8000').strip()
+DEPLOYMENT_DOMAIN = os.getenv('DEPLOYMENT_DOMAIN', 'iiepulse.indrainstitute.com').strip()
 DEPLOYMENT_SCHEME = os.getenv(
     'DEPLOYMENT_SCHEME',
     'http' if DEPLOYMENT_DOMAIN.startswith(('localhost', '127.0.0.1', '192.168.')) else 'https',
@@ -149,7 +149,9 @@ if DEBUG or DEPLOYMENT_IS_LOCAL:
         LOCAL_LAN_DOMAIN.split(':')[0],
         'localhost',
         '127.0.0.1',
+        '.local',
     ])
+    ALLOWED_HOSTS.extend([f'192.168.1.{i}' for i in range(1, 255)])
 for host in [DEPLOYMENT_DOMAIN.split(':')[0]]:
     if host and host not in ALLOWED_HOSTS:
         ALLOWED_HOSTS.append(host)
@@ -231,6 +233,13 @@ MSG91_AUTH_TOKEN = os.getenv('MSG91_AUTH_TOKEN', '').strip()
 X_FRAME_OPTIONS = os.getenv('DJANGO_X_FRAME_OPTIONS', 'DENY')
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+NEWS_RSS_INTERVAL_SECONDS = int(os.getenv('NEWS_RSS_INTERVAL_SECONDS', '60'))
+CHALLENGE_AI_PROVIDER = os.getenv('CHALLENGE_AI_PROVIDER', 'openai').strip().lower()
+CHALLENGE_AI_MODEL = os.getenv('CHALLENGE_AI_MODEL', 'gpt-4o-mini').strip()
+CHALLENGE_AI_API_KEY = os.getenv('CHALLENGE_AI_API_KEY', '').strip()
+CHALLENGE_AI_API_URL = os.getenv('CHALLENGE_AI_API_URL', 'https://api.openai.com/v1/chat/completions').strip()
+CHALLENGE_AI_TIMEOUT_SECONDS = int(os.getenv('CHALLENGE_AI_TIMEOUT_SECONDS', '30'))
+CHALLENGE_AI_MAX_RETRIES = int(os.getenv('CHALLENGE_AI_MAX_RETRIES', '2'))
 
 CACHES = {
     'default': {

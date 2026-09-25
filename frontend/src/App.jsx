@@ -45,6 +45,7 @@ import {
 import {
   StudentDashboard, StudentAnnouncements, StudentAttendance, StudentBatches, StudentSessions, StudentNotifications,
   StudentQuizList, StudentTests, StudentLeave, StudentMaterials, StudentSupport, StudentFeeDetails,
+  StudentChallenge, StudentLoginRatingHistory,
 } from './pages/student/StudentPages'
 
 function ProtectedRoute({ children, allowedRoles }) {
@@ -307,6 +308,8 @@ function AppRoutes() {
         <Route path="attendance" element={<StudentAttendance />} />
         <Route path="batches" element={<StudentBatches />} />
         <Route path="sessions" element={<StudentSessions />} />
+        <Route path="challenge" element={<StudentChallenge />} />
+        <Route path="login-rating-history" element={<StudentLoginRatingHistory />} />
 
         {/* Test Routes - Fixed: Different paths for different features */}
         <Route path="tests" element={<StudentTests />} />        {/* For assigned tests */}

@@ -37,6 +37,11 @@ urlpatterns = [
     path('api/dashboard/student/', v.StudentDashboardView.as_view()),
     path('api/student/login-rating/', v.student_weekly_login_rating),
     path('api/student/login-rating/history/', v.student_weekly_login_rating_history),
+    path('api/student/challenge/', v.student_challenge_summary),
+    path('api/student/challenge/today/', v.student_challenge_today),
+    path('api/student/challenge/day/<int:day_id>/submit/', v.student_challenge_submit_day),
+    path('api/student/challenge/history/', v.student_challenge_history),
+    path('api/challenge/questions/generate/', v.generate_challenge_questions),
     path('api/dashboard/counselor/', v.CounselorDashboardView.as_view()),
 
     # â”€â”€ ID GENERATORS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

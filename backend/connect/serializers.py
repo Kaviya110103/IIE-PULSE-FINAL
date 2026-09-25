@@ -11,9 +11,11 @@ from .models import (
     CounselorSupportRequest, Quiz, QuizQuestion, QuizAttempt, QuizAnswer,
     CompletedStudent, SessionCompletionRequest, TrainerSessionReport, TestResult,
     GalleryItem, VlogItem, NewsItem, CalendarEvent, Referral, CounselorAnnouncement,
-    ReassignedStudentRecord
+    ReassignedStudentRecord, ChallengeQuestionPool, StudentChallenge,
+    StudentChallengeAchievement, StudentChallengeDay, StudentChallengeDayQuestion
 )
 from .student_counts import active_students_for_batch
+from .services.challenge_service import QUESTIONS_PER_DAY, get_available_questions, get_student_session_counts
 
 
 def strip_unsupported_mysql_chars(value):
@@ -69,6 +71,10 @@ class VlogItemSerializer(serializers.ModelSerializer):
 
 class NewsItemSerializer(serializers.ModelSerializer):
     uploaded_by_name = serializers.CharField(source='uploaded_by.username', read_only=True)
+    publishedDate = serializers.DateTimeField(source='published_at', read_only=True)
+    originalUrl = serializers.URLField(source='original_url', read_only=True)
+    imageUrl = serializers.URLField(source='image_url', read_only=True)
+    newsType = serializers.CharField(source='news_type', read_only=True)
 
     class Meta:
         model = NewsItem
@@ -511,6 +517,222 @@ class AssignedTestSerializer(serializers.ModelSerializer):
     class Meta:
         model = AssignedTest
         fields = '__all__'
+
+
+class ChallengeQuestionSerializer(serializers.ModelSerializer):
+    options = serializers.SerializerMethodField()
+    source_session_number = serializers.IntegerField(source='question.source_session.session_number', read_only=True)
+    source_session_title = serializers.CharField(source='question.source_session.title', read_only=True)
+
+    class Meta:
+        model = StudentChallengeDayQuestion
+        fields = [
+            'id', 'question_order', 'question', 'source_session_number',
+            'source_session_title', 'question_text', 'options',
+        ]
+
+    question_text = serializers.CharField(source='question.question_text', read_only=True)
+
+    def get_options(self, obj):
+        question = obj.question
+        return [
+            {'key': 'A', 'text': question.option_a},
+            {'key': 'B', 'text': question.option_b},
+            {'key': 'C', 'text': question.option_c},
+            {'key': 'D', 'text': question.option_d},
+        ]
+
+
+class StudentChallengeSummarySerializer(serializers.ModelSerializer):
+    course_name = serializers.CharField(source='course.course_name', read_only=True)
+    batch_number = serializers.CharField(source='batch.batch_number', read_only=True)
+    batch_code = serializers.CharField(source='batch.batch_code', read_only=True)
+    progress_percentage = serializers.SerializerMethodField()
+    completed_sessions = serializers.SerializerMethodField()
+    total_sessions = serializers.SerializerMethodField()
+    current_day = serializers.SerializerMethodField()
+    next_day = serializers.SerializerMethodField()
+    today_available = serializers.SerializerMethodField()
+    review_only = serializers.SerializerMethodField()
+    achievement = serializers.SerializerMethodField()
+    completion_date = serializers.SerializerMethodField()
+    calendar_days_taken = serializers.SerializerMethodField()
+    final_score_percentage = serializers.SerializerMethodField()
+    quick_completion = serializers.SerializerMethodField()
+
+    class Meta:
+        model = StudentChallenge
+        fields = [
+            'id', 'course', 'course_name', 'batch', 'batch_number',
+            'batch_code', 'start_date', 'status', 'current_streak',
+            'longest_streak', 'completed_days', 'total_score',
+            'total_questions', 'progress_percentage',
+            'completed_sessions', 'total_sessions',
+            'current_day', 'next_day', 'today_available', 'review_only',
+            'achievement', 'completion_date', 'calendar_days_taken',
+            'final_score_percentage', 'quick_completion',
+        ]
+
+    def get_progress_percentage(self, obj):
+        return round((obj.completed_days / 15) * 100, 2) if obj.completed_days else 0
+
+    def _session_counts(self, obj):
+        if not hasattr(obj, '_student_challenge_session_counts'):
+            obj._student_challenge_session_counts = get_student_session_counts(
+                obj.student,
+                obj.course,
+                obj.batch,
+            )
+        return obj._student_challenge_session_counts
+
+    def get_completed_sessions(self, obj):
+        return self._session_counts(obj)['completed_sessions']
+
+    def get_total_sessions(self, obj):
+        return self._session_counts(obj)['total_sessions']
+
+    def _latest_day(self, obj):
+        if not obj.pk:
+            return None
+        if not hasattr(obj, '_student_challenge_latest_day'):
+            obj._student_challenge_latest_day = obj.days.order_by('-day_number').first()
+        return obj._student_challenge_latest_day
+
+    def _unused_available_count(self, obj):
+        if not hasattr(obj, '_student_challenge_unused_available_count'):
+            used_ids = []
+            if obj.pk:
+                used_ids = StudentChallengeDayQuestion.objects.filter(
+                    challenge_day__challenge=obj,
+                ).values_list('question_id', flat=True)
+            obj._student_challenge_unused_available_count = get_available_questions(
+                obj.student,
+                obj.course,
+                obj.batch,
+            ).exclude(id__in=used_ids).count()
+        return obj._student_challenge_unused_available_count
+
+    def get_current_day(self, obj):
+        latest_day = self._latest_day(obj)
+        return latest_day.day_number if latest_day else None
+
+    def get_next_day(self, obj):
+        latest_day = self._latest_day(obj)
+        if obj.status == 'completed':
+            return None
+        if not latest_day:
+            return 1
+        if latest_day.status != 'completed':
+            return latest_day.day_number
+        next_day = latest_day.day_number + 1
+        return next_day if next_day <= 15 else None
+
+    def get_today_available(self, obj):
+        latest_day = self._latest_day(obj)
+        if obj.status == 'completed':
+            return False
+        if latest_day and latest_day.status != 'completed':
+            return True
+        return self._unused_available_count(obj) >= QUESTIONS_PER_DAY
+
+    def get_review_only(self, obj):
+        latest_day = self._latest_day(obj)
+        return bool(
+            latest_day and
+            latest_day.status == 'completed' and
+            not self.get_today_available(obj)
+        )
+
+    def _achievement(self, obj):
+        if not obj.pk:
+            return None
+        if not hasattr(obj, '_student_challenge_achievement'):
+            obj._student_challenge_achievement = StudentChallengeAchievement.objects.filter(
+                challenge=obj,
+            ).first()
+        return obj._student_challenge_achievement
+
+    def get_achievement(self, obj):
+        achievement = self._achievement(obj)
+        if not achievement:
+            return None
+        return {
+            'id': achievement.id,
+            'badge_code': achievement.badge_code,
+            'badge_title': achievement.badge_title,
+            'completed_days': achievement.completed_days,
+            'final_score_percentage': float(achievement.final_score_percentage),
+            'calendar_days_taken': achievement.calendar_days_taken,
+            'completed_at': achievement.completed_at,
+        }
+
+    def get_completion_date(self, obj):
+        achievement = self._achievement(obj)
+        if achievement:
+            return achievement.completed_at
+        latest_day = self._latest_day(obj)
+        if obj.status == 'completed' and latest_day:
+            return latest_day.completed_at
+        return None
+
+    def get_calendar_days_taken(self, obj):
+        achievement = self._achievement(obj)
+        if achievement:
+            return achievement.calendar_days_taken
+        completion_date = self.get_completion_date(obj)
+        if not obj.start_date or not completion_date:
+            return None
+        return max((completion_date.date() - obj.start_date).days + 1, 1)
+
+    def get_final_score_percentage(self, obj):
+        achievement = self._achievement(obj)
+        if achievement:
+            return float(achievement.final_score_percentage)
+        if not obj.total_questions:
+            return 0
+        return round((obj.total_score / obj.total_questions) * 100, 2)
+
+    def get_quick_completion(self, obj):
+        days_taken = self.get_calendar_days_taken(obj)
+        return bool(obj.status == 'completed' and days_taken and days_taken < 15)
+
+
+class StudentChallengeDaySerializer(serializers.ModelSerializer):
+    questions = ChallengeQuestionSerializer(source='day_questions', many=True, read_only=True)
+
+    class Meta:
+        model = StudentChallengeDay
+        fields = [
+            'id', 'day_number', 'challenge_date', 'status', 'score',
+            'total_questions', 'started_at', 'completed_at', 'questions',
+        ]
+
+
+class StudentChallengeHistorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StudentChallengeDay
+        fields = [
+            'id', 'day_number', 'challenge_date', 'status', 'score',
+            'total_questions', 'started_at', 'completed_at',
+        ]
+
+
+class StudentChallengeSubmitSerializer(serializers.Serializer):
+    answers = serializers.ListField(
+        child=serializers.DictField(),
+        allow_empty=False,
+    )
+
+    def validate_answers(self, value):
+        for answer in value:
+            if 'question_id' not in answer:
+                raise serializers.ValidationError('question_id is required for every answer.')
+            if 'selected_answer' not in answer:
+                raise serializers.ValidationError('selected_answer is required for every answer.')
+            selected = str(answer.get('selected_answer') or '').upper()
+            if selected not in ['A', 'B', 'C', 'D', '']:
+                raise serializers.ValidationError('selected_answer must be A, B, C, or D.')
+        return value
 
 
 class StaffLeaveRequestSerializer(serializers.ModelSerializer):

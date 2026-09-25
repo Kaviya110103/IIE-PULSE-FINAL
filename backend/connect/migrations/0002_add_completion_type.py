@@ -1,4 +1,4 @@
-from django.db import migrations, models
+from django.db import migrations
 
 
 class Migration(migrations.Migration):
@@ -7,17 +7,7 @@ class Migration(migrations.Migration):
         ('connect', '0001_initial'),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name='completedstudent',
-            name='completion_type',
-            field=models.CharField(
-                max_length=20,
-                choices=[
-                    ('partial', 'Partial Completion - Reassigned'),
-                    ('full', 'Full Completion - Graduated'),
-                ],
-                default='full',
-            ),
-        ),
-    ]
+    # completion_type is already present in 0001_initial.py. Keeping this
+    # migration as a no-op preserves the migration graph while allowing a fresh
+    # MySQL test database to replay migrations without adding the column twice.
+    operations = []

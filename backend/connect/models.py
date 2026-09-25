@@ -1010,6 +1010,173 @@ class SessionCompletion ( models.Model ) :
         return f"{self.student.first_name} - {self.session.title} - {self.status}"
 
 
+class ChallengeQuestionPool ( models.Model ) :
+    DIFFICULTY_CHOICES = [
+            ('easy' , 'Easy') ,
+            ('medium' , 'Medium') ,
+            ('hard' , 'Hard') ,
+    ]
+
+    course = models.ForeignKey ( Courses , on_delete = models.CASCADE , related_name = 'challenge_questions' )
+    batch = models.ForeignKey ( Batches , on_delete = models.CASCADE , related_name = 'challenge_questions' )
+    source_session = models.ForeignKey (
+            CourseSession ,
+            on_delete = models.CASCADE ,
+            related_name = 'challenge_questions'
+    )
+    topic_name = models.CharField ( max_length = 255 )
+    difficulty = models.CharField ( max_length = 20 , choices = DIFFICULTY_CHOICES , default = 'medium' )
+    question_text = models.TextField ( )
+    option_a = models.CharField ( max_length = 500 )
+    option_b = models.CharField ( max_length = 500 )
+    option_c = models.CharField ( max_length = 500 )
+    option_d = models.CharField ( max_length = 500 )
+    correct_answer = models.CharField ( max_length = 1 )
+    explanation = models.TextField ( blank = True , null = True )
+    ai_provider = models.CharField ( max_length = 100 , blank = True , null = True )
+    ai_model = models.CharField ( max_length = 100 , blank = True , null = True )
+    source_hash = models.CharField ( max_length = 64 , blank = True )
+    is_active = models.BooleanField ( default = True )
+    created_at = models.DateTimeField ( auto_now_add = True )
+    updated_at = models.DateTimeField ( auto_now = True )
+
+    class Meta :
+        db_table = 'challenge_question_pool'
+        indexes = [
+                models.Index ( fields = [ 'course' , 'batch' , 'is_active' ] ) ,
+                models.Index ( fields = [ 'source_session' , 'is_active' ] ) ,
+                models.Index ( fields = [ 'batch' , 'difficulty' , 'is_active' ] ) ,
+        ]
+
+    def __str__ ( self ) :
+        return f"{self.batch.batch_number} - {self.topic_name} - {self.difficulty}"
+
+
+class StudentChallenge ( models.Model ) :
+    STATUS_CHOICES = [
+            ('active' , 'Active') ,
+            ('completed' , 'Completed') ,
+            ('cancelled' , 'Cancelled') ,
+    ]
+
+    student = models.ForeignKey ( Students , on_delete = models.CASCADE , related_name = 'challenges' )
+    course = models.ForeignKey ( Courses , on_delete = models.CASCADE , related_name = 'student_challenges' )
+    batch = models.ForeignKey ( Batches , on_delete = models.CASCADE , related_name = 'student_challenges' )
+    start_date = models.DateField ( null = True , blank = True )
+    status = models.CharField ( max_length = 20 , choices = STATUS_CHOICES , default = 'active' )
+    current_streak = models.PositiveIntegerField ( default = 0 )
+    longest_streak = models.PositiveIntegerField ( default = 0 )
+    completed_days = models.PositiveIntegerField ( default = 0 )
+    total_score = models.PositiveIntegerField ( default = 0 )
+    total_questions = models.PositiveIntegerField ( default = 0 )
+    created_at = models.DateTimeField ( auto_now_add = True )
+    updated_at = models.DateTimeField ( auto_now = True )
+
+    class Meta :
+        db_table = 'student_challenges'
+        unique_together = [ 'student' , 'course' , 'batch' ]
+        indexes = [
+                models.Index ( fields = [ 'student' , 'status' ] ) ,
+                models.Index ( fields = [ 'course' , 'batch' ] ) ,
+                models.Index ( fields = [ 'batch' , 'status' ] ) ,
+        ]
+
+    def __str__ ( self ) :
+        return f"{self.student.student_id} - {self.course.course_name} - {self.batch.batch_number}"
+
+
+class StudentChallengeAchievement ( models.Model ) :
+    BADGE_CHOICES = [
+            ('excellent_student' , 'Excellent Student') ,
+    ]
+
+    student = models.ForeignKey ( Students , on_delete = models.CASCADE , related_name = 'challenge_achievements' )
+    course = models.ForeignKey ( Courses , on_delete = models.CASCADE , related_name = 'challenge_achievements' )
+    batch = models.ForeignKey ( Batches , on_delete = models.CASCADE , related_name = 'challenge_achievements' )
+    challenge = models.OneToOneField (
+            StudentChallenge ,
+            on_delete = models.CASCADE ,
+            related_name = 'achievement'
+    )
+    badge_code = models.CharField ( max_length = 50 , choices = BADGE_CHOICES , default = 'excellent_student' )
+    badge_title = models.CharField ( max_length = 100 , default = 'Excellent Student' )
+    completed_days = models.PositiveIntegerField ( default = 15 )
+    final_score_percentage = models.DecimalField ( max_digits = 5 , decimal_places = 2 , default = 0 )
+    calendar_days_taken = models.PositiveIntegerField ( default = 1 )
+    completed_at = models.DateTimeField ( )
+    created_at = models.DateTimeField ( auto_now_add = True )
+
+    class Meta :
+        db_table = 'student_challenge_achievements'
+        unique_together = [ 'student' , 'course' , 'batch' , 'challenge' ]
+        indexes = [
+                models.Index ( fields = [ 'student' , 'course' , 'batch' ] ) ,
+                models.Index ( fields = [ 'challenge' ] ) ,
+        ]
+
+    def __str__ ( self ) :
+        return f"{self.student.student_id} - {self.badge_title}"
+
+
+class StudentChallengeDay ( models.Model ) :
+    STATUS_CHOICES = [
+            ('assigned' , 'Assigned') ,
+            ('completed' , 'Completed') ,
+    ]
+
+    challenge = models.ForeignKey ( StudentChallenge , on_delete = models.CASCADE , related_name = 'days' )
+    day_number = models.PositiveIntegerField ( )
+    challenge_date = models.DateField ( )
+    status = models.CharField ( max_length = 20 , choices = STATUS_CHOICES , default = 'assigned' )
+    score = models.PositiveIntegerField ( default = 0 )
+    total_questions = models.PositiveIntegerField ( default = 0 )
+    started_at = models.DateTimeField ( null = True , blank = True )
+    completed_at = models.DateTimeField ( null = True , blank = True )
+    created_at = models.DateTimeField ( auto_now_add = True )
+    updated_at = models.DateTimeField ( auto_now = True )
+
+    class Meta :
+        db_table = 'student_challenge_days'
+        unique_together = [ ( 'challenge' , 'day_number' ) ]
+        indexes = [
+                models.Index ( fields = [ 'challenge' , 'challenge_date' ] ) ,
+                models.Index ( fields = [ 'challenge_date' , 'status' ] ) ,
+        ]
+
+    def __str__ ( self ) :
+        return f"{self.challenge} - Day {self.day_number}"
+
+
+class StudentChallengeDayQuestion ( models.Model ) :
+    challenge_day = models.ForeignKey (
+            StudentChallengeDay ,
+            on_delete = models.CASCADE ,
+            related_name = 'day_questions'
+    )
+    question = models.ForeignKey (
+            ChallengeQuestionPool ,
+            on_delete = models.CASCADE ,
+            related_name = 'student_day_questions'
+    )
+    question_order = models.PositiveIntegerField ( )
+    selected_answer = models.CharField ( max_length = 1 , blank = True , null = True )
+    is_correct = models.BooleanField ( null = True , blank = True )
+    marks = models.PositiveIntegerField ( default = 0 )
+    answered_at = models.DateTimeField ( null = True , blank = True )
+
+    class Meta :
+        db_table = 'student_challenge_day_questions'
+        unique_together = [ ( 'challenge_day' , 'question' ) , ( 'challenge_day' , 'question_order' ) ]
+        ordering = [ 'question_order' ]
+        indexes = [
+                models.Index ( fields = [ 'challenge_day' , 'question_order' ] ) ,
+                models.Index ( fields = [ 'question' ] ) ,
+        ]
+
+    def __str__ ( self ) :
+        return f"{self.challenge_day} - Question {self.question_order}"
+
+
 # models.py
 from django.db import models
 from django.contrib.auth.models import User
@@ -1737,7 +1904,7 @@ class VlogItem(models.Model):
 
 
 class NewsItem(models.Model):
-    """News update uploaded by admin for public mobile users."""
+    """News update shown in the public mobile news feed."""
     title = models.CharField(max_length=200)
     message = models.TextField()
     image = models.ImageField(
@@ -1746,6 +1913,14 @@ class NewsItem(models.Model):
         null=True,
         validators=[FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png', 'webp'])]
     )
+    image_url = models.URLField(max_length=1000, blank=True, default='')
+    source = models.CharField(max_length=150, blank=True, default='')
+    published_at = models.DateTimeField(null=True, blank=True)
+    original_url = models.URLField(max_length=1000, blank=True, default='')
+    rss_guid = models.CharField(max_length=500, blank=True, default='')
+    content_hash = models.CharField(max_length=64, blank=True, default='')
+    category = models.CharField(max_length=50, blank=True, default='Technology')
+    news_type = models.CharField(max_length=20, blank=True, default='manual')
     uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

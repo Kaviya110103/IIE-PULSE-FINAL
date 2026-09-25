@@ -292,6 +292,7 @@ export default function TabsLayout() {
             <Tabs.Screen name="profile" />
             <Tabs.Screen name="quizzes" />
             <Tabs.Screen name="app" />
+            <Tabs.Screen name="challenge" />
             <Tabs.Screen name="support" />
           </Tabs>
         </>

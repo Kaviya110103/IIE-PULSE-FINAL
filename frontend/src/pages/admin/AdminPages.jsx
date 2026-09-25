@@ -5774,7 +5774,7 @@ export function AdminNews() {
   const load = async () => {
     setLoading(true)
     try {
-      const r = await api.get('/news/')
+      const r = await api.get('/news/?refresh=1')
       setItems(r.data.results || r.data || [])
     } catch {
       toast.error('Failed to load news')
@@ -5821,23 +5821,19 @@ export function AdminNews() {
   return (
     <div className="admin-root admin-fade">
       <AdminStyles />
-      <AdminPageHeader title="News" sub="Post news updates that appear in the mobile app" />
+      <AdminPageHeader title="News" sub="Live technology news fetched from Google News RSS" />
       <div className="admin-card">
-        <AdminSectionHeader title="Publish News" />
-        <form onSubmit={publish} style={{ padding: 22, display: 'grid', gap: 14 }}>
-          <label style={{ fontWeight: 800, color: T.navy }}>Title</label>
-          <input className="admin-input" placeholder="Title" value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value }))} />
-          <label style={{ fontWeight: 800, color: T.navy }}>Description</label>
-          <textarea className="admin-input" rows={4} placeholder="Message" value={form.message} onChange={e => setForm(p => ({ ...p, message: e.target.value }))} />
-          <input className="admin-input" type="file" accept="image/*" onChange={e => setForm(p => ({ ...p, image: e.target.files?.[0] || null }))} />
-          <button className="admin-btn admin-btn-primary" style={{ width: 'fit-content', minWidth: 112, justifySelf: 'start' }} disabled={saving}><i className={`fas ${saving ? 'fa-spinner fa-spin' : 'fa-newspaper'}`} /> {saving ? 'Publishing...' : 'Publish'}</button>
-        </form>
+        <AdminSectionHeader title="Live News Feed" />
+        <div style={{ padding: 22, display: 'grid', gap: 12 }}>
+          <p style={{ margin: 0, color: T.muted, fontWeight: 700 }}>Manual admin news publishing is deprecated. Mobile News now shows live Technology updates from Google News RSS.</p>
+          <button className="admin-btn admin-btn-primary" style={{ width: 'fit-content', minWidth: 112, justifySelf: 'start' }} onClick={load} disabled={loading}><i className={`fas ${loading ? 'fa-spinner fa-spin' : 'fa-sync'}`} /> {loading ? 'Refreshing...' : 'Refresh Live News'}</button>
+        </div>
       </div>
-      <SimpleAdminTable title="News Items" items={items} loading={loading} emptyIcon="fa-newspaper" emptyMsg="No news yet" columns={['Title', 'Message', 'Created']} renderRow={(item) => (
+      <SimpleAdminTable title="Live Technology News" items={items} loading={loading} emptyIcon="fa-newspaper" emptyMsg="No live technology news yet" columns={['Title', 'Source', 'Published']} renderRow={(item) => (
         <>
           <td style={{ fontWeight: 700 }}>{item.title}</td>
-          <td>{String(item.message || '').slice(0, 120)}</td>
-          <td>{item.created_at ? new Date(item.created_at).toLocaleString('en-IN') : '-'}</td>
+          <td>{item.source || 'Google News'}</td>
+          <td>{(item.published_at || item.created_at) ? new Date(item.published_at || item.created_at).toLocaleString('en-IN') : '-'}</td>
           <td><button className="admin-btn admin-btn-danger admin-btn-sm" onClick={() => remove(item)}><i className="fas fa-trash" /> Delete</button></td>
         </>
       )} />
