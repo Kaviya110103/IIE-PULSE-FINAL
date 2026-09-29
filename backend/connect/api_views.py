@@ -8130,6 +8130,364 @@ def _tracking_login_usage(staff):
     }
 
 
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def staff_batch_detail_report(request, batch_id):
+    try:
+        staff = Employee.objects.get(user=request.user)
+    except Employee.DoesNotExist:
+        return Response({'error': 'Staff profile not found'}, status=404)
+
+    try:
+        batch = Batches.objects.select_related('course_name', 'faculty').prefetch_related(
+            'trainer_assignments__trainer'
+        ).get(id=batch_id)
+    except Batches.DoesNotExist:
+        return Response({'error': 'Batch not found'}, status=404)
+
+    is_active_trainer = _is_batch_trainer(batch, staff)
+    is_previous_trainer = _is_previous_trainer_for_batch(batch, staff)
+    if not (is_active_trainer or is_previous_trainer or is_admin_user(request.user)):
+        return Response({'error': 'You do not have access to this batch'}, status=403)
+
+    today = timezone.localdate()
+    start_date = today - timedelta(days=29)
+    start_dt = timezone.make_aware(datetime.combine(start_date, datetime.min.time()))
+    end_dt = timezone.make_aware(datetime.combine(today + timedelta(days=1), datetime.min.time()))
+
+    batch_students_qs = active_students_for_batch(batch).select_related('user', 'assigned_staff', 'assigned_batch')
+    student_ids = list(batch_students_qs.values_list('id', flat=True))
+    sessions_qs = CourseSession.objects.filter(batch=batch)
+    session_ids = list(sessions_qs.values_list('id', flat=True))
+
+    attendance_qs = StudentAttendance.objects.filter(
+        batch=batch,
+        date__gte=start_date,
+        date__lte=today,
+    ).select_related('student', 'staff', 'session')
+    staff_attendance_qs = attendance_qs.filter(staff=staff)
+
+    materials_qs = StudyMaterial.objects.filter(
+        Q(batch=batch) | Q(assignments__batch=batch),
+        uploaded_at__gte=start_dt,
+        uploaded_at__lt=end_dt,
+    ).distinct().select_related('uploaded_by', 'batch')
+    quizzes_qs = Quiz.objects.filter(
+        batch=batch,
+        created_at__gte=start_dt,
+        created_at__lt=end_dt,
+    ).select_related('created_by')
+    tests_qs = AssignedTest.objects.filter(
+        batch=batch,
+        assigned_date__gte=start_dt,
+        assigned_date__lt=end_dt,
+    ).select_related('test', 'test__created_by')
+    staff_completion_qs = DailySessionCompletion.objects.filter(
+        session__batch=batch,
+        completed=True,
+        completion_date__gte=start_date,
+        completion_date__lte=today,
+    ).select_related('session', 'faculty')
+    student_progress_qs = Student_Session_Progress.objects.filter(
+        session__batch=batch,
+        updated_at__gte=start_dt,
+        updated_at__lt=end_dt,
+    ).filter(Q(completed=True) | Q(student_status='completed')).select_related('student', 'session')
+    student_login_qs = UserActivity.objects.filter(
+        student_id__in=student_ids,
+        user_type='student',
+        login_time__gte=start_dt,
+        login_time__lt=end_dt,
+    ).select_related('student')
+    staff_login_qs = UserActivity.objects.filter(
+        employee=staff,
+        user_type='employee',
+        login_time__gte=start_dt,
+        login_time__lt=end_dt,
+    ).order_by('-login_time')
+    new_enrollment_qs = StudentBatchEnrollment.objects.filter(
+        batch=batch,
+        student_id__in=student_ids,
+        assigned_at__gte=start_dt,
+        assigned_at__lt=end_dt,
+        is_active=True,
+    ).select_related('student')
+
+    def local_date(value):
+        if not value:
+            return None
+        if isinstance(value, datetime):
+            return timezone.localtime(value).date()
+        return value
+
+    day_map = {
+        start_date + timedelta(days=offset): {
+            'date': start_date + timedelta(days=offset),
+            'attendance_marked_days': 0,
+            'attendance_records': 0,
+            'present_count': 0,
+            'absent_count': 0,
+            'quizzes_uploaded': 0,
+            'tests_uploaded': 0,
+            'materials_uploaded': 0,
+            'student_logins': 0,
+            'unique_student_logins': 0,
+            'staff_completed_sessions': 0,
+            'student_completed_sessions': 0,
+            'new_students': 0,
+        }
+        for offset in range(30)
+    }
+
+    attendance_dates = set()
+    for row in attendance_qs:
+        item = day_map.get(row.date)
+        if not item:
+            continue
+        attendance_dates.add(row.date)
+        item['attendance_records'] += 1
+        if str(row.status).lower() == 'present':
+            item['present_count'] += 1
+        elif str(row.status).lower() == 'absent':
+            item['absent_count'] += 1
+    for marked_date in attendance_dates:
+        if marked_date in day_map:
+            day_map[marked_date]['attendance_marked_days'] = 1
+
+    for item in materials_qs:
+        row = day_map.get(local_date(item.uploaded_at))
+        if row:
+            row['materials_uploaded'] += 1
+    for item in quizzes_qs:
+        row = day_map.get(local_date(item.created_at))
+        if row:
+            row['quizzes_uploaded'] += 1
+    seen_test_ids_by_day = {}
+    for item in tests_qs:
+        day = local_date(item.assigned_date)
+        if day not in day_map:
+            continue
+        seen_test_ids_by_day.setdefault(day, set()).add(item.test_id)
+    for day, ids in seen_test_ids_by_day.items():
+        day_map[day]['tests_uploaded'] = len(ids)
+
+    unique_login_students_by_day = {}
+    for item in student_login_qs:
+        day = local_date(item.login_time)
+        row = day_map.get(day)
+        if not row:
+            continue
+        row['student_logins'] += 1
+        unique_login_students_by_day.setdefault(day, set()).add(item.student_id)
+    for day, ids in unique_login_students_by_day.items():
+        day_map[day]['unique_student_logins'] = len(ids)
+
+    staff_session_ids_by_day = {}
+    for item in staff_completion_qs:
+        staff_session_ids_by_day.setdefault(item.completion_date, set()).add(item.session_id)
+    for day, ids in staff_session_ids_by_day.items():
+        if day in day_map:
+            day_map[day]['staff_completed_sessions'] = len(ids)
+
+    student_done_ids_by_day = {}
+    for item in student_progress_qs:
+        day = local_date(item.updated_at)
+        if day in day_map:
+            student_done_ids_by_day.setdefault(day, set()).add((item.student_id, item.session_id))
+    for day, ids in student_done_ids_by_day.items():
+        day_map[day]['student_completed_sessions'] = len(ids)
+
+    for item in new_enrollment_qs:
+        day = local_date(item.assigned_at)
+        if day in day_map:
+            day_map[day]['new_students'] += 1
+
+    total_sessions = sessions_qs.count()
+    staff_completed_session_ids = set(sessions_qs.filter(staff_completed=True).values_list('id', flat=True))
+    staff_completed_session_ids.update(DailySessionCompletion.objects.filter(
+        session_id__in=session_ids,
+        completed=True,
+    ).values_list('session_id', flat=True))
+    student_done_count = Student_Session_Progress.objects.filter(
+        student_id__in=student_ids,
+        session_id__in=session_ids,
+    ).filter(Q(completed=True) | Q(student_status='completed')).count()
+    student_progress_total = max(len(student_ids) * total_sessions, 0)
+
+    student_login_counts = {
+        row['student_id']: row['login_count']
+        for row in UserActivity.objects.filter(
+            student_id__in=student_ids,
+            user_type='student',
+            login_time__gte=start_dt,
+            login_time__lt=end_dt,
+        ).values('student_id').annotate(login_count=Count('id'))
+    }
+    attendance_counts = {
+        row['student_id']: row
+        for row in StudentAttendance.objects.filter(
+            batch=batch,
+            student_id__in=student_ids,
+            date__gte=start_date,
+            date__lte=today,
+        ).values('student_id').annotate(
+            total=Count('id'),
+            present=Count('id', filter=Q(status='Present')),
+        )
+    }
+    progress_counts = {
+        row['student_id']: row
+        for row in Student_Session_Progress.objects.filter(
+            student_id__in=student_ids,
+            session_id__in=session_ids,
+        ).values('student_id').annotate(
+            total=Count('id'),
+            completed=Count('id', filter=Q(completed=True) | Q(student_status='completed')),
+            staff_completed=Count('id', filter=Q(staff_completed=True)),
+        )
+    }
+    enrollment_dates = {
+        row.student_id: row.assigned_at
+        for row in StudentBatchEnrollment.objects.filter(batch=batch, student_id__in=student_ids)
+    }
+
+    student_rows = []
+    for student in batch_students_qs.order_by('first_name', 'last_name'):
+        att = attendance_counts.get(student.id, {})
+        progress = progress_counts.get(student.id, {})
+        progress_done = progress.get('completed', 0) or progress.get('staff_completed', 0) or 0
+        progress_total = progress.get('total', 0) or total_sessions
+        assigned_at = enrollment_dates.get(student.id)
+        student_rows.append({
+            'id': student.id,
+            'student_id': student.student_id,
+            'name': f"{student.first_name} {student.last_name or ''}".strip(),
+            'email': student.email,
+            'mobile_no': student.mobile_no,
+            'assigned_at': assigned_at,
+            'is_new': bool(assigned_at and assigned_at >= start_dt),
+            'login_count': student_login_counts.get(student.id, 0),
+            'attendance_total': att.get('total', 0),
+            'attendance_present': att.get('present', 0),
+            'attendance_percentage': round((att.get('present', 0) / att.get('total', 0) * 100) if att.get('total', 0) else 0, 1),
+            'sessions_completed': progress_done,
+            'total_sessions': progress_total,
+            'session_percentage': round((progress_done / progress_total * 100) if progress_total else 0, 1),
+        })
+
+    trainers = []
+    if batch.faculty:
+        trainers.append({
+            'id': batch.faculty.id,
+            'name': f"{batch.faculty.first_name} {batch.faculty.last_name or ''}".strip() or batch.faculty.user.username,
+            'timing': batch.batch_timing,
+            'primary': True,
+        })
+    for assignment in batch.trainer_assignments.all():
+        if assignment.trainer_id and assignment.trainer_id not in {item['id'] for item in trainers}:
+            trainers.append({
+                'id': assignment.trainer_id,
+                'name': f"{assignment.trainer.first_name} {assignment.trainer.last_name or ''}".strip() or assignment.trainer.user.username,
+                'timing': assignment.batch_timing or batch.batch_timing,
+                'primary': assignment.is_primary,
+            })
+
+    recent_uploads = []
+    recent_uploads.extend({
+        'type': 'Material',
+        'title': item.title,
+        'uploaded_by': f"{item.uploaded_by.first_name} {item.uploaded_by.last_name or ''}".strip() if item.uploaded_by else '',
+        'date': item.uploaded_at,
+    } for item in materials_qs.order_by('-uploaded_at')[:8])
+    recent_uploads.extend({
+        'type': 'Quiz',
+        'title': item.title,
+        'uploaded_by': f"{item.created_by.first_name} {item.created_by.last_name or ''}".strip() if item.created_by else '',
+        'date': item.created_at,
+    } for item in quizzes_qs.order_by('-created_at')[:8])
+    recent_uploads.extend({
+        'type': 'Test',
+        'title': item.test.title if item.test else '',
+        'uploaded_by': f"{item.test.created_by.first_name} {item.test.created_by.last_name or ''}".strip() if item.test and item.test.created_by else '',
+        'date': item.assigned_date,
+    } for item in tests_qs.order_by('-assigned_date')[:8])
+    recent_uploads = sorted(recent_uploads, key=lambda item: item['date'] or timezone.now(), reverse=True)[:12]
+
+    login_usage = _tracking_login_usage(staff)
+    last_staff_login = staff_login_qs.first()
+    return Response({
+        'batch': {
+            'id': batch.id,
+            'batch_number': batch.batch_number,
+            'batch_code': batch.batch_code,
+            'display_name': batch.batch_code or batch.batch_number,
+            'course': batch.course_name.course_name if batch.course_name else '',
+            'course_type': batch.course_type,
+            'branch': batch.branch,
+            'timing': batch.batch_timing,
+            'start_date': batch.start_date,
+            'end_date': batch.end_date,
+            'created_at': batch.created_at,
+            'access_status': 'previous' if is_previous_trainer and not is_active_trainer else 'active',
+            'trainers': trainers,
+        },
+        'period': {
+            'from': start_date,
+            'to': today,
+            'days': 30,
+        },
+        'staff_login': {
+            **login_usage,
+            'last_week_count': staff_login_qs.count(),
+            'last_month_count': staff_login_qs.count(),
+            'last_login': last_staff_login.login_time if last_staff_login else None,
+            'records': [{
+                'login_time': item.login_time,
+                'logout_time': item.logout_time,
+                'last_seen': item.last_seen,
+            } for item in staff_login_qs],
+        },
+        'summary': {
+            'student_count': len(student_ids),
+            'new_students': new_enrollment_qs.count(),
+            'attendance_marked_days': len(attendance_dates),
+            'attendance_records': attendance_qs.count(),
+            'quizzes_uploaded': quizzes_qs.count(),
+            'tests_uploaded': tests_qs.values('test_id').distinct().count(),
+            'materials_uploaded': materials_qs.count(),
+            'student_logins': student_login_qs.count(),
+            'unique_student_logins': student_login_qs.values('student_id').distinct().count(),
+            'staff_completed_sessions': len(staff_completed_session_ids),
+            'total_sessions': total_sessions,
+            'staff_session_percentage': round((len(staff_completed_session_ids) / total_sessions * 100) if total_sessions else 0, 1),
+            'student_completed_sessions': student_done_count,
+            'student_total_session_slots': student_progress_total,
+            'student_session_percentage': round((student_done_count / student_progress_total * 100) if student_progress_total else 0, 1),
+        },
+        'daily_rows': [day_map[day] for day in sorted(day_map.keys(), reverse=True)],
+        'students': student_rows,
+        'attendance_records': [{
+            'id': item.id,
+            'date': item.date,
+            'student_name': f"{item.student.first_name} {item.student.last_name or ''}".strip() if item.student else '',
+            'student_id': item.student.student_id if item.student else '',
+            'status': item.status,
+            'marked_by': f"{item.staff.first_name} {item.staff.last_name or ''}".strip() if item.staff else '',
+            'session': f"Session {item.session.session_number}" if item.session else '',
+            'remarks': item.remarks or '',
+        } for item in attendance_qs.order_by('-date', 'student__first_name', 'student__last_name')[:250]],
+        'student_login_records': [{
+            'id': item.id,
+            'login_time': item.login_time,
+            'logout_time': item.logout_time,
+            'last_seen': item.last_seen,
+            'student_name': f"{item.student.first_name} {item.student.last_name or ''}".strip() if item.student else '',
+            'student_id': item.student.student_id if item.student else '',
+        } for item in student_login_qs.order_by('-login_time')],
+        'recent_uploads': recent_uploads,
+    })
+
+
 def _is_counselor_staff(staff):
     return (getattr(staff, 'designation', '') or '').strip().lower() == 'counselor'
 

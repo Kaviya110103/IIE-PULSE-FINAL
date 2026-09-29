@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import api from '../../api/client'
 import toast from 'react-hot-toast'
-import { useNavigate, useLocation } from 'react-router-dom' // ← ADD THIS
+import { useNavigate, useLocation, useParams, Link } from 'react-router-dom' // ← ADD THIS
 
 // ── Design tokens (same as CounselorPages) ─────────────────────────────────────────
 const T = {
@@ -443,6 +443,13 @@ function formatActivityTime(value) {
   })
 }
 
+function formatSimpleDate(value) {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
 export function MentorStudentMonitoring() {
   const [records, setRecords] = useState([])
   const [loading, setLoading] = useState(true)
@@ -787,6 +794,242 @@ export function ViewBatches() {
   )
 }
 
+export function StaffBatchDetails() {
+  const { batchId } = useParams()
+  const navigate = useNavigate()
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [loginModal, setLoginModal] = useState(null)
+  const [attendanceStudentFilter, setAttendanceStudentFilter] = useState('')
+
+  useEffect(() => {
+    setAttendanceStudentFilter('')
+    setLoading(true)
+    api.get(`/batches/${batchId}/staff-detail-report/`)
+      .then(res => setData(res.data))
+      .catch(err => toast.error(err.response?.data?.error || 'Failed to load batch details'))
+      .finally(() => setLoading(false))
+  }, [batchId])
+
+  const batch = data?.batch || {}
+  const summary = data?.summary || {}
+  const staffLogin = data?.staff_login || {}
+  const trainerText = (batch.trainers || [])
+    .map(trainer => `${trainer.name}${trainer.timing ? ` - ${trainer.timing}` : ''}`)
+    .join(', ')
+
+  const attendanceRecords = data?.attendance_records || []
+  const attendanceStudentOptions = Array.from(
+    new Map(attendanceRecords.map(record => {
+      const value = `${record.student_id || '-'}|${record.student_name || '-'}`
+      return [value, {
+        value,
+        label: `${record.student_name || '-'} (${record.student_id || '-'})`,
+      }]
+    })).values()
+  ).sort((a, b) => a.label.localeCompare(b.label))
+  const filteredAttendanceRecords = attendanceStudentFilter
+    ? attendanceRecords.filter(record => `${record.student_id || '-'}|${record.student_name || '-'}` === attendanceStudentFilter)
+    : attendanceRecords
+
+  const loginDateKey = (value) => {
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return 'Unknown'
+    return date.toISOString().slice(0, 10)
+  }
+
+  const groupLoginRecords = (records, keyBuilder, rowBuilder) => {
+    const grouped = new Map()
+    ;(records || []).forEach(record => {
+      const key = keyBuilder(record)
+      if (!grouped.has(key)) grouped.set(key, { ...rowBuilder(record), records: [] })
+      grouped.get(key).records.push(record)
+    })
+    return Array.from(grouped.values()).map(row => ({ ...row, login_count: row.records.length }))
+  }
+
+  const studentLoginRows = groupLoginRecords(
+    data?.student_login_records || [],
+    record => `${record.student_id || '-'}|${loginDateKey(record.login_time)}`,
+    record => ({
+      student_id: record.student_id || '-',
+      student_name: record.student_name || '-',
+      date: loginDateKey(record.login_time),
+      title: `${record.student_name || 'Student'} - ${formatSimpleDate(record.login_time)}`,
+    })
+  )
+
+  const studentLoginTotal = (data?.student_login_records || []).length
+  const staffLoginTotal = (staffLogin.records || []).length
+
+  const staffLoginRows = groupLoginRecords(
+    staffLogin.records || [],
+    record => loginDateKey(record.login_time),
+    record => ({
+      staff_name: trainerText || 'Staff',
+      date: loginDateKey(record.login_time),
+      title: `Staff Login - ${formatSimpleDate(record.login_time)}`,
+    })
+  )
+
+  const showHistory = (title, records) => {
+    setLoginModal({ title, records: records || [] })
+  }
+
+  return (
+    <div className="employee-root">
+      <Styles />
+      <div className="employee-page-header">
+        <div>
+          <h3><i className="fas fa-chart-line" /> Batch Details</h3>
+          <p>Clear last 30 days view for attendance and login activity</p>
+        </div>
+        <button className="employee-btn employee-btn-ghost" onClick={() => navigate('/employee/batches')}>
+          <i className="fas fa-arrow-left" /> Back
+        </button>
+      </div>
+
+      {loading ? <div className="employee-card"><Spin /></div> : !data ? (
+        <div className="employee-card"><Empty msg="Batch details not available" icon="fa-chart-line" /></div>
+      ) : (
+        <>
+          <div style={{ marginBottom: 20, paddingBottom: 16, borderBottom: `1px solid ${T.border}` }}>
+            <h2 style={{ margin: '0 0 6px', fontSize: 24, color: T.navy }}>{batch.display_name || batch.batch_number}</h2>
+            <div style={{ color: T.slate, lineHeight: 1.7, fontSize: 14 }}>
+              <strong>{batch.course || '-'}</strong>{batch.course_type ? ` - ${batch.course_type}` : ''}<br />
+              Start: {formatSimpleDate(batch.start_date)} | End: {formatSimpleDate(batch.end_date)} | Branch: {batch.branch || '-'}<br />
+              Timing: {trainerText || batch.timing || '-'}
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 22, display: 'flex', flexWrap: 'wrap', gap: 10, color: T.navy, fontSize: 14 }}>
+            <span><strong>{summary.student_count || 0}</strong> Students</span>
+            <span>|</span>
+            <span><strong>{summary.attendance_marked_days || 0}</strong> Attendance days</span>
+            <span>|</span>
+            <span><strong>{summary.staff_completed_sessions || 0}/{summary.total_sessions || 0}</strong> Staff sessions</span>
+            <span>|</span>
+            <span><strong>{summary.student_completed_sessions || 0}/{summary.student_total_session_slots || 0}</strong> Student sessions</span>
+            <span>|</span>
+            <span><strong>{summary.materials_uploaded || 0}</strong> Materials</span>
+            <span>|</span>
+            <span><strong>{summary.tests_uploaded || 0}</strong> Tests</span>
+            <span>|</span>
+            <span><strong>{summary.quizzes_uploaded || 0}</strong> Quizzes</span>
+            <span>|</span>
+            <span>Staff login: <strong>{staffLogin.login_usage_count || 0}/{staffLogin.login_usage_target || 7}</strong> ({staffLogin.login_usage_percentage || 0}%)</span>
+          </div>
+
+          <section style={{ marginBottom: 26 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 10, flexWrap: 'wrap' }}>
+              <h4 style={{ margin: 0, fontSize: 18, color: T.navy }}>Student Attendance Details</h4>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <select
+                  className="employee-input"
+                  value={attendanceStudentFilter}
+                  onChange={event => setAttendanceStudentFilter(event.target.value)}
+                  style={{ width: 240, height: 38, padding: '0 12px' }}
+                >
+                  <option value="">All Students</option>
+                  {attendanceStudentOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+                <span style={{ color: T.slate, fontSize: 13 }}>Last 30 days | {filteredAttendanceRecords.length}/{attendanceRecords.length} records</span>
+              </div>
+            </div>
+            <div style={{ overflowX: 'auto', border: `1px solid ${T.border}`, borderRadius: 10 }}>
+              <table className="employee-table">
+                <thead><tr><th>Date</th><th>Student</th><th>Student ID</th><th>Status</th><th>Session</th><th>Marked By</th><th>Remarks</th></tr></thead>
+                <tbody>
+                  {filteredAttendanceRecords.length === 0 ? (
+                    <tr><td colSpan="7" style={{ textAlign: 'center', color: T.slate }}>No attendance records for the selected student in the last 30 days.</td></tr>
+                  ) : filteredAttendanceRecords.map(record => (
+                    <tr key={record.id}>
+                      <td>{formatSimpleDate(record.date)}</td>
+                      <td>{record.student_name || '-'}</td>
+                      <td>{record.student_id || '-'}</td>
+                      <td><Badge text={record.status || '-'} variant={record.status === 'Present' ? 'success' : 'danger'} /></td>
+                      <td>{record.session || '-'}</td>
+                      <td>{record.marked_by || '-'}</td>
+                      <td>{record.remarks || '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section style={{ marginBottom: 26 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 10, flexWrap: 'wrap' }}>
+              <h4 style={{ margin: 0, fontSize: 18, color: T.navy }}>Student Login History ({studentLoginTotal})</h4>
+              <span style={{ color: T.slate, fontSize: 13 }}>Per day login count</span>
+            </div>
+            <div style={{ overflowX: 'auto', border: `1px solid ${T.border}`, borderRadius: 10 }}>
+              <table className="employee-table">
+                <thead><tr><th>Student ID</th><th>Name</th><th>Date</th><th>Login Count</th><th>History</th></tr></thead>
+                <tbody>
+                  {studentLoginRows.length === 0 ? (
+                    <tr><td colSpan="5" style={{ textAlign: 'center', color: T.slate }}>No student login records in the last month.</td></tr>
+                  ) : studentLoginRows.map(row => (
+                    <tr key={`${row.student_id}-${row.date}`}>
+                      <td>{row.student_id}</td>
+                      <td>{row.student_name}</td>
+                      <td>{formatSimpleDate(row.date)}</td>
+                      <td>{row.login_count}</td>
+                      <td><button className="employee-btn employee-btn-sm employee-btn-ghost" onClick={() => showHistory(row.title, row.records)}><i className="fas fa-eye" /> View</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 10, flexWrap: 'wrap' }}>
+              <h4 style={{ margin: 0, fontSize: 18, color: T.navy }}>Staff Login History ({staffLoginTotal})</h4>
+              <span style={{ color: T.slate, fontSize: 13 }}>Last month login count</span>
+            </div>
+            <div style={{ overflowX: 'auto', border: `1px solid ${T.border}`, borderRadius: 10 }}>
+              <table className="employee-table">
+                <thead><tr><th>Staff</th><th>Date</th><th>Login Count</th><th>History</th></tr></thead>
+                <tbody>
+                  {staffLoginRows.length === 0 ? (
+                    <tr><td colSpan="4" style={{ textAlign: 'center', color: T.slate }}>No staff login records in the last month.</td></tr>
+                  ) : staffLoginRows.map(row => (
+                    <tr key={row.date}>
+                      <td>{row.staff_name}</td>
+                      <td>{formatSimpleDate(row.date)}</td>
+                      <td>{row.login_count}</td>
+                      <td><button className="employee-btn employee-btn-sm employee-btn-ghost" onClick={() => showHistory(row.title, row.records)}><i className="fas fa-eye" /> View</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </>
+      )}
+
+      {loginModal && (
+        <Modal open onClose={() => setLoginModal(null)} title={loginModal.title} size="md">
+          <div style={{ overflowX: 'auto' }}>
+            <table className="employee-table">
+              <thead><tr><th>Login Time</th><th>Logout Time</th><th>Last Seen</th></tr></thead>
+              <tbody>
+                {loginModal.records.map((record, index) => (
+                  <tr key={record.id || index}>
+                    <td>{formatActivityTime(record.login_time)}</td>
+                    <td>{formatActivityTime(record.logout_time)}</td>
+                    <td>{formatActivityTime(record.last_seen)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Modal>
+      )}
+    </div>
+  )
+}
 // ─── Batch Card ────────────────────────────────────────────────────────────
 function BatchCard({ batch, onViewSessions, onViewStudents, accessStatus = 'active' }) {
   const [renameOpen, setRenameOpen] = useState(false)
@@ -829,7 +1072,10 @@ function BatchCard({ batch, onViewSessions, onViewStudents, accessStatus = 'acti
           <h4>{batchCode}</h4>
           <p>{batch.course_name_display}</p>
         </div>
-        <button type="button" className="employee-btn employee-btn-sm employee-btn-ghost" onClick={() => setRenameOpen(true)} title="Rename batch"><i className="fas fa-pen" /> Rename</button>
+        <div style={{ display: 'grid', gap: 8, justifyItems: 'center' }}>
+          <button type="button" className="employee-btn employee-btn-sm employee-btn-ghost" onClick={() => setRenameOpen(true)} title="Rename batch"><i className="fas fa-pen" /> Rename</button>
+          <Link to={`/employee/batches/${batch.id}/details`} className="employee-btn employee-btn-sm" style={{ background: 'transparent', border: `1.5px solid ${T.amber}`, color: T.amber, textDecoration: 'none' }}><i className="fas fa-chart-line" /> Batch Details</Link>
+        </div>
         {isPrevious && <Badge text="Previous Trainer" variant="warning" />}
       </div>
       {renameOpen && (
@@ -4748,7 +4994,7 @@ export function ViewTests() {
                 {tests.map(test => (
                   <tr key={test.id}>
                     <td style={{ fontWeight: 600 }}>{test.title}</td>
-                    <td style={{ maxWidth: 200 }}>{test.description || '�'}</td>
+                    <td style={{ maxWidth: 200 }}>{test.description || '�'}</td>
                     <td><Badge text={test.creation_method === 'upload' ? 'Uploaded File' : 'Manual'} variant={test.creation_method === 'upload' ? 'info' : 'success'} /></td>
                     <td style={{ textAlign: 'center' }}>
                       {test.creation_method === 'upload'

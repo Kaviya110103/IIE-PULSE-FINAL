@@ -25,7 +25,7 @@ import {
 
 // ── Employee ───────────────────────────────────────────────────────────────
 import {
-  EmployeeDashboard, ViewBatches, MarkAttendance, AttendanceHistoryPage,
+  EmployeeDashboard, ViewBatches, StaffBatchDetails, MarkAttendance, AttendanceHistoryPage,
   StudyMaterials, MaterialLibrary, StaffLeaveApply, CounselorLeaveApply, StaffSupportRequest,
   CounselorSupportRequest, StudentLeaveRequests, StaffCompletedStudents,
   StaffAnnouncements, TrainerAnnouncements, BranchAnnouncements, StaffDoubts as EmployeeDoubts, ViewStudents,
@@ -241,6 +241,7 @@ function AppRoutes() {
         <Route path="attendance" element={<MarkAttendance />} />
         <Route path="attendance-history" element={<AttendanceHistoryPage />} />
         <Route path="batches" element={<ViewBatches />} />
+        <Route path="batches/:batchId/details" element={<StaffBatchDetails />} />
         <Route path="doubts" element={<EmployeeDoubts />} />
         <Route path="announcements" element={<StaffAnnouncements />} />
         <Route path="trainer-announcements" element={<TrainerAnnouncements />} />
