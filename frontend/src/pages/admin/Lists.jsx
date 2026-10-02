@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import api from '../../api/client'
 import { ConfirmModal } from '../../components/common/index.jsx'
@@ -22,7 +22,6 @@ const T = {
   shadow: '0 4px 24px rgba(15,27,45,0.10)',
   shadowMd: '0 8px 40px rgba(15,27,45,0.14)',
 }
-
 const parseCourseDuration = (duration) => {
   const value = String(duration || '').trim().toLowerCase()
   const match = value.match(/^([1-9]\d*)\s*(day|days|month|months)$/)
@@ -277,7 +276,6 @@ function Avatar({ name = '', size = 34, radius = 9 }) {
     </div>
   )
 }
-
 function Badge({ text, variant = 'default' }) {
   const variants = {
     success: { bg: '#e8f8f0', color: '#1a6b3e' },
@@ -859,6 +857,7 @@ export function StudentsList({ adminView = true }) {
 
 function StudentForm({ item, courses, counselorBranch, onClose, onSaved }) {
   const isEdit = !!item
+  const initializedEditCourses = useRef(false)
   const [form, setForm] = useState({
     student_id: item?.student_id || '',
     first_name: item?.first_name || '',
@@ -874,24 +873,122 @@ function StudentForm({ item, courses, counselorBranch, onClose, onSaved }) {
     branch: counselorBranch || item?.branch || '',
   })
   const [courseIds, setCourseIds] = useState(() => {
+    const names = item?.course_names || (item?.course ? String(item.course).split(',').map(x => x.trim()) : [])
+    const resolved = (courses || []).filter(c => names.includes(c.course_name)).map(c => String(c.id))
+    if (resolved.length) return resolved
     const ids = item?.course_ids || []
     if (ids.length) return ids.map(String)
-    const names = item?.course_names || (item?.course ? String(item.course).split(',').map(x => x.trim()) : [])
-    return (courses || []).filter(c => names.includes(c.course_name)).map(c => String(c.id))
+    return resolved.length ? resolved : ['']
+  })
+  const [feeAdjustments, setFeeAdjustments] = useState(() => {
+    const values = {}
+    ;(item?.enrolled_courses || []).forEach(course => {
+      values[String(course.course_id)] = {
+        course_fee: course.course_fee ?? course.fee ?? '',
+        eligible_discount: course.eligible_discount ?? 0,
+      }
+    })
+    return values
   })
   const [photo, setPhoto] = useState(null)
   const [saving, setSaving] = useState(false)
   const f = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
   useEffect(() => {
-    if (courseIds.length || !item || !courses?.length) return
-    const names = item?.course_names || (item?.course ? String(item.course).split(',').map(x => x.trim()) : [])
-    setCourseIds(courses.filter(c => names.includes(c.course_name)).map(c => String(c.id)))
-  }, [courses, item, courseIds.length])
+    if (!item || !courses?.length || initializedEditCourses.current) return
+    initializedEditCourses.current = true
+    const names = item?.course ? String(item.course).split(',').map(x => x.trim()).filter(Boolean) : (item?.course_names || [])
+    const resolved = courses.filter(c => names.includes(c.course_name)).map(c => String(c.id))
+    if (resolved.length) {
+      setCourseIds([...new Set(resolved)])
+    } else if (item?.course_ids?.length) {
+      setCourseIds([...new Set(item.course_ids.map(String))])
+    } else {
+      setCourseIds([''])
+    }
+  }, [courses, item])
 
-  const toggleCourse = (id) => {
-    const value = String(id)
-    setCourseIds(prev => prev.includes(value) ? prev.filter(x => x !== value) : [...prev, value])
+  const ensureCourseFeeAdjustment = (value) => {
+    const course = courses.find(c => String(c.id) === String(value))
+    if (!course) return
+    setFeeAdjustments(prev => prev[value] ? prev : ({
+      ...prev,
+      [value]: { course_fee: course.fee || 0, eligible_discount: 0 },
+    }))
+  }
+
+  const updateCourseSelection = (index, id) => {
+    const value = String(id || '')
+    if (value && courseIds.some((courseId, i) => i !== index && String(courseId) === value)) {
+      toast.error('This course is already selected')
+      return
+    }
+    setCourseIds(prev => {
+      const next = [...prev]
+      next[index] = value
+      return next
+    })
+    if (value) ensureCourseFeeAdjustment(value)
+  }
+
+  const addCourseRow = () => {
+    setCourseIds(prev => [...prev, ''])
+  }
+
+  const removeCourseRow = (index) => {
+    setCourseIds(prev => {
+      const next = prev.filter((_, i) => i !== index)
+      return next.length ? next : ['']
+    })
+  }
+
+  useEffect(() => {
+    const selectedIds = courseIds.filter(Boolean)
+    if (!courses?.length || !selectedIds.length) return
+    setFeeAdjustments(prev => {
+      let changed = false
+      const next = { ...prev }
+      selectedIds.forEach(id => {
+        if (!next[id]) {
+          const course = courses.find(c => String(c.id) === String(id))
+          next[id] = { course_fee: course?.fee || 0, eligible_discount: 0 }
+          changed = true
+        }
+      })
+      return changed ? next : prev
+    })
+  }, [courses, courseIds])
+
+  const feeValue = (value) => {
+    const amount = Number(value || 0)
+    return Number.isFinite(amount) ? amount : 0
+  }
+
+  const actualCourseFee = (courseId, courseFee) => {
+    const adjustment = feeAdjustments[String(courseId)] || {}
+    const baseFee = feeValue(adjustment.course_fee || courseFee)
+    const discount = feeValue(adjustment.eligible_discount)
+    return Math.max(baseFee - discount, 0)
+  }
+
+  const selectedCourseIds = courseIds.filter(Boolean)
+  const selectedCourses = selectedCourseIds
+    .map(id => courses.find(c => String(c.id) === String(id)))
+    .filter(Boolean)
+
+  const updateCourseDiscount = (course, value) => {
+    const id = String(course.id)
+    const baseFee = feeValue(feeAdjustments[id]?.course_fee || course.fee)
+    const cleaned = String(value || '').replace(/[^\d.]/g, '')
+    const parts = cleaned.split('.')
+    const amountText = parts.length > 1 ? `${parts[0]}.${parts.slice(1).join('')}` : cleaned
+    setFeeAdjustments(prev => ({
+      ...prev,
+      [id]: {
+        course_fee: baseFee,
+        eligible_discount: amountText,
+      },
+    }))
   }
 
   const handleBranchChange = async (branch) => {
@@ -910,14 +1007,32 @@ function StudentForm({ item, courses, counselorBranch, onClose, onSaved }) {
   const save = async e => {
     e.preventDefault(); setSaving(true)
     try {
-      if (courseIds.length === 0) {
+      const validCourseIds = courseIds.filter(Boolean)
+      if (validCourseIds.length === 0) {
         toast.error('Select at least one course')
         return
       }
       const fd = new FormData()
-      const selectedNames = courses.filter(c => courseIds.includes(String(c.id))).map(c => c.course_name)
+      const selectedNames = validCourseIds
+        .map(id => courses.find(c => String(c.id) === String(id)))
+        .filter(Boolean)
+        .map(c => c.course_name)
       Object.entries({ ...form, course: selectedNames.join(', ') }).forEach(([k, v]) => { if (v !== '' && v !== undefined) fd.append(k, v) })
-      courseIds.forEach(id => fd.append('course_ids', id))
+      validCourseIds.forEach(id => fd.append('course_ids', id))
+      const feePayload = {}
+      validCourseIds.forEach(id => {
+        const course = courses.find(c => String(c.id) === String(id))
+        if (!course) return
+        const baseFee = feeValue(feeAdjustments[id]?.course_fee || course.fee)
+        const rawDiscount = feeValue(feeAdjustments[id]?.eligible_discount)
+        const discount = Math.min(Math.max(rawDiscount, 0), baseFee)
+        feePayload[id] = {
+          course_fee: baseFee,
+          eligible_discount: discount,
+          actual_fee: Math.max(baseFee - discount, 0),
+        }
+      })
+      fd.append('course_fee_overrides', JSON.stringify(feePayload))
       if (photo) fd.append('photo', photo)
       if (isEdit) { await api.patch(`/students/${item.id}/`, fd); toast.success('Student updated!') }
       else {
@@ -949,28 +1064,87 @@ function StudentForm({ item, courses, counselorBranch, onClose, onSaved }) {
             <FG label="Date of Birth" required><Inp type="date" value={form.date_of_birth} onChange={e => f('date_of_birth', e.target.value)} required /></FG>
             <FG label="Photo" hint="Optional"><Inp type="file" accept="image/*" onChange={e => setPhoto(e.target.files[0])} /></FG>
             {!isEdit && <div className="ls-alert-info"><i className="fas fa-info-circle" style={{ marginRight: 8 }} />Login: <strong>Username</strong> = Email · <strong>Password</strong> = Mobile</div>}
-          </div>
-          <div>
             <FG label="Qualification" required><Inp value={form.qualification} onChange={e => f('qualification', e.target.value)} placeholder="e.g. B.Sc Computer Science" required /></FG>
             <FG label="Course" required>
-              <div style={{ display: 'grid', gap: 8, maxHeight: 220, overflowY: 'auto' }}>
-                {courses && courses.length > 0 ? courses.map(c => {
-                  const checked = courseIds.includes(String(c.id))
-                  return (
-                    <label key={c.id} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: 10, borderRadius: 8, border: `1px solid ${checked ? T.amber : 'rgba(255,255,255,.12)'}`, background: checked ? 'rgba(244,169,64,.12)' : 'rgba(255,255,255,.04)' }}>
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => toggleCourse(c.id)}
-                        style={{ width: 16, height: 16, accentColor: T.amber }}
-                      />
-                      <span>{c.course_name}</span>
-                    </label>
-                  )
-                }) : (
-                  <div className="ls-alert-warning">No courses available - please contact admin</div>
-                )}
+              <div style={{ display: 'grid', gap: 8 }}>
+                {courseIds.map((courseId, index) => (
+                  <div key={index} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <Sel
+                      value={courseId}
+                      onChange={e => updateCourseSelection(index, e.target.value)}
+                      required={index === 0}
+                      style={{ flex: 1 }}
+                    >
+                      <option value="" disabled>Select Course</option>
+                      {courses.map(c => {
+                        const disabled = courseIds.some((id, i) => i !== index && String(id) === String(c.id))
+                        return (
+                          <option key={c.id} value={c.id} disabled={disabled}>
+                            {c.course_name}
+                          </option>
+                        )
+                      })}
+                    </Sel>
+                    {courseIds.length > 1 && (
+                      <button
+                        type="button"
+                        className="ls-btn ls-btn-danger"
+                        onClick={() => removeCourseRow(index)}
+                        title="Remove course"
+                        style={{ minWidth: 42, padding: '10px 12px' }}
+                      >
+                        <i className="fas fa-times" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className="ls-btn ls-btn-ghost"
+                  onClick={addCourseRow}
+                  disabled={courseIds.filter(Boolean).length >= courses.length}
+                  style={{ width: 'fit-content', padding: '8px 12px' }}
+                >
+                  <i className="fas fa-plus" /> Add Course
+                </button>
               </div>
+              {selectedCourses.length > 0 && (
+                <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
+                  {selectedCourses.map(c => {
+                    const baseFee = feeValue(feeAdjustments[String(c.id)]?.course_fee || c.fee)
+                    const discount = feeValue(feeAdjustments[String(c.id)]?.eligible_discount)
+                    const actualFee = actualCourseFee(c.id, c.fee)
+                    return (
+                      <div key={c.id} style={{ padding: 12, borderRadius: 8, border: `1px solid ${T.border}`, background: 'rgba(244,169,64,.08)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+                          <strong style={{ color: T.navy }}>{c.course_name}</strong>
+                          <span style={{ color: T.sage, fontSize: 12, fontWeight: 900 }}>Course Fee: ₹{baseFee.toLocaleString('en-IN')}</span>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                          <div style={{ padding: 10, borderRadius: 8, background: 'rgba(76,175,129,.12)', border: '1px solid rgba(76,175,129,.22)' }}>
+                            <div style={{ fontSize: 10, color: T.slate, fontWeight: 800, textTransform: 'uppercase' }}>Course Fee</div>
+                            <div style={{ fontSize: 14, fontWeight: 900, color: T.sage }}>₹{baseFee.toLocaleString('en-IN')}</div>
+                          </div>
+                          <div style={{ padding: 10, borderRadius: 8, background: 'rgba(15,27,45,.06)', border: `1px solid ${T.border}` }}>
+                            <div style={{ fontSize: 10, color: T.slate, fontWeight: 800, textTransform: 'uppercase' }}>Actual Course Fee</div>
+                            <div style={{ fontSize: 14, fontWeight: 900, color: T.navy }}>₹{actualFee.toLocaleString('en-IN')}</div>
+                          </div>
+                        </div>
+                        <label style={{ display: 'grid', gap: 5 }}>
+                          <span style={{ fontSize: 11, color: T.slate, fontWeight: 800 }}>Eligible Discount</span>
+                          <Inp
+                            type="text"
+                            inputMode="decimal"
+                            value={feeAdjustments[String(c.id)]?.eligible_discount ?? ''}
+                            onChange={e => updateCourseDiscount(c, e.target.value)}
+                            placeholder="Enter discount amount"
+                          />
+                        </label>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
               {courses.length === 0 && (
                 <span className="ls-hint" style={{ color: T.rose, marginTop: 4, display: 'block' }}>
                   <i className="fas fa-exclamation-triangle" /> No courses found. Please add courses in Admin → Courses.

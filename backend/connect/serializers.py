@@ -336,6 +336,9 @@ class StudentSerializer(serializers.ModelSerializer):
                 'course_type': course.course_type,
                 'duration': course.duration,
                 'fee': course.fee,
+                'course_fee': enrollment.course_fee if enrollment.course_fee is not None else course.fee,
+                'eligible_discount': enrollment.eligible_discount,
+                'actual_fee': enrollment.actual_fee if enrollment.actual_fee is not None else course.fee,
                 'batches': batches,
             })
         setattr(obj, cache_name, enrollments)

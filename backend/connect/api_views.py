@@ -9,7 +9,7 @@ from html import escape
 from django.contrib.auth import authenticate
 from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.models import User
-from django.db.models import Q, Count, Prefetch
+from django.db.models import Q, Count, Prefetch, Sum
 from django.db.models.functions import Lower, Trim
 from django.db import DatabaseError, IntegrityError, OperationalError
 from django.utils import timezone
@@ -49,6 +49,7 @@ import random
 import logging
 import threading
 import requests
+from decimal import Decimal, InvalidOperation
 
 # Logger for exception capture
 logger = logging.getLogger(__name__)
@@ -2216,7 +2217,57 @@ def _student_course_ids_from_request(data):
     return course_ids
 
 
-def _sync_student_course_enrollments(student, course_ids, actor=None, allow_empty=False):
+def _decimal_amount(value, default='0'):
+    try:
+        if value in (None, ''):
+            return Decimal(default)
+        return Decimal(str(value)).quantize(Decimal('0.01'))
+    except (InvalidOperation, TypeError, ValueError):
+        raise ValueError('Enter a valid fee or discount amount.')
+
+
+def _student_course_fee_overrides_from_request(data):
+    raw = data.get('course_fee_overrides') if hasattr(data, 'get') else None
+    if not raw:
+        return {}
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError):
+            raise ValueError('Invalid course fee details.')
+    if not isinstance(raw, dict):
+        raise ValueError('Invalid course fee details.')
+    return raw
+
+
+def _course_enrollment_fee_defaults(course, fee_overrides=None):
+    fee_overrides = fee_overrides or {}
+    override = fee_overrides.get(str(course.id)) or fee_overrides.get(course.id) or {}
+    if not isinstance(override, dict):
+        override = {}
+
+    course_fee = _decimal_amount(override.get('course_fee'), course.fee or '0')
+    if course_fee < 0:
+        raise ValueError('Course fee cannot be negative.')
+
+    eligible_discount = _decimal_amount(
+        override.get('eligible_discount', override.get('discount_amount')),
+        '0',
+    )
+    if eligible_discount < 0:
+        raise ValueError('Discount amount cannot be negative.')
+    if eligible_discount > course_fee:
+        raise ValueError(f"Discount cannot be greater than {course.course_name} course fee.")
+
+    actual_fee = course_fee - eligible_discount
+    return {
+        'course_fee': course_fee,
+        'eligible_discount': eligible_discount,
+        'actual_fee': actual_fee,
+    }
+
+
+def _sync_student_course_enrollments(student, course_ids, actor=None, allow_empty=False, fee_overrides=None):
     course_ids = [int(cid) for cid in course_ids if cid]
     if not course_ids and not allow_empty:
         raise ValueError('Select at least one course.')
@@ -2230,26 +2281,57 @@ def _sync_student_course_enrollments(student, course_ids, actor=None, allow_empt
     target_ids = set(course_ids)
     for enrollment in student.course_enrollments.select_related('course').all():
         if enrollment.course_id in target_ids:
+            course_fee_defaults = _course_enrollment_fee_defaults(enrollment.course, fee_overrides)
+            changed = []
             if not enrollment.is_active:
                 enrollment.is_active = True
-                enrollment.save(update_fields=['is_active', 'updated_at'])
+                changed.append('is_active')
+            for key, value in course_fee_defaults.items():
+                if getattr(enrollment, key) != value:
+                    setattr(enrollment, key, value)
+                    changed.append(key)
+            if changed:
+                enrollment.save(update_fields=[*changed, 'updated_at'])
         elif enrollment.is_active:
-            has_active_batches = StudentBatchEnrollment.objects.filter(
+            active_batch_assignments = StudentBatchEnrollment.objects.filter(
                 student=student,
                 course_enrollment=enrollment,
                 is_active=True,
-            ).exists()
-            if has_active_batches:
-                raise ValueError(f"Remove active batch assignment before removing {enrollment.course.course_name}.")
+            )
+            removed_batch_ids = list(active_batch_assignments.values_list('batch_id', flat=True))
+            if removed_batch_ids:
+                active_batch_assignments.update(is_active=False)
+                FeePayment.objects.filter(
+                    student=student,
+                    batch_id__in=removed_batch_ids,
+                    amount_paid=0,
+                ).delete()
+                if student.assigned_batch_id in removed_batch_ids:
+                    remaining_assignment = StudentBatchEnrollment.objects.filter(
+                        student=student,
+                        is_active=True,
+                    ).select_related('batch', 'batch__faculty').order_by('-assigned_at').first()
+                    student.assigned_batch = remaining_assignment.batch if remaining_assignment else None
+                    student.assigned_staff = (
+                        remaining_assignment.batch.faculty
+                        if remaining_assignment and remaining_assignment.batch
+                        else None
+                    )
+                    student.save(update_fields=['assigned_batch', 'assigned_staff', 'updated_at'])
             enrollment.is_active = False
             enrollment.save(update_fields=['is_active', 'updated_at'])
 
     enrollments = []
     for course in courses:
+        course_fee_defaults = _course_enrollment_fee_defaults(course, fee_overrides)
         enrollment, _ = StudentCourseEnrollment.objects.update_or_create(
             student=student,
             course=course,
-            defaults={'is_active': True, 'enrolled_by': actor},
+            defaults={
+                'is_active': True,
+                'enrolled_by': actor,
+                **course_fee_defaults,
+            },
         )
         enrollments.append(enrollment)
 
@@ -2265,6 +2347,15 @@ def _active_student_course_enrollment(student, course):
         course=course,
         defaults={'is_active': True},
     )
+    changed = []
+    if enrollment.course_fee is None:
+        enrollment.course_fee = course.fee or Decimal('0')
+        changed.append('course_fee')
+    if enrollment.actual_fee is None:
+        enrollment.actual_fee = Decimal(str(enrollment.course_fee or 0)) - Decimal(str(enrollment.eligible_discount or 0))
+        changed.append('actual_fee')
+    if changed:
+        enrollment.save(update_fields=[*changed, 'updated_at'])
     return enrollment
 
 
@@ -2878,6 +2969,10 @@ class StudentCreateView(APIView):
         state = data.get('state', '').strip()
         qualification = data.get('qualification', '').strip()
         course_ids = _student_course_ids_from_request(data)
+        try:
+            course_fee_overrides = _student_course_fee_overrides_from_request(data)
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=400)
         gender = data.get('gender', '').strip()
         branch = data.get('branch', '').strip()
         photo = request.FILES.get('photo')
@@ -2943,7 +3038,7 @@ class StudentCreateView(APIView):
                 branch=branch,
                 photo=photo if photo else None,
             )
-            _sync_student_course_enrollments(student, course_ids, request.user)
+            _sync_student_course_enrollments(student, course_ids, request.user, fee_overrides=course_fee_overrides)
 
             # -- Send welcome email with login credentials (async) -------------
             email_status = 'not_sent'
@@ -3020,6 +3115,10 @@ class StudentDetailView(generics.RetrieveUpdateDestroyAPIView):
         student = self.get_object()
         new_email = request.data.get('email', '').strip().lower()
         course_ids = _student_course_ids_from_request(request.data)
+        try:
+            course_fee_overrides = _student_course_fee_overrides_from_request(request.data)
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=400)
 
         # If email changed, update the Django User too
         if new_email and new_email != student.email:
@@ -3031,7 +3130,7 @@ class StudentDetailView(generics.RetrieveUpdateDestroyAPIView):
 
         if course_ids:
             try:
-                _sync_student_course_enrollments(student, course_ids, request.user)
+                _sync_student_course_enrollments(student, course_ids, request.user, fee_overrides=course_fee_overrides)
             except ValueError as exc:
                 return Response({'error': str(exc)}, status=400)
             except Courses.DoesNotExist:
@@ -3112,7 +3211,10 @@ def assign_staff_to_student(request, student_id):
                         _add_batch_trainers(batch, mapped_staff_ids or staff_ids, trainer_timings)
                     except Employee.DoesNotExist:
                         return Response({'error': 'Selected trainer not found!'}, status=404)
-                course_enrollment = _active_student_course_enrollment(student, batch.course_name)
+                enrollment_course = selected_course or batch.course_name
+                if not enrollment_course:
+                    return Response({'error': 'Selected batch does not have a course assigned.'}, status=400)
+                course_enrollment = _active_student_course_enrollment(student, enrollment_course)
                 if not course_enrollment.is_active:
                     course_enrollment.is_active = True
                     course_enrollment.save(update_fields=['is_active', 'updated_at'])
@@ -3154,9 +3256,13 @@ def assign_staff_to_student(request, student_id):
                 _apply_student_session_state_to_batch(student, batch, batch_session_state, reset_existing=True)
 
                 # -- Create fee record -----------------------------------------
-                course_fee = batch.course_name.fee if batch.course_name and batch.course_name.fee else 0
+                course_fee = course_enrollment.actual_fee
+                if course_fee is None:
+                    course_fee = course_enrollment.course_fee
+                if course_fee is None:
+                    course_fee = batch.course_name.fee if batch.course_name and batch.course_name.fee else 0
                 if course_fee:
-                    FeePayment.objects.get_or_create(
+                    fee_payment, created = FeePayment.objects.get_or_create(
                         student=student,
                         batch=batch,
                         defaults={
@@ -3166,6 +3272,9 @@ def assign_staff_to_student(request, student_id):
                             'is_fully_paid': False,
                         }
                     )
+                    if not created and fee_payment.amount_paid == 0 and fee_payment.total_fee != course_fee:
+                        fee_payment.total_fee = course_fee
+                        fee_payment.save(update_fields=['total_fee', 'balance', 'is_fully_paid', 'updated_at'])
                 # -------------------------------------------------------------
 
         student.save()
@@ -11851,7 +11960,7 @@ def admin_fee_list(request):
     employee = Employee.objects.filter(user=request.user).first()
     if not is_admin_user(request.user) and not employee:
         return Response({'error': 'Access denied.'}, status=403)
-    fees = FeePayment.objects.select_related('student', 'batch').order_by('-created_at')
+    fees = FeePayment.objects.select_related('student', 'batch', 'batch__course_name').order_by('-created_at')
     branch = request.query_params.get('branch')
     if employee and not is_admin_user(request.user):
         branch = employee.branch
@@ -11859,17 +11968,69 @@ def admin_fee_list(request):
         fees = fees.filter(student__branch=branch)
 
     data = []
+    used_student_fee_enrollments = {}
     for fee in fees:
+        course = fee.batch.course_name
+        batch_enrollment_qs = StudentBatchEnrollment.objects.filter(
+            student=fee.student,
+            batch=fee.batch,
+        ).select_related('course_enrollment', 'course_enrollment__course')
+        batch_enrollment = batch_enrollment_qs.filter(is_active=True).first()
+        if batch_enrollment_qs.exists() and not batch_enrollment:
+            continue
+        enrollment = batch_enrollment.course_enrollment if batch_enrollment else None
+        if not enrollment and course:
+            enrollment = StudentCourseEnrollment.objects.filter(
+                student=fee.student,
+                course=course,
+                is_active=True,
+            ).only('actual_fee').first()
+        current_course_names = [part.strip() for part in str(fee.student.course or '').split(',') if part.strip()]
+        current_course_name_set = set(current_course_names)
+        enrollment_course_name = enrollment.course.course_name if enrollment and enrollment.course_id else ''
+        if current_course_name_set and enrollment_course_name not in current_course_name_set:
+            student_key = fee.student_id
+            used_ids = used_student_fee_enrollments.setdefault(student_key, set())
+            current_enrollments = list(StudentCourseEnrollment.objects.filter(
+                student=fee.student,
+                is_active=True,
+                course__course_name__in=current_course_names,
+            ).select_related('course'))
+            current_enrollments.sort(
+                key=lambda item: current_course_names.index(item.course.course_name)
+                if item.course.course_name in current_course_names else len(current_course_names)
+            )
+            replacement = next((item for item in current_enrollments if item.id not in used_ids), None)
+            if replacement and fee.amount_paid == 0:
+                enrollment = replacement
+                if batch_enrollment and batch_enrollment.course_enrollment_id != replacement.id:
+                    batch_enrollment.course_enrollment = replacement
+                    batch_enrollment.save(update_fields=['course_enrollment'])
+            elif replacement:
+                enrollment = replacement
+        if enrollment and enrollment.actual_fee is not None and fee.amount_paid == 0 and fee.total_fee != enrollment.actual_fee:
+            fee.total_fee = enrollment.actual_fee
+            fee.save(update_fields=['total_fee', 'balance', 'is_fully_paid', 'updated_at'])
+        if enrollment:
+            used_student_fee_enrollments.setdefault(fee.student_id, set()).add(enrollment.id)
+        display_course = enrollment.course if enrollment and enrollment.course_id else course
+        pending_amount = FeePaymentRequest.objects.filter(
+            fee_payment=fee,
+            status='pending',
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        display_balance = max(fee.balance - pending_amount, Decimal('0'))
         data.append({
             'id': fee.id,
             'student_name': f"{fee.student.first_name} {fee.student.last_name or ''}",
             'student_id': fee.student.student_id,
             'branch': fee.student.branch,
             'batch_number': fee.batch.batch_number,
-            'course_name': fee.batch.course_name.course_name if fee.batch.course_name else '—',
+            'course_name': display_course.course_name if display_course else '—',
             'total_fee': float(fee.total_fee),
             'amount_paid': float(fee.amount_paid),
-            'balance': float(fee.balance),
+            'pending_amount': float(pending_amount),
+            'balance': float(display_balance),
+            'actual_balance': float(fee.balance),
             'is_fully_paid': fee.is_fully_paid,
             'created_at': fee.created_at,
         })
@@ -12200,6 +12361,16 @@ def generate_bill(request, fee_id):
         return Response({'error': str(e)}, status=500)
 
 
+def _payment_amount_from_request(value):
+    try:
+        amount = Decimal(str(value or '').replace(',', '').strip()).quantize(Decimal('0.01'))
+    except (InvalidOperation, TypeError, ValueError):
+        raise ValueError('Enter valid amount')
+    if amount <= Decimal('0'):
+        raise ValueError('Enter valid amount')
+    return amount
+
+
 
 
 @api_view(['POST'])
@@ -12218,14 +12389,15 @@ def create_fee_payment_request(request, fee_id):
 
         fee = FeePayment.objects.get(id=fee_id, student__branch=emp.branch)
 
-        amount = request.data.get('amount')
+        try:
+            amount = _payment_amount_from_request(request.data.get('amount'))
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=400)
         payment_mode = request.data.get('payment_mode', 'cash')
         notes = request.data.get('notes', '')
         screenshot = request.FILES.get('screenshot', None)
 
-        if not amount or float(amount) <= 0:
-            return Response({'error': 'Enter valid amount'}, status=400)
-        if float(amount) > float(fee.balance):
+        if amount > fee.balance:
             return Response({'error': f'Amount exceeds balance of ?{fee.balance}'}, status=400)
 
         # Check if there's already a pending request
@@ -12309,6 +12481,16 @@ def admin_fee_payment_requests(request):
         current_balance = float(fee_payment.balance)
         balance_after = max(current_balance - float(r.amount), 0)
         # ---------------------------------------------------------
+        batch_enrollment = StudentBatchEnrollment.objects.filter(
+            student=r.student,
+            batch=fee_payment.batch,
+            is_active=True,
+        ).select_related('course_enrollment__course').first()
+        request_course = (
+            batch_enrollment.course_enrollment.course
+            if batch_enrollment and batch_enrollment.course_enrollment_id
+            else fee_payment.batch.course_name
+        )
 
         # -- Screenshot URL ----------------------------------------
         screenshot_url = None
@@ -12331,7 +12513,7 @@ def admin_fee_payment_requests(request):
             'status': r.status,
             'requested_at': r.requested_at,
             'batch_number': fee_payment.batch.batch_number,
-            'course_name': fee_payment.batch.course_name.course_name if fee_payment.batch.course_name else '—',
+            'course_name': request_course.course_name if request_course else '—',
             'current_balance': current_balance,
             'balance_after': balance_after,
             'screenshot': screenshot_url,   # ? ADD THIS

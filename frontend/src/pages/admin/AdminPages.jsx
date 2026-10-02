@@ -5229,7 +5229,7 @@ function PaymentRequestsSection({ onRefresh }) {
               <tr>
                 <th>#</th>
                 <th>Student</th>
-                <th>Batch / Course</th>
+                <th>Course</th>
                 <th>Amount</th>
                 <th>Mode</th>
                 <th>Notes</th>
@@ -5254,8 +5254,7 @@ function PaymentRequestsSection({ onRefresh }) {
                     </div>
                   </td>
                   <td>
-                    <div style={{ fontSize: 13, fontWeight: 500 }}>{r.batch_number}</div>
-                    <div style={{ fontSize: 11, color: T.slate }}>{r.course_name}</div>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>{r.course_name}</div>
                   </td>
                   <td style={{ fontWeight: 700, color: T.sage, fontSize: 13 }}>{fmt(r.amount)}</td>
                   <td><AdminBadge text={r.payment_mode?.replace('_', ' ').toUpperCase()} variant="info" /></td>
@@ -5482,7 +5481,7 @@ const downloadBill = async (feeId, studentName = 'Student') => {
                     <tr>
                       <th>#</th>
                       <th>Student</th>
-                      <th>Batch / Course</th>
+                      <th>Course</th>
                       <th>Total Fee</th>
                       <th>Paid</th>
                       <th>Balance</th>
@@ -5507,8 +5506,7 @@ const downloadBill = async (feeId, studentName = 'Student') => {
                             </div>
                           </td>
                           <td>
-                            <div style={{ fontWeight: 500, fontSize: 13 }}>{f.batch_number}</div>
-                            <div style={{ fontSize: 11, color: T.slate }}>{f.course_name}</div>
+                            <div style={{ fontWeight: 700, fontSize: 13 }}>{f.course_name}</div>
                           </td>
                           <td style={{ fontWeight: 700, fontSize: 13 }}>{fmt(f.total_fee)}</td>
                           <td style={{ color: T.sage, fontWeight: 600, fontSize: 13 }}>{fmt(f.amount_paid)}</td>

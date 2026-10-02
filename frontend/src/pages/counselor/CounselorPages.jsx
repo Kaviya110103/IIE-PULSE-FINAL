@@ -2293,6 +2293,7 @@ export function CounselorAssignedStudents() {
   const [search, setSearch] = useState('')
   const [feeModal, setFeeModal] = useState(null)
   const [feeData, setFeeData] = useState(null)
+  const [feeByStudent, setFeeByStudent] = useState({})
   const [payForm, setPayForm] = useState({ amount: '', payment_mode: 'cash', transaction_id: '' })
   const [screenshot, setScreenshot] = useState(null)
   const [saving, setSaving] = useState(false)
@@ -2312,11 +2313,21 @@ export function CounselorAssignedStudents() {
     setLoading(true)
     try {
       // Get students from counselor's branch that have assigned staff
-      const response = await api.get(`/students/?branch=${counselorBranch}`)
+      const [response, feeResponse] = await Promise.all([
+        api.get(`/students/?branch=${counselorBranch}`),
+        api.get(`/fees/?branch=${counselorBranch}`),
+      ])
       const allStudents = response.data.results || response.data || []
+      const fees = feeResponse.data.results || feeResponse.data || []
+      const feeMap = {}
+      fees.forEach(fee => {
+        if (!feeMap[fee.student_id]) feeMap[fee.student_id] = []
+        feeMap[fee.student_id].push(fee)
+      })
       // Filter students who have assigned staff
       const assignedStudents = allStudents.filter(x => x.assigned_staff)
       setStudents(assignedStudents)
+      setFeeByStudent(feeMap)
     } catch (err) {
       console.error('Error loading students:', err)
       toast.error('Failed to load students')
@@ -2329,11 +2340,40 @@ export function CounselorAssignedStudents() {
     `${x.first_name} ${x.last_name} ${x.student_id}`.toLowerCase().includes(search.toLowerCase())
   )
 
-  const openFeeModal = async (student) => {
+  const trainerNamesForStudent = (student) => {
+    const names = []
+    const addName = (name) => {
+      const value = String(name || '').trim()
+      if (value && !names.includes(value)) names.push(value)
+    }
+    ;(student.assigned_batches || []).forEach(batch => {
+      ;(batch.trainer_names || []).forEach(addName)
+      ;(batch.trainers || []).forEach(trainer => addName(trainer.name))
+    })
+    ;(student.enrolled_courses || []).forEach(course => {
+      ;(course.batches || []).forEach(batch => {
+        ;(batch.trainer_names || []).forEach(addName)
+        ;(batch.trainers || []).forEach(trainer => addName(trainer.name))
+      })
+    })
+    addName(student.assigned_staff_name || student.assigned_staff?.first_name)
+    return names
+  }
+
+  const openFeeModal = async (student, selectedFee = null) => {
     try {
-      const r = await api.get(`/fees/?branch=${counselorBranch}`)
-      const fees = r.data.results || r.data || []
-      const fee = fees.find(f => f.student_id === student.student_id)
+      let fee = selectedFee
+
+      if (!fee) {
+        fee = feeByStudent[student.student_id]?.[0]
+      }
+
+      if (!fee) {
+        const r = await api.get(`/fees/?branch=${counselorBranch}`)
+        const fees = r.data.results || r.data || []
+        fee = fees.find(f => f.student_id === student.student_id)
+      }
+
       if (!fee) return toast.error('No fee record found for this student')
       setFeeData(fee)
       setFeeModal(student)
@@ -2362,16 +2402,24 @@ export function CounselorAssignedStudents() {
     }
   }
 
+  const cleanPaymentAmount = (value) => {
+    const cleaned = String(value || '').replace(/[^\d.]/g, '')
+    const parts = cleaned.split('.')
+    return parts.length > 1 ? `${parts[0]}.${parts.slice(1).join('')}` : cleaned
+  }
+
   const handlePay = async () => {
-    if (!payForm.amount || parseFloat(payForm.amount) <= 0) return toast.error('Enter valid amount')
-    if (parseFloat(payForm.amount) > parseFloat(feeData.balance)) return toast.error(`Amount exceeds balance of ₹${feeData.balance}`)
+    const normalizedAmount = cleanPaymentAmount(payForm.amount)
+    const numericAmount = Number(normalizedAmount)
+    if (!normalizedAmount || !Number.isFinite(numericAmount) || numericAmount <= 0) return toast.error('Enter valid amount')
+    if (numericAmount > Number(feeData.balance || 0)) return toast.error(`Amount exceeds balance of ₹${feeData.balance}`)
     if (payForm.payment_mode !== 'cash' && !payForm.transaction_id.trim()) return toast.error('Transaction ID is required')
     if (payForm.payment_mode !== 'cash' && !screenshot) return toast.error('Payment screenshot is required')
 
     setSaving(true)
     try {
       const fd = new FormData()
-      fd.append('amount', payForm.amount)
+      fd.append('amount', normalizedAmount)
       fd.append('payment_mode', payForm.payment_mode)
       fd.append('notes', payForm.transaction_id)
       if (screenshot) fd.append('screenshot', screenshot)
@@ -2379,7 +2427,7 @@ export function CounselorAssignedStudents() {
       // DEBUG - remove after testing
       console.log('=== FEE REQUEST DEBUG ===')
       console.log('fee_id:', feeData.id)
-      console.log('amount:', payForm.amount)
+      console.log('amount:', normalizedAmount)
       console.log('payment_mode:', payForm.payment_mode)
       console.log('notes:', payForm.transaction_id)
       console.log('screenshot:', screenshot?.name || 'none')
@@ -2391,8 +2439,12 @@ export function CounselorAssignedStudents() {
         headers: { 'Content-Type': 'multipart/form-data' }
       })
       toast.success('Payment request sent to admin for approval!')
-      setFeeModal(null)
-      setFeeData(null)
+      setFeeData(prev => ({
+        ...prev,
+        pending_amount: Number(prev?.pending_amount || 0) + numericAmount,
+        balance: Math.max(Number(prev?.balance || 0) - numericAmount, 0),
+      }))
+      setPayForm({ amount: '', payment_mode: 'cash', transaction_id: '' })
       setScreenshot(null)
       loadStudents() // Refresh the list
     } catch (err) {
@@ -2452,48 +2504,92 @@ export function CounselorAssignedStudents() {
                   <th>Branch</th>
                   <th>Trainer</th>
                   <th>Batch</th>
+                  <th>Actual Fee</th>
                   <th>Fee Payment</th>
                   <th>Completed</th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((x, i) => (
-                  <tr key={x.id}>
-                    <td style={{ color: T.slate, fontSize: 12 }}>{i + 1}</td>
-                    <td>
-                      <div className="counselor-person-cell" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                        <Avatar name={x.first_name} size={34} />
-                        <div>
-                          <div style={{ fontWeight: 600, fontSize: 13 }}>{x.first_name} {x.last_name}</div>
-                          <div style={{ fontSize: 11, color: T.slate }}>{x.student_id}</div>
+                {filtered.map((x, i) => {
+                  const studentFees = feeByStudent[x.student_id] || []
+                  const trainerNames = trainerNamesForStudent(x)
+
+                  return (
+                    <tr key={x.id}>
+                      <td style={{ color: T.slate, fontSize: 12 }}>{i + 1}</td>
+                      <td>
+                        <div className="counselor-person-cell" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                          <Avatar name={x.first_name} size={34} />
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: 13 }}>{x.first_name} {x.last_name}</div>
+                            <div style={{ fontSize: 11, color: T.slate }}>{x.student_id}</div>
+                          </div>
                         </div>
-                      </div>
-                    </td>
-                    <td style={{ fontSize: 13 }}>{x.course}</td>
-                    <td><Badge text={x.branch} variant="info" /></td>
-                    <td><Badge text={x.assigned_staff_name || x.assigned_staff?.first_name || '—'} variant="teal" /></td>
-                    <td style={{ fontSize: 12 }}>{x.assigned_batch_number || x.assigned_batch?.batch_number || '—'}</td>
-                    <td>
-                      <button
-                        className="counselor-btn counselor-btn-primary counselor-btn-sm"
-                        onClick={() => openFeeModal(x)}
-                      >
-                        <i className="fas fa-rupee-sign" /> Pay Fee
-                      </button>
-                    </td>
-                    <td>
-                      <button
-                        className="counselor-btn counselor-btn-success counselor-btn-sm"
-                        disabled={completingId === x.id}
-                        onClick={() => handleCompleteStudent(x)}
-                        style={completingId === x.id ? { opacity: 0.65, cursor: 'not-allowed' } : undefined}
-                      >
-                        <i className={`fas ${completingId === x.id ? 'fa-spinner fa-spin' : 'fa-check-circle'}`} />
-                        {completingId === x.id ? 'Moving...' : 'Completed'}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td style={{ fontSize: 13 }}>{x.course}</td>
+                      <td><Badge text={x.branch} variant="info" /></td>
+                      <td>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, minWidth: 120 }}>
+                          {trainerNames.length
+                            ? trainerNames.map(name => <Badge key={name} text={name} variant="teal" />)
+                            : <Badge text="—" variant="teal" />}
+                        </div>
+                      </td>
+                      <td style={{ fontSize: 12 }}>{x.assigned_batch_number || x.assigned_batch?.batch_number || '—'}</td>
+                      <td>
+                        {studentFees.length ? (
+                          <div style={{ display: 'grid', gap: 4, minWidth: 95 }}>
+                            {studentFees.map(fee => (
+                              <div
+                                key={fee.id}
+                                style={{
+                                  fontSize: 13,
+                                  fontWeight: 800,
+                                  color: T.sage,
+                                  whiteSpace: 'nowrap'
+                                }}
+                              >
+                                {fmt(fee.total_fee)}
+                              </div>
+                            ))}
+                          </div>
+                        ) : '—'}
+                      </td>
+                      <td>
+                        {studentFees.length ? (
+                          <div style={{ display: 'grid', gap: 6, minWidth: 160 }}>
+                            {studentFees.map(fee => (
+                              <button
+                                key={fee.id}
+                                className="counselor-btn counselor-btn-primary counselor-btn-sm"
+                                disabled={fee.is_fully_paid}
+                                onClick={() => openFeeModal(x, fee)}
+                                title={`Pay fee for ${fee.course_name || 'course'}`}
+                                style={fee.is_fully_paid ? { opacity: 0.6, cursor: 'not-allowed' } : undefined}
+                              >
+                                <i className={`fas ${fee.is_fully_paid ? 'fa-check-circle' : 'fa-rupee-sign'}`} />
+                                {fee.is_fully_paid ? 'Paid' : 'Pay Fee'}
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <span style={{ color: T.slate, fontSize: 12 }}>—</span>
+                        )}
+                      </td>
+                      <td>
+                        <button
+                          className="counselor-btn counselor-btn-success counselor-btn-sm"
+                          disabled={completingId === x.id}
+                          onClick={() => handleCompleteStudent(x)}
+                          style={completingId === x.id ? { opacity: 0.65, cursor: 'not-allowed' } : undefined}
+                        >
+                          <i className={`fas ${completingId === x.id ? 'fa-spinner fa-spin' : 'fa-check-circle'}`} />
+                          {completingId === x.id ? 'Moving...' : 'Completed'}
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -2554,6 +2650,7 @@ export function CounselorAssignedStudents() {
                   {[
                     ['Total', fmt(feeData.total_fee), T.navy],
                     ['Paid', fmt(feeData.amount_paid), T.sage],
+                    ['Pending', fmt(feeData.pending_amount), T.amber],
                     ['Balance', fmt(feeData.balance), T.rose],
                   ].map(([l, v, c]) => (
                     <div key={l} style={{ textAlign: 'center', flex: 1, background: 'white', borderRadius: 8, padding: '8px 12px', border: `1px solid ${T.border}` }}>
@@ -2587,12 +2684,11 @@ export function CounselorAssignedStudents() {
                     </label>
                     <input
                       className="counselor-input"
-                      type="number"
+                      type="text"
+                      inputMode="decimal"
                       placeholder={`Max: ${feeData.balance}`}
                       value={payForm.amount}
-                      onChange={e => setPayForm(p => ({ ...p, amount: e.target.value }))}
-                      max={feeData.balance}
-                      min={1}
+                      onChange={e => setPayForm(p => ({ ...p, amount: cleanPaymentAmount(e.target.value) }))}
                     />
                   </div>
 
@@ -2865,7 +2961,7 @@ export function CounselorFeeManagement() {
                 <tr>
                   <th>#</th>
                   <th>Student</th>
-                  <th>Batch / Course</th>
+                  <th>Course</th>
                   <th>Total Fee</th>
                   <th>Paid</th>
                   <th>Balance</th>
@@ -2892,8 +2988,7 @@ export function CounselorFeeManagement() {
                         </div>
                       </td>
                       <td>
-                        <div style={{ fontWeight: 500, fontSize: 13 }}>{f.batch_number}</div>
-                        <div style={{ fontSize: 11, color: T.slate }}>{f.course_name}</div>
+                        <div style={{ fontWeight: 700, fontSize: 13 }}>{f.course_name}</div>
                       </td>
                       <td style={{ fontWeight: 700, fontSize: 13 }}>{fmt(f.total_fee)}</td>
                       <td style={{ color: T.sage, fontWeight: 600, fontSize: 13 }}>{fmt(f.amount_paid)}</td>

@@ -308,6 +308,9 @@ class StudentCourseEnrollment ( models.Model ) :
             related_name = 'student_course_enrollments'
     )
     is_active = models.BooleanField ( default = True )
+    course_fee = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    eligible_discount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    actual_fee = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     enrolled_at = models.DateTimeField ( auto_now_add = True )
     updated_at = models.DateTimeField ( auto_now = True )
 
