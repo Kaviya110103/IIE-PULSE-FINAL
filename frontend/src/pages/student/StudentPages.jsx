@@ -1584,15 +1584,10 @@ export function StudentDashboard() {
   const isBirthday = Boolean(birthdayWish?.is_birthday)
 
   const stats = [
-    { label: 'Announcements', value: data?.announcements_count ?? data?.announcements?.length ?? 0, icon: 'fa-bullhorn', color: T.teal, bgColor: 'rgba(46,196,182,0.1)', to: '/student/announcements' },
-    { label: 'Attendance %', value: `${data?.attendance_percentage ?? 0}%`, icon: 'fa-calendar-check', color: T.sage, bgColor: 'rgba(76,175,129,0.1)', to: '/student/attendance' },
     { label: 'My Batches', value: assignedBatchesCount, icon: 'fa-layer-group', color: T.navy, bgColor: 'rgba(15,27,45,0.1)', to: '/student/batches' },
-    { label: 'Daily Activity', value: 'Play', icon: 'fa-bolt', color: T.amber, bgColor: 'rgba(244,169,64,0.12)', to: '/student/challenge' },
-    { label: 'Completed Sessions', value: data?.completed_sessions_count ?? 0, icon: 'fa-check-double', color: T.sage, bgColor: 'rgba(76,175,129,0.1)', to: '/student/sessions' },
-    { label: 'Tests', value: data?.tests_count ?? 0, icon: 'fa-file-alt', color: T.navy, bgColor: 'rgba(15,27,45,0.1)', to: '/student/tests' },
     { label: 'Quizzes', value: data?.quizzes_count ?? 0, icon: 'fa-question-circle', color: T.teal, bgColor: 'rgba(46,196,182,0.1)', to: '/student/quiz' },
-    { label: 'Study Materials', value: data?.materials_count ?? 0, icon: 'fa-book', color: T.amber, bgColor: 'rgba(244,169,64,0.1)', to: '/student/materials' },
-    { label: 'Fee Status', value: 'View', icon: 'fa-rupee-sign', color: T.rose, bgColor: 'rgba(232,72,85,0.1)', to: '/student/fee' },
+    { label: 'Tests', value: data?.tests_count ?? 0, icon: 'fa-file-alt', color: T.navy, bgColor: 'rgba(15,27,45,0.1)', to: '/student/tests' },
+    { label: 'Materials', value: data?.materials_count ?? 0, icon: 'fa-book', color: T.amber, bgColor: 'rgba(244,169,64,0.1)', to: '/student/materials' },
   ]
 
   return (
@@ -2698,7 +2693,6 @@ function StudentLeaveForm({ onClose, onSaved }) {
 export function StudentMaterials() {
   const [materials, setMaterials] = useState([])
   const [loading, setLoading] = useState(true)
-  const [libraryMaterial, setLibraryMaterial] = useState(null)
 
   useEffect(() => { api.get('/materials/').then(r => setMaterials(r.data.results || r.data)).finally(() => setLoading(false)) }, [])
 
@@ -2709,6 +2703,40 @@ export function StudentMaterials() {
     return 'fa-file-alt'
   }
 
+  const materialFileName = (material, response) => {
+    const disposition = response?.headers?.['content-disposition'] || ''
+    const match = disposition.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i)
+    if (match?.[1]) return decodeURIComponent(match[1].replace(/"/g, ''))
+    return material.file?.split('/').pop() || `${material.title || 'material'}.pdf`
+  }
+
+  const downloadMaterial = async (material) => {
+    try {
+      const res = await api.get(`/materials/${material.id}/download/`, { responseType: 'blob' })
+      const blob = new Blob([res.data], { type: res.headers?.['content-type'] || 'application/octet-stream' })
+      const fileURL = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = fileURL
+      link.download = materialFileName(material, res)
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(fileURL)
+    } catch (err) {
+      const data = err.response?.data
+      if (data instanceof Blob) {
+        try {
+          const parsed = JSON.parse(await data.text())
+          toast.error(parsed.error || parsed.detail || 'Unable to download material')
+          return
+        } catch {
+          // Fall through to the generic message below.
+        }
+      }
+      toast.error(err.response?.data?.error || err.response?.data?.detail || 'Unable to download material')
+    }
+  }
+
   return (
     <div className="student-root">
       <StudentStyles />
@@ -2717,15 +2745,23 @@ export function StudentMaterials() {
         <StudentSectionHeader title="Materials" count={materials.length} />
         {loading ? <StudentSpin /> : materials.length === 0 ? <StudentEmpty msg="No materials available yet" icon="fa-folder-open" /> : (
           <div style={{ overflowX: 'auto' }}>
-            <table className="student-table">
-              <thead><tr><th>Title</th><th>Batch</th><th>Date</th><th>File</th></tr></thead>
+            <table className="student-table" style={{ tableLayout: 'fixed', width: '760px', maxWidth: '100%' }}>
+              <colgroup>
+                <col style={{ width: '390px' }} />
+                <col style={{ width: '130px' }} />
+                <col style={{ width: '180px' }} />
+              </colgroup>
+              <thead><tr><th>Title</th><th>Date</th><th style={{ textAlign: 'right' }}>Download</th></tr></thead>
               <tbody>
                 {materials.map(m => (
                   <tr key={m.id}>
-                    <td><div style={{ display: 'flex', alignItems: 'center', gap: 10 }}><div style={{ width: 36, height: 36, borderRadius: 8, background: `linear-gradient(135deg, ${T.amber}, ${T.rose})`, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><i className={`fas ${fileIcon(m.file)}`} /></div><span style={{ fontWeight: 600 }}>{m.title}</span></div></td>
-                    <td><StudentBadge text={m.batch_code || m.display_name || m.batch_number} variant="info" /></td>
+                    <td><div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}><div style={{ width: 36, height: 36, borderRadius: 8, background: `linear-gradient(135deg, ${T.amber}, ${T.rose})`, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto' }}><i className={`fas ${fileIcon(m.file)}`} /></div><span style={{ fontWeight: 600, overflowWrap: 'anywhere' }}>{m.title}</span></div></td>
                     <td style={{ fontSize: 12 }}>{m.uploaded_at ? new Date(m.uploaded_at).toLocaleDateString('en-IN') : '—'}</td>
-                    <td><button type="button" onClick={() => setLibraryMaterial(m)} className="student-btn student-btn-sm student-btn-ghost"><i className="fas fa-book-reader" /> View Library</button></td>
+                    <td style={{ textAlign: 'right' }}>
+                      <button type="button" onClick={() => downloadMaterial(m)} className="student-btn student-btn-sm student-btn-primary">
+                        <i className="fas fa-download" /> Download PDF
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -2733,38 +2769,6 @@ export function StudentMaterials() {
           </div>
         )}
       </div>
-      {libraryMaterial && (
-        <StudentModal open onClose={() => setLibraryMaterial(null)} title="Protected Library Material" size="md">
-          <div style={{ display: 'grid', gap: 14 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div style={{ width: 48, height: 48, borderRadius: 12, background: '#f5f3ff', color: T.primary, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <i className={`fas ${fileIcon(libraryMaterial.file)}`} />
-              </div>
-              <div>
-                <h4 style={{ margin: 0 }}>{libraryMaterial.title}</h4>
-                <p style={{ margin: '4px 0 0', color: T.slate, fontSize: 13 }}>Sharing and direct downloading are disabled.</p>
-              </div>
-            </div>
-            {libraryMaterial.description && (
-              <div className="student-card" style={{ padding: 14, margin: 0 }}>
-                <div style={{ fontSize: 11, fontWeight: 900, color: T.primary, textTransform: 'uppercase' }}>Description</div>
-                <div style={{ marginTop: 5, color: T.dark }}>{libraryMaterial.description}</div>
-              </div>
-            )}
-            <div className="student-row-grid-2">
-              <div className="student-card" style={{ padding: 14, margin: 0 }}>
-                <div style={{ fontSize: 11, fontWeight: 900, color: T.primary, textTransform: 'uppercase' }}>Batch</div>
-                <div style={{ marginTop: 5, color: T.dark, fontWeight: 700 }}>{libraryMaterial.batch_code || libraryMaterial.display_name || libraryMaterial.batch_number || 'N/A'}</div>
-              </div>
-              <div className="student-card" style={{ padding: 14, margin: 0 }}>
-                <div style={{ fontSize: 11, fontWeight: 900, color: T.primary, textTransform: 'uppercase' }}>Uploaded</div>
-                <div style={{ marginTop: 5, color: T.dark, fontWeight: 700 }}>{libraryMaterial.uploaded_at ? new Date(libraryMaterial.uploaded_at).toLocaleDateString('en-IN') : 'N/A'}</div>
-              </div>
-            </div>
-            <button type="button" className="student-btn student-btn-primary" onClick={() => setLibraryMaterial(null)}>Done</button>
-          </div>
-        </StudentModal>
-      )}
     </div>
   )
 }

@@ -23,20 +23,16 @@ LOCAL_LAN_DOMAIN = os.getenv('LOCAL_LAN_DOMAIN', '127.0.0.1:8000').strip()
 DEPLOYMENT_DOMAIN = os.getenv('DEPLOYMENT_DOMAIN', 'iiepulse.indrainstitute.com').strip()
 DEPLOYMENT_SCHEME = os.getenv(
     'DEPLOYMENT_SCHEME',
-    'http' if DEPLOYMENT_DOMAIN.startswith(('localhost', '127.0.0.1', '192.168.')) else 'https',
+    'http' if DEPLOYMENT_DOMAIN.startswith(('localhost', '127.0.0.1')) else 'https',
 ).strip()
 DEPLOYMENT_ORIGIN = os.getenv('DEPLOYMENT_ORIGIN', f"{DEPLOYMENT_SCHEME}://{DEPLOYMENT_DOMAIN}").strip()
-DEPLOYMENT_IS_LOCAL = DEPLOYMENT_DOMAIN.startswith(('localhost', '127.0.0.1', '192.168.'))
+DEPLOYMENT_IS_LOCAL = DEPLOYMENT_DOMAIN.startswith(('localhost', '127.0.0.1'))
 CSRF_TRUSTED_ORIGINS = env_list('DJANGO_CSRF_TRUSTED_ORIGINS', [
     DEPLOYMENT_ORIGIN,
     f'http://{LOCAL_DOMAIN}',
     f'http://{LOCAL_LAN_DOMAIN}',
     'http://localhost:5173',
     'http://127.0.0.1:5173',
-    'http://192.168.1.4:5173',
-    'http://192.168.1.5:5173',
-    'http://192.168.1.7:5173',
-    'http://192.168.1.6:5173',
 ])
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -153,7 +149,6 @@ if DEBUG or DEPLOYMENT_IS_LOCAL:
         '127.0.0.1',
         '.local',
     ])
-    ALLOWED_HOSTS.extend([f'192.168.1.{i}' for i in range(1, 255)])
 for host in [DEPLOYMENT_DOMAIN.split(':')[0]]:
     if host and host not in ALLOWED_HOSTS:
         ALLOWED_HOSTS.append(host)
