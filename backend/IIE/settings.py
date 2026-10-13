@@ -33,6 +33,8 @@ CSRF_TRUSTED_ORIGINS = env_list('DJANGO_CSRF_TRUSTED_ORIGINS', [
     f'http://{LOCAL_LAN_DOMAIN}',
     'http://localhost:5173',
     'http://127.0.0.1:5173',
+    'http://192.168.1.4:5173',
+    'http://192.168.1.5:5173',
     'http://192.168.1.7:5173',
     'http://192.168.1.6:5173',
 ])

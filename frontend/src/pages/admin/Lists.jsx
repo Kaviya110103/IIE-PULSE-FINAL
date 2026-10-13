@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import api from '../../api/client'
 import { ConfirmModal } from '../../components/common/index.jsx'
 import { useAuth } from '../../context/AuthContext'
@@ -580,6 +580,7 @@ function EmployeeForm({ item, nextStaffId, onClose, onSaved }) {
 // ══════════════════════════════════════════════════════════════════════════════
 export function StudentsList({ adminView = true }) {
   const { user } = useAuth()
+  const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
   const initialBranch = searchParams.get('branch') || ''
   const [data, setData] = useState([])
@@ -592,6 +593,7 @@ export function StudentsList({ adminView = true }) {
   const [trainerFilter, setTrainerFilter] = useState('')
   const [showForm, setShowForm] = useState(false)
   const [editItem, setEditItem] = useState(null)
+  const [publicUserPrefill, setPublicUserPrefill] = useState(null)
   const [deleteId, setDeleteId] = useState(null)
   const [assignModal, setAssignModal] = useState(null)
   const [completingId, setCompletingId] = useState(null)
@@ -606,6 +608,13 @@ export function StudentsList({ adminView = true }) {
   const canAssign = isCounselor      // Only counselor can assign
   const canAdd = isAdmin || isCounselor
   const canComplete = isAdmin || isCounselor
+
+  const clearPublicUserIntent = useCallback(() => {
+    const next = new URLSearchParams(searchParams)
+    next.delete('public_user')
+    next.delete('open_add')
+    setSearchParams(next, { replace: true })
+  }, [searchParams, setSearchParams])
 
   const load = useCallback(() => {
     if (!user) return
@@ -639,6 +648,30 @@ export function StudentsList({ adminView = true }) {
   useEffect(() => {
     setBranchFilter(searchParams.get('branch') || '')
   }, [searchParams])
+
+  useEffect(() => {
+    const publicUserId = searchParams.get('public_user')
+    if (!publicUserId || !canAdd) return
+
+    const statePublicUser = location.state?.publicUser
+    if (statePublicUser && String(statePublicUser.id) === String(publicUserId)) {
+      setEditItem(null)
+      setPublicUserPrefill(statePublicUser)
+      setShowForm(true)
+      return
+    }
+
+    let alive = true
+    api.get(`/admin/public-users/?public_user_id=${publicUserId}`)
+      .then(res => {
+        if (!alive) return
+        setEditItem(null)
+        setPublicUserPrefill(res.data?.data || null)
+        setShowForm(true)
+      })
+      .catch(err => toast.error(err.response?.data?.error || 'Failed to load public user'))
+    return () => { alive = false }
+  }, [searchParams, canAdd, location.state])
 
   const updateBranchFilter = (branch) => {
     setBranchFilter(branch)
@@ -692,7 +725,7 @@ export function StudentsList({ adminView = true }) {
     <div className="ls-root">
       <Styles />
       <PH title="👨‍🎓 Students" sub="Manage enrolled students"
-        btn={canAdd && <button className="ls-btn ls-btn-primary" onClick={() => { setEditItem(null); setShowForm(true) }}><i className="fas fa-user-plus" />Add Student</button>} />
+        btn={canAdd && <button className="ls-btn ls-btn-primary" onClick={() => { setEditItem(null); setPublicUserPrefill(null); clearPublicUserIntent(); setShowForm(true) }}><i className="fas fa-user-plus" />Add Student</button>} />
 
       <div className="ls-card">
         <SH title="All Students" count={filtered.length} actions={
@@ -764,7 +797,7 @@ export function StudentsList({ adminView = true }) {
                         <td>
                           <button
                             className="ls-btn ls-btn-ghost ls-btn-sm"
-                            onClick={() => { setEditItem(s); setShowForm(true) }}
+                            onClick={() => { setEditItem(s); setPublicUserPrefill(null); setShowForm(true) }}
                           >
                             <i className="fas fa-edit" /> Edit
                           </button>
@@ -813,7 +846,7 @@ export function StudentsList({ adminView = true }) {
       </div>
 
       {/* Forms - only show for counselor */}
-      {canAdd && showForm && <StudentForm item={editItem} courses={courses} counselorBranch={isCounselor ? user?.branch : null} onClose={() => setShowForm(false)} onSaved={() => { setShowForm(false); load() }} />}
+      {canAdd && showForm && <StudentForm item={editItem} publicUser={publicUserPrefill} courses={courses} counselorBranch={isCounselor ? user?.branch : null} onClose={() => { setShowForm(false); setPublicUserPrefill(null); clearPublicUserIntent() }} onSaved={() => { setShowForm(false); setPublicUserPrefill(null); clearPublicUserIntent(); load() }} />}
       {canAssign && assignModal && (<AssignModalV2
         student={assignModal}
         counselorBranch={user?.branch}
@@ -855,19 +888,20 @@ export function StudentsList({ adminView = true }) {
   )
 }
 
-function StudentForm({ item, courses, counselorBranch, onClose, onSaved }) {
+function StudentForm({ item, publicUser, courses, counselorBranch, onClose, onSaved }) {
   const isEdit = !!item
   const initializedEditCourses = useRef(false)
+  const publicNameParts = !item && publicUser?.name ? String(publicUser.name).trim().split(/\s+/) : []
   const [form, setForm] = useState({
     student_id: item?.student_id || '',
-    first_name: item?.first_name || '',
-    last_name: item?.last_name || '',
-    email: item?.email || '',
-    mobile_no: item?.mobile_no || '',
+    first_name: item?.first_name || publicNameParts[0] || '',
+    last_name: item?.last_name || publicNameParts.slice(1).join(' ') || '',
+    email: item?.email || publicUser?.email || '',
+    mobile_no: item?.mobile_no || publicUser?.mobile || '',
     date_of_birth: item?.date_of_birth || '',
     city: item?.city || '',
     state: item?.state || '',
-    qualification: item?.qualification || '',
+    qualification: item?.qualification || publicUser?.qualification || '',
     course: item?.course || '',
     gender: item?.gender || 'Male',
     branch: counselorBranch || item?.branch || '',
@@ -1152,14 +1186,18 @@ function StudentForm({ item, courses, counselorBranch, onClose, onSaved }) {
               )}
             </FG>
             <FG label="Branch" required>
-              {counselorBranch
-                ? <><Inp value={counselorBranch} readOnly /><span className="ls-hint"><i className="fas fa-info-circle" style={{ marginRight: 4 }} />Restricted to your branch</span></>
-                : <Sel value={form.branch} onChange={e => handleBranchChange(e.target.value)} required>
-                  <option value="" disabled>Select Branch</option>
-                  <option value="100ft">100 Feet</option>
-                  <option value="hopes">Hopes</option>
-                  <option value="kuniyamuthur">Kuniyamuthur</option>
-                </Sel>}
+              <Sel value={form.branch} onChange={e => handleBranchChange(e.target.value)} required>
+                <option value="" disabled>Select Branch</option>
+                <option value="100ft">100 Feet</option>
+                <option value="hopes">Hopes</option>
+                <option value="kuniyamuthur">Kuniyamuthur</option>
+              </Sel>
+              {counselorBranch && (
+                <span className="ls-hint">
+                  <i className="fas fa-info-circle" style={{ marginRight: 4 }} />
+                  Default branch is {counselorBranch}. You can change it if needed.
+                </span>
+              )}
             </FG>
             <FG label="Gender" required>
               <Sel value={form.gender} onChange={e => f('gender', e.target.value)} required>

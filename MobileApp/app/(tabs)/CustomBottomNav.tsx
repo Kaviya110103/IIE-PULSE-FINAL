@@ -13,7 +13,6 @@ const tabs: Array<{
   { name: "news", href: { pathname: "/welcome", params: { module: "news" } }, label: "News", icon: "newspaper-outline" },
   { name: "welcome", href: "/welcome", label: "Home", icon: "home" },
   { name: "gallery", href: { pathname: "/welcome", params: { module: "gallery" } }, label: "Gallery", icon: "image-outline" },
-  { name: "vlogs", href: { pathname: "/welcome", params: { module: "vlogs" } }, label: "Vlogs", icon: "videocam-outline" },
 ];
 
 export default function CustomBottomNav() {

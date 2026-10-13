@@ -1,8 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
-import React, { useEffect, useState } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Href, useFocusEffect, useRouter } from "expo-router";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Linking,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -11,6 +12,13 @@ import {
   View,
 } from "react-native";
 import api, { resolveMediaUrl } from "@/services/api";
+import {
+  getFileType,
+  getLibraryMaterials,
+} from "@/utils/materialLibrary";
+
+const LIBRARY_ROUTE = "/(tabs)/library" as Href;
+const MATERIALS_CACHE_KEY = "iie_pulse_cached_materials";
 
 type MaterialItem = {
   id: number;
@@ -25,26 +33,47 @@ type MaterialItem = {
 };
 
 export default function MaterialsScreen() {
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [materials, setMaterials] = useState<MaterialItem[]>([]);
   const [errorMsg, setErrorMsg] = useState("");
+  const [downloadingId, setDownloadingId] = useState<number | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState<Record<number, number>>({});
+  const [downloadedIds, setDownloadedIds] = useState<Set<number>>(new Set());
+
+  const loadDownloadedStatus = useCallback(async () => {
+    const libraryItems = await getLibraryMaterials();
+    setDownloadedIds(new Set(libraryItems.map((item) => item.id)));
+  }, []);
 
   const loadMaterials = async () => {
     try {
       setErrorMsg("");
       const response = await api.get("/materials/");
       const rawItems = response.data?.results || response.data || [];
-      setMaterials(
-        rawItems.map((item: MaterialItem) => ({
-          ...item,
-          file: item.file ? resolveMediaUrl(item.file) : item.file,
-        }))
-      );
+      const mappedItems = rawItems.map((item: MaterialItem) => ({
+        ...item,
+        file: item.file ? resolveMediaUrl(item.file) : item.file,
+      }));
+      setMaterials(mappedItems);
+      await AsyncStorage.setItem(MATERIALS_CACHE_KEY, JSON.stringify(mappedItems));
     } catch (error: any) {
-      setErrorMsg(
-        error?.response?.data?.error || "Failed to load materials"
-      );
+      const cached = await AsyncStorage.getItem(MATERIALS_CACHE_KEY);
+      let cachedItems: MaterialItem[] = [];
+      try {
+        cachedItems = cached ? JSON.parse(cached) : [];
+      } catch {
+        cachedItems = [];
+      }
+
+      if (Array.isArray(cachedItems) && cachedItems.length) {
+        setMaterials(cachedItems);
+        setErrorMsg("No connection. Showing saved materials.");
+      } else {
+        setMaterials([]);
+        setErrorMsg("No connection. Please connect once to load materials.");
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -55,15 +84,34 @@ export default function MaterialsScreen() {
     loadMaterials();
   }, []);
 
+  useFocusEffect(
+    useCallback(() => {
+      loadDownloadedStatus();
+    }, [loadDownloadedStatus])
+  );
+
   const onRefresh = async () => {
     setRefreshing(true);
     await loadMaterials();
   };
 
-  const openFile = async (url?: string) => {
-    if (!url) return;
-    await Linking.openURL(url);
+  const openPdf = async (item: MaterialItem) => {
+    if (!item.file) {
+      setErrorMsg("PDF file is not available.");
+      return;
+    }
+    setErrorMsg("");
+    router.push({
+      pathname: "/(tabs)/material-viewer",
+      params: {
+        title: item.title || "Material",
+        uri: item.file,
+        returnTo: "/materials",
+      },
+    } as any);
   };
+
+  const materialRows = useMemo(() => materials, [materials]);
 
   if (loading) {
     return (
@@ -101,11 +149,20 @@ export default function MaterialsScreen() {
           <Text style={styles.emptyText}>No materials uploaded yet</Text>
         </View>
       ) : (
-        materials.map((item) => (
+        materialRows.map((item) => {
+          const fileName = item.file?.split("?")[0]?.split("/").pop() || item.title || "material";
+          const fileType = getFileType(fileName);
+          const isZip = fileType === "zip";
+          const isPdf = fileType === "pdf";
+          const isDownloaded = downloadedIds.has(item.id);
+          const isDownloading = downloadingId === item.id;
+          const progress = downloadProgress[item.id] || 0;
+
+          return (
           <View key={item.id} style={styles.card}>
             <View style={styles.cardTop}>
               <View style={styles.fileIcon}>
-                <Ionicons name="document-text-outline" size={22} color="#5523D2" />
+                <Ionicons name={iconForFileType(fileType)} size={22} color="#5523D2" />
               </View>
               <View style={styles.cardTitleBlock}>
                 <Text style={styles.title}>{item.title}</Text>
@@ -134,17 +191,65 @@ export default function MaterialsScreen() {
             </View>
 
             <TouchableOpacity
-              style={styles.button}
-              onPress={() => openFile(item.file)}
+              style={[styles.button, isDownloaded && styles.openButton]}
+              onPress={() => {
+                if (isPdf) {
+                  openPdf(item);
+                  return;
+                }
+                if (isZip) {
+                  router.push({
+                    pathname: "/(tabs)/zip-viewer",
+                    params: {
+                      id: String(item.id),
+                      title: item.title || "ZIP Material",
+                    },
+                  } as any);
+                  return;
+                }
+                setErrorMsg("This file type can be viewed after converting it to PDF or uploading it as ZIP/PDF.");
+              }}
+              disabled={downloadingId === item.id}
             >
-              <Ionicons name="open-outline" size={17} color="#FFFFFF" />
-              <Text style={styles.buttonText}>Open Material</Text>
+              {isDownloading ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : isPdf ? (
+                <Ionicons name="eye-outline" size={17} color="#FFFFFF" />
+              ) : isDownloaded ? (
+                <Ionicons name="checkmark-circle-outline" size={17} color="#FFFFFF" />
+              ) : isZip ? (
+                <Ionicons name="archive-outline" size={17} color="#FFFFFF" />
+              ) : (
+                <Ionicons name="lock-closed-outline" size={17} color="#FFFFFF" />
+              )}
+              <Text style={styles.buttonText}>
+                {isDownloading
+                  ? progress
+                    ? `Downloading ${progress}%`
+                    : "Downloading..."
+                  : isPdf
+                    ? "View PDF"
+                    : isDownloaded
+                      ? "Open ZIP"
+                      : isZip
+                        ? "Open ZIP"
+                        : "PDF/ZIP only"}
+              </Text>
             </TouchableOpacity>
           </View>
-        ))
+        )})
       )}
     </ScrollView>
   );
+}
+
+function iconForFileType(type: string) {
+  if (type === "pdf") return "document-attach-outline";
+  if (type === "zip") return "archive-outline";
+  if (type === "image") return "image-outline";
+  if (type === "text") return "document-text-outline";
+  if (type === "document") return "documents-outline";
+  return "document-outline";
 }
 
 const styles = StyleSheet.create({
@@ -297,7 +402,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 8,
   },
+  openButton: {
+    backgroundColor: "#16A34A",
+  },
   buttonText: {
     color: "#fff",
+    fontWeight: "800",
   },
 });

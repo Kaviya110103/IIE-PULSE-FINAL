@@ -100,7 +100,7 @@ export default function LoginRatingHistory() {
         <View style={styles.ruleCard}>
           <Ionicons name="information-circle-outline" size={20} color="#7C3AED" />
           <Text style={styles.ruleText}>
-            Earn 1 star each weekday when you log in at least 2 times. Rating resets every week.
+            Starts at 5 stars. Low login usage reduces 1 star per weekday. Rating resets every week.
           </Text>
         </View>
 

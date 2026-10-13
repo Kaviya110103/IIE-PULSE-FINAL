@@ -1,6 +1,6 @@
-import { Ionicons } from "@expo/vector-icons";
 import api from "@/services/api";
-import { router } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import * as ImagePicker from "expo-image-picker";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -32,6 +32,7 @@ export default function ProfileView() {
     ending: "",
   });
   const [image, setImage] = useState("https://i.pravatar.cc/300");
+  const [photoAsset, setPhotoAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
 
   useEffect(() => {
     loadProfile();
@@ -42,14 +43,24 @@ export default function ProfileView() {
       const response = await api.get("students/me/");
       const data = response.data;
 
+      const courseNames = Array.isArray(data.course_names) && data.course_names.length
+        ? data.course_names.join(", ")
+        : data.course || "";
+      const batchNames = Array.isArray(data.assigned_batches) && data.assigned_batches.length
+        ? data.assigned_batches
+            .map((batch: any) => batch.display_name || batch.batch_code || batch.batch_number)
+            .filter(Boolean)
+            .join(", ")
+        : data.assigned_batch_code || data.assigned_batch_number || "";
+
       setProfile({
         name: `${data.first_name || ""} ${data.last_name || ""}`.trim(),
         gender: data.gender || "",
         dob: data.date_of_birth || "",
         email: data.email || "",
         mobile: data.mobile_no || "",
-        course: data.course || "",
-        batch: data.assigned_batch_number || "",
+        course: courseNames,
+        batch: batchNames,
         qualification: data.qualification || "",
         joining: data.created_at ? data.created_at.split("T")[0] : "",
         ending: "",
@@ -58,6 +69,7 @@ export default function ProfileView() {
       if (data.photo) {
         setImage(resolveMediaUrl(data.photo));
       }
+      setPhotoAsset(null);
     } catch (error: any) {
       console.log("Profile fetch error:", error);
       Alert.alert(
@@ -79,16 +91,29 @@ export default function ProfileView() {
       const [first_name, ...rest] = profile.name.trim().split(" ");
       const last_name = rest.join(" ");
 
-      const payload = {
+      const basePayload = {
         first_name: first_name || "",
         last_name: last_name || "",
-        gender: profile.gender,
         date_of_birth: profile.dob,
-        email: profile.email,
-        mobile_no: profile.mobile,
+        email: profile.email.trim(),
+        mobile_no: profile.mobile.trim(),
       };
 
-      await api.put("students/me/", payload);
+      if (photoAsset) {
+        const formData = new FormData();
+        Object.entries(basePayload).forEach(([key, value]) => formData.append(key, value));
+        const fileName = photoAsset.fileName || `student-profile-${Date.now()}.jpg`;
+        formData.append("photo", {
+          uri: photoAsset.uri,
+          name: fileName,
+          type: photoAsset.mimeType || "image/jpeg",
+        } as any);
+        await api.put("students/me/", formData, {
+          headers: { "Content-Type": "multipart/form-data" },
+        });
+      } else {
+        await api.put("students/me/", basePayload);
+      }
 
       setEditMode(false);
       Alert.alert("Success", "Profile updated successfully");
@@ -120,6 +145,27 @@ export default function ProfileView() {
       await saveProfile();
     } else {
       setEditMode(true);
+    }
+  };
+
+  const pickProfilePhoto = async () => {
+    if (!editMode) return;
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert("Permission Needed", "Please allow photo access to update your profile picture.");
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets?.[0]) {
+      setPhotoAsset(result.assets[0]);
+      setImage(result.assets[0].uri);
     }
   };
 
@@ -166,7 +212,14 @@ export default function ProfileView() {
       </View>
 
       <View style={styles.profileCenter}>
-        <Image source={{ uri: image }} style={styles.avatar} />
+        <Pressable style={styles.avatarWrap} onPress={pickProfilePhoto}>
+          <Image source={{ uri: image }} style={styles.avatar} />
+          {editMode ? (
+            <View style={styles.cameraBadge}>
+              <Ionicons name="camera" size={16} color="#FFFFFF" />
+            </View>
+          ) : null}
+        </Pressable>
 
         <Pressable
           style={styles.modeBtn}
@@ -185,10 +238,11 @@ export default function ProfileView() {
           <Text style={styles.cardTitle}>Personal Details</Text>
         </View>
         {renderRow("person-outline", "Name", "name", true)}
-        {renderRow("male-female-outline", "Gender", "gender", true)}
         {renderRow("calendar-outline", "Date of Birth", "dob", true)}
         {renderRow("mail-outline", "Email", "email", true)}
         {renderRow("call-outline", "Mobile", "mobile", true)}
+        {renderRow("male-female-outline", "Gender", "gender")}
+        {renderRow("school-outline", "Qualification", "qualification")}
       </View>
 
       <View style={styles.card}>
@@ -198,7 +252,6 @@ export default function ProfileView() {
         </View>
         {renderRow("book-outline", "Course", "course")}
         {renderRow("time-outline", "Batch", "batch")}
-        {renderRow("school-outline", "Qualification", "qualification")}
         {renderRow("log-in-outline", "Joining Date", "joining")}
         {renderRow("log-out-outline", "Ending Date", "ending")}
       </View>
@@ -233,10 +286,32 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginVertical: 20,
   },
+  avatarWrap: {
+    width: 106,
+    height: 106,
+    borderRadius: 53,
+    padding: 3,
+    backgroundColor: "#F5F3FF",
+    borderWidth: 1,
+    borderColor: "#DDD6FE",
+  },
   avatar: {
     width: 100,
     height: 100,
     borderRadius: 50,
+  },
+  cameraBadge: {
+    position: "absolute",
+    right: 0,
+    bottom: 4,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#5523D2",
+    borderWidth: 2,
+    borderColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center",
   },
   modeBtn: {
     marginTop: 14,

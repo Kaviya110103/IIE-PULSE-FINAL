@@ -5,7 +5,7 @@ from django.views.static import serve
 from IIE import settings
 from rest_framework_simplejwt.views import TokenRefreshView
 from connect import api_views as v
-from connect.api_views import add_fee_payment, admin_fee_payment_requests, create_fee_payment_request, forgot_password, generate_bill, process_fee_payment_request, reset_password, student_fee_details,admin_fee_list
+from connect.api_views import add_fee_payment, admin_fee_payment_requests, create_fee_bill_link, create_fee_payment_request, forgot_password, generate_bill, process_fee_payment_request, reset_password, student_fee_details,admin_fee_list
 
 from connect.api_views import (
     get_test_questions,
@@ -16,6 +16,7 @@ from connect.api_views import (
     student_quizzes,
     student_take_quiz,
     get_session_doubt_responses,
+    staff_update_test_result_mark,
     test_results,
     update_announcement,
 )
@@ -38,9 +39,11 @@ urlpatterns = [
     path('api/student/login-rating/', v.student_weekly_login_rating),
     path('api/student/login-rating/history/', v.student_weekly_login_rating_history),
     path('api/student/challenge/', v.student_challenge_summary),
+    path('api/student/challenge/sessions/', v.student_challenge_sessions),
     path('api/student/challenge/today/', v.student_challenge_today),
     path('api/student/challenge/day/<int:day_id>/submit/', v.student_challenge_submit_day),
     path('api/student/challenge/history/', v.student_challenge_history),
+    path('api/staff/daily-activity-results/', v.staff_daily_activity_results),
     path('api/challenge/questions/generate/', v.generate_challenge_questions),
     path('api/dashboard/counselor/', v.CounselorDashboardView.as_view()),
 
@@ -56,6 +59,8 @@ urlpatterns = [
     # Admin gallery, vlogs, news, calendar, and referrals
     path('api/gallery/', v.GalleryItemListCreateView.as_view()),
     path('api/gallery/<int:pk>/', v.GalleryItemDetailView.as_view()),
+    path('api/awards/', v.AwardItemListCreateView.as_view()),
+    path('api/awards/<int:pk>/', v.AwardItemDetailView.as_view()),
     path('api/vlogs/', v.VlogItemListCreateView.as_view()),
     path('api/vlogs/<int:pk>/', v.VlogItemDetailView.as_view()),
     path('api/news/', v.NewsItemListCreateView.as_view()),
@@ -106,6 +111,8 @@ urlpatterns = [
     path('api/materials/upload/', v.StudyMaterialCreateView.as_view()),
     path('api/materials/<int:pk>/', v.update_material),
     path('api/materials/<int:pk>/download/', v.download_material),
+    path('api/materials/<int:pk>/zip-entries/', v.material_zip_entries),
+    path('api/materials/<int:pk>/zip-file/', v.material_zip_entry_file),
     path('api/materials/<int:pk>/delete/', v.delete_material),
     path('api/material-library/', v.material_library_list),
     path('api/material-library/upload/', v.material_library_upload),
@@ -124,6 +131,7 @@ urlpatterns = [
     # â”€â”€ TEST RESULTS (SEPARATED â€” student vs staff) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     path('api/test-results/', student_test_results, name='student-test-results'),   # student
     path('api/staff/test-results/', test_results, name='staff-test-results'),        # staff/admin
+    path('api/staff/test-results/<int:result_id>/mark/', staff_update_test_result_mark, name='staff-test-result-mark'),
 
     # â”€â”€ LEAVE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     path('api/staff-leave/', v.StaffLeaveListView.as_view()),
@@ -233,6 +241,7 @@ urlpatterns = [
     path('api/public-users/login/', v.public_user_login),
     path('api/public-users/logout/', v.public_user_logout),
     path('api/admin/public-users/', v.admin_public_users),
+    path('api/admin/public-users/<int:pk>/status/', v.admin_public_user_status),
     path('api/quiz/result/<int:attempt_id>/', quiz_result_details, name='quiz-result-details'),
     path('api/quiz/attempt/<int:attempt_id>/result/', v.quiz_result),
     path('api/quiz/<int:quiz_id>/take/', student_take_quiz, name='student-take-quiz'),
@@ -272,6 +281,7 @@ urlpatterns = [
     #Fee
     path('api/fees/', admin_fee_list),
     path('api/fees/<int:fee_id>/pay/', add_fee_payment),
+    path('api/fees/<int:fee_id>/bill-link/', create_fee_bill_link),
     path('api/fees/<int:fee_id>/bill/', generate_bill),
     path('api/student/fee/', student_fee_details),
 

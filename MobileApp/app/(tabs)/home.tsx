@@ -32,6 +32,12 @@ type StudentData = {
 
 type DashboardData = {
   student?: StudentData;
+  birthday_wish?: {
+    is_birthday?: boolean;
+    student_name?: string;
+    message?: string;
+    date?: string;
+  };
   attendance_percentage?: number;
   total_classes?: number;
   present_classes?: number;
@@ -105,6 +111,7 @@ export default function Home() {
   const [activeCourseKey, setActiveCourseKey] = useState("");
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [starAnim] = useState(() => new Animated.Value(0));
+  const [streakPulse] = useState(() => new Animated.Value(1));
   const dashboardLoadedRef = useRef(false);
 
   const loadOverviewData = useCallback(async () => {
@@ -321,6 +328,10 @@ export default function Home() {
   }, [sortedSessions]);
 
   const weeklyStars = loginRating?.stars ?? 0;
+  const dailyActivityStreak = useMemo(
+    () => Math.max(0, ...challenges.map((challenge) => Number(challenge.current_streak || 0))),
+    [challenges]
+  );
 
   useEffect(() => {
     Animated.spring(starAnim, {
@@ -330,6 +341,25 @@ export default function Home() {
       useNativeDriver: true,
     }).start();
   }, [starAnim, weeklyStars]);
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(streakPulse, {
+          toValue: 1.08,
+          duration: 850,
+          useNativeDriver: true,
+        }),
+        Animated.timing(streakPulse, {
+          toValue: 1,
+          duration: 850,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [streakPulse]);
 
   if (loading) {
     return (
@@ -366,6 +396,8 @@ export default function Home() {
   const totalSessions = activeContext
     ? activeContext.totalSessions || sortedSessions.length
     : dashboard?.total_sessions || sortedSessions.length;
+  const birthdayWish = dashboard?.birthday_wish;
+  const isBirthday = Boolean(birthdayWish?.is_birthday);
 
   return (
     <View style={styles.container}>
@@ -385,6 +417,16 @@ export default function Home() {
           animatedValue={starAnim}
           onPress={() => router.push("/login-rating-history" as any)}
         />
+
+        <Animated.View style={[styles.dailyStreakCard, { transform: [{ scale: streakPulse }] }]}>
+          <View style={styles.dailyStreakIcon}>
+            <Ionicons name="flame-outline" size={24} color="#F97316" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.dailyStreakLabel}>Daily Activity Streak</Text>
+            <Text style={styles.dailyStreakValue}>{dailyActivityStreak} activities</Text>
+          </View>
+        </Animated.View>
 
         {errorMsg ? <Text style={styles.inlineErrorText}>{errorMsg}</Text> : null}
 
@@ -412,46 +454,50 @@ export default function Home() {
           </ScrollView>
         ) : null}
 
-        <View style={styles.hero}>
-          <View style={styles.heroTop}>
-            <View style={styles.heroIcon}>
-              <Ionicons name="analytics-outline" size={22} color="#FFFFFF" />
+        {isBirthday ? (
+          <BirthdayHero studentName={birthdayWish?.student_name || studentName} />
+        ) : (
+          <View style={styles.hero}>
+            <View style={styles.heroTop}>
+              <View style={styles.heroIcon}>
+                <Ionicons name="analytics-outline" size={22} color="#FFFFFF" />
+              </View>
+              <View style={styles.heroCopy}>
+                <Text style={styles.kicker}>Student Overview</Text>
+                <Text style={styles.heroTitle}>Hello, {studentName}</Text>
+              </View>
             </View>
-            <View style={styles.heroCopy}>
-              <Text style={styles.kicker}>Student Overview</Text>
-              <Text style={styles.heroTitle}>Hello, {studentName}</Text>
-            </View>
-          </View>
 
-          <View style={styles.heroDivider} />
+            <View style={styles.heroDivider} />
 
-          <View style={styles.courseRow}>
-            <View style={styles.courseIcon}>
-              <Ionicons name="school-outline" size={24} color="#2E1065" />
+            <View style={styles.courseRow}>
+              <View style={styles.courseIcon}>
+                <Ionicons name="school-outline" size={24} color="#2E1065" />
+              </View>
+              <View style={styles.courseTextBlock}>
+                <Text style={styles.courseLabel}>Course Enrolled</Text>
+                <Text style={styles.courseTitle}>{activeContext?.courseName || student?.course || "Course not assigned"}</Text>
+              </View>
             </View>
-            <View style={styles.courseTextBlock}>
-              <Text style={styles.courseLabel}>Course Enrolled</Text>
-              <Text style={styles.courseTitle}>{activeContext?.courseName || student?.course || "Course not assigned"}</Text>
-            </View>
-          </View>
 
-          <View style={styles.statsGrid}>
-            <InfoTile
-              label="Batch"
-              value={activeContext?.batchNumber || student?.assigned_batch_code || student?.assigned_batch_number || "Not assigned"}
-              icon="layers-outline"
-            />
-            <InfoTile
-              label="Mentor"
-              value={activeContext?.mentorName || student?.assigned_staff_name || "Not assigned"}
-              icon="person-outline"
-            />
+            <View style={styles.statsGrid}>
+              <InfoTile
+                label="Batch"
+                value={activeContext?.batchNumber || student?.assigned_batch_code || student?.assigned_batch_number || "Not assigned"}
+                icon="layers-outline"
+              />
+              <InfoTile
+                label="Mentor"
+                value={activeContext?.mentorName || student?.assigned_staff_name || "Not assigned"}
+                icon="person-outline"
+              />
+            </View>
+            <View style={styles.timingPill}>
+              <Ionicons name="time-outline" size={15} color="#DDD6FE" />
+              <Text style={styles.timingPillText}>{activeContext?.timing || "Timing not assigned"}</Text>
+            </View>
           </View>
-          <View style={styles.timingPill}>
-            <Ionicons name="time-outline" size={15} color="#DDD6FE" />
-            <Text style={styles.timingPillText}>{activeContext?.timing || "Timing not assigned"}</Text>
-          </View>
-        </View>
+        )}
 
         <View style={styles.progressPanel}>
           <View style={styles.progressHeader}>
@@ -485,8 +531,8 @@ export default function Home() {
               <Ionicons name="flash-outline" size={23} color="#FFFFFF" />
             </View>
             <View style={styles.challengeHeaderText}>
-              <Text style={styles.panelKicker}>Daily Practice</Text>
-              <Text style={styles.challengeTitle}>15-Day Challenge</Text>
+              <Text style={styles.panelKicker}>Daily Skillset</Text>
+              <Text style={styles.challengeTitle}>Daily Activity</Text>
             </View>
           </View>
 
@@ -505,9 +551,9 @@ export default function Home() {
               />
           ) : (
             <View style={styles.challengeEmpty}>
-              <Text style={styles.challengeEmptyTitle}>No challenge assigned yet</Text>
+              <Text style={styles.challengeEmptyTitle}>No daily activity assigned yet</Text>
               <Text style={styles.challengeEmptyText}>
-                Your 15-day challenge will appear after completed sessions have question pools.
+                Your daily activity will appear after completed sessions have question pools.
               </Text>
             </View>
           )}
@@ -623,10 +669,157 @@ function WeeklyStarRating({
         })}
       </Animated.View>
       <View style={styles.ratingFooter}>
-        <Text style={styles.ratingHint}>2 logins/day earns 1 star</Text>
+        <Text style={styles.ratingHint}>Low usage reduces stars</Text>
         <Ionicons name="chevron-forward" size={16} color="#7C3AED" />
       </View>
     </TouchableOpacity>
+  );
+}
+
+function BirthdayHero({ studentName }: { studentName: string }) {
+  const floatAnim = useRef(new Animated.Value(0)).current;
+  const sparkleAnim = useRef(new Animated.Value(0)).current;
+  const confettiAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const floatLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(floatAnim, {
+          toValue: 1,
+          duration: 1800,
+          useNativeDriver: true,
+        }),
+        Animated.timing(floatAnim, {
+          toValue: 0,
+          duration: 1800,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    const sparkleLoop = Animated.loop(
+      Animated.timing(sparkleAnim, {
+        toValue: 1,
+        duration: 2400,
+        useNativeDriver: true,
+      })
+    );
+    const confettiLoop = Animated.loop(
+      Animated.timing(confettiAnim, {
+        toValue: 1,
+        duration: 1900,
+        useNativeDriver: true,
+      })
+    );
+    floatLoop.start();
+    sparkleLoop.start();
+    confettiLoop.start();
+    return () => {
+      floatLoop.stop();
+      sparkleLoop.stop();
+      confettiLoop.stop();
+    };
+  }, [confettiAnim, floatAnim, sparkleAnim]);
+
+  const lift = floatAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, -12],
+  });
+  const sparkleSpin = sparkleAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "360deg"],
+  });
+  const burstScale = confettiAnim.interpolate({
+    inputRange: [0, 0.18, 1],
+    outputRange: [0.3, 1, 4.8],
+  });
+  const burstOpacity = confettiAnim.interpolate({
+    inputRange: [0, 0.18, 1],
+    outputRange: [0, 1, 0],
+  });
+  const sprinkleDrop = confettiAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-18, 118],
+  });
+  const sprinkleOpacity = confettiAnim.interpolate({
+    inputRange: [0, 0.25, 0.85, 1],
+    outputRange: [0, 1, 1, 0],
+  });
+
+  return (
+    <View style={styles.birthdayHero}>
+      <Animated.View
+        style={[
+          styles.birthdayBurst,
+          { opacity: burstOpacity, transform: [{ scale: burstScale }] },
+        ]}
+      />
+      {[
+        ["12%", "#FDE68A", 0],
+        ["28%", "#2EC4B6", 35],
+        ["45%", "#FFFFFF", -18],
+        ["62%", "#F97316", 22],
+        ["79%", "#E84855", -32],
+        ["90%", "#C4B5FD", 14],
+      ].map(([left, color, rotate], index) => (
+        <Animated.View
+          key={`${left}-${index}`}
+          style={[
+            styles.birthdaySprinkle,
+            {
+              left: left as any,
+              backgroundColor: color as string,
+              opacity: sprinkleOpacity,
+              transform: [
+                { translateY: sprinkleDrop },
+                { rotate: `${rotate}deg` },
+              ],
+            },
+          ]}
+        />
+      ))}
+      <Animated.Text
+        style={[
+          styles.birthdayBalloon,
+          styles.birthdayBalloonLeft,
+          { transform: [{ translateY: lift }] },
+        ]}
+      >
+        🎈
+      </Animated.Text>
+      <Animated.Text
+        style={[
+          styles.birthdayBalloon,
+          styles.birthdayBalloonRight,
+          { transform: [{ translateY: lift }, { rotate: "8deg" }] },
+        ]}
+      >
+        🎉
+      </Animated.Text>
+      <Animated.View
+        style={[
+          styles.birthdaySparkle,
+          { transform: [{ rotate: sparkleSpin }] },
+        ]}
+      >
+        <Ionicons name="sparkles-outline" size={28} color="#FDE68A" />
+      </Animated.View>
+      <View style={styles.birthdayContent}>
+        <Text style={styles.birthdayKicker}>Birthday Celebration</Text>
+        <Text style={styles.birthdayTitle}>Happy Birthday,</Text>
+        <Text style={styles.birthdayName}>{studentName}!</Text>
+        <Text style={styles.birthdayMessage}>
+          Wishing you a bright year filled with learning, success, and beautiful new milestones.
+        </Text>
+      </View>
+      <Animated.Text
+        style={[
+          styles.birthdayCake,
+          { transform: [{ translateY: lift }] },
+        ]}
+      >
+        🎂
+      </Animated.Text>
+    </View>
   );
 }
 
@@ -637,10 +830,15 @@ function ChallengeCard({
   challenge: StudentChallengeSummary;
   onPress: () => void;
 }) {
-  const completedDays = Math.max(0, Math.min(Number(challenge.completed_days || 0), 15));
+  const completedDays = Math.max(0, Number(challenge.completed_days || 0));
   const isCompleted = challenge.status === "completed";
-  const nextDay = isCompleted ? 15 : Number(challenge.next_day || Math.min(completedDays + 1, 15));
-  const progress = Math.round((completedDays / 15) * 100);
+  const nextDay = Number(challenge.next_day || completedDays + 1);
+  const totalActivities = Math.max(
+    completedDays,
+    Number(challenge.total_sessions || challenge.completed_sessions || 0),
+    1
+  );
+  const progress = Math.round((completedDays / totalActivities) * 100);
   const buttonText = isCompleted ? "View Achievement" : challenge.start_date ? "Continue Challenge" : "Start Challenge";
   const completedLearningSessions = Number(challenge.completed_sessions || 0);
   const totalLearningSessions = Number(challenge.total_sessions || 0);
@@ -657,14 +855,14 @@ function ChallengeCard({
         </View>
         <View style={styles.challengeCourseBlock}>
           <Text style={styles.challengeCourse} numberOfLines={1}>
-            {isCompleted ? "Challenge Completed" : "15-Day Challenge"}
+            {isCompleted ? "Daily Activity Completed" : "Daily Activity"}
           </Text>
           <Text style={styles.challengeBatch} numberOfLines={1}>
             {challenge.course_name || "Course"} · {challenge.batch_code || challenge.batch_number || "Batch"}
           </Text>
         </View>
         <View style={styles.challengeDayBadge}>
-          <Text style={styles.challengeDayText}>{completedDays}/15</Text>
+          <Text style={styles.challengeDayText}>{completedDays}</Text>
         </View>
       </View>
       {isCompleted ? (
@@ -676,7 +874,7 @@ function ChallengeCard({
         </View>
       ) : null}
       <View style={styles.challengeStageRow}>
-        {Array.from({ length: 15 }).map((_, index) => {
+        {Array.from({ length: totalActivities }).map((_, index) => {
           const active = index < completedDays;
           const current = index + 1 === nextDay && !isCompleted;
           return (
@@ -694,8 +892,8 @@ function ChallengeCard({
       <View style={styles.challengeStats}>
         <View style={styles.challengeStat}>
           <Ionicons name="flag-outline" size={17} color="#FDE68A" />
-          <Text style={styles.challengeStatValue}>{completedDays}/15</Text>
-          <Text style={styles.challengeStatLabel}>Challenge Days</Text>
+          <Text style={styles.challengeStatValue}>{completedDays}</Text>
+          <Text style={styles.challengeStatLabel}>Activity Days</Text>
         </View>
         <View style={styles.challengeStat}>
           <Ionicons name="book-outline" size={17} color="#C4B5FD" />
@@ -954,6 +1152,109 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 10 },
     elevation: 10,
   },
+  birthdayHero: {
+    position: "relative",
+    minHeight: 250,
+    borderRadius: 30,
+    padding: 22,
+    overflow: "hidden",
+    backgroundColor: "#5B21B6",
+    shadowColor: "#7C3AED",
+    shadowOpacity: 0.34,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 10,
+  },
+  birthdayContent: {
+    maxWidth: 246,
+    zIndex: 2,
+  },
+  birthdayKicker: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.15)",
+    color: "#FDE68A",
+    fontSize: 10,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 0.7,
+    overflow: "hidden",
+  },
+  birthdayTitle: {
+    marginTop: 17,
+    color: "#FFFFFF",
+    fontSize: 31,
+    lineHeight: 36,
+    fontWeight: "900",
+  },
+  birthdayName: {
+    color: "#FDE68A",
+    fontSize: 32,
+    lineHeight: 37,
+    fontWeight: "900",
+  },
+  birthdayMessage: {
+    marginTop: 10,
+    color: "#EDE9FE",
+    fontSize: 13,
+    lineHeight: 20,
+    fontWeight: "700",
+  },
+  birthdayCake: {
+    position: "absolute",
+    right: 20,
+    bottom: 22,
+    fontSize: 74,
+    zIndex: 3,
+  },
+  birthdayBalloon: {
+    position: "absolute",
+    fontSize: 42,
+    zIndex: 1,
+  },
+  birthdayBalloonLeft: {
+    right: 105,
+    top: 26,
+  },
+  birthdayBalloonRight: {
+    right: 22,
+    top: 48,
+  },
+  birthdaySparkle: {
+    position: "absolute",
+    right: 78,
+    bottom: 106,
+    width: 50,
+    height: 50,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.13)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.16)",
+    zIndex: 2,
+  },
+  birthdayBurst: {
+    position: "absolute",
+    right: 86,
+    top: 52,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+    borderColor: "#FDE68A",
+    zIndex: 1,
+  },
+  birthdaySprinkle: {
+    position: "absolute",
+    top: 12,
+    width: 7,
+    height: 13,
+    borderRadius: 4,
+    zIndex: 4,
+  },
   heroTop: {
     flexDirection: "row",
     alignItems: "center",
@@ -1208,6 +1509,37 @@ const styles = StyleSheet.create({
     color: "#92400E",
     fontSize: 13,
     fontWeight: "900",
+  },
+  dailyStreakCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "#FFF7ED",
+    borderRadius: 22,
+    padding: 15,
+    borderWidth: 1,
+    borderColor: "#FDBA74",
+    marginBottom: 14,
+  },
+  dailyStreakIcon: {
+    width: 50,
+    height: 50,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FFEDD5",
+  },
+  dailyStreakLabel: {
+    color: "#9A3412",
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  dailyStreakValue: {
+    color: "#2E1065",
+    fontSize: 22,
+    fontWeight: "900",
+    marginTop: 2,
   },
   challengeStageRow: {
     flexDirection: "row",

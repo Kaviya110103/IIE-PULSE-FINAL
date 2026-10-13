@@ -1,5 +1,4 @@
 import logging
-from datetime import timedelta
 
 from django.db import transaction
 from django.utils import timezone
@@ -179,42 +178,98 @@ def validate_question_eligibility(question, student, course, batch):
 
 def get_available_questions(student, course, batch):
     eligible_session_ids = get_eligible_sessions(student, course, batch).values_list('id', flat=True)
-    return ChallengeQuestionPool.objects.filter(
+    return _technical_question_queryset(ChallengeQuestionPool.objects.filter(
         course=course,
         batch=batch,
         source_session_id__in=eligible_session_ids,
         is_active=True,
-    ).select_related('course', 'batch', 'source_session').order_by('id')
+    )).select_related('course', 'batch', 'source_session').order_by('id')
 
 
-def ensure_question_pool_for_student_completed_sessions(student, course, batch, min_questions=QUESTIONS_PER_DAY):
+def _technical_question_queryset(qs):
+    return qs.exclude(
+        question_text__icontains='which concept is part of the completed session content'
+    ).exclude(
+        question_text__icontains='completed session content'
+    ).exclude(
+        question_text__istartswith='In Session '
+    ).exclude(
+        question_text__icontains='what should a beginner understand first'
+    )
+
+
+def _is_generic_question_text(text):
+    normalized = str(text or '').strip().lower()
+    return (
+        'which concept is part of the completed session content' in normalized or
+        'completed session content' in normalized or
+        normalized.startswith('in session ') or
+        'what should a beginner understand first' in normalized
+    )
+
+
+def _assigned_day_has_generic_questions(day):
+    return day.day_questions.select_related('question').filter(
+        question__question_text__icontains='completed session content'
+    ).exists() or any(
+        _is_generic_question_text(item.question.question_text)
+        for item in day.day_questions.select_related('question').all()
+    )
+
+
+def ensure_question_pool_for_session(session, challenge=None, min_unused=QUESTIONS_PER_DAY):
     from connect.services.challenge_ai import ChallengeAIError, generate_questions_for_completed_session
 
     created_total = 0
     skipped_total = 0
-    for session in get_eligible_sessions(student, course, batch):
-        existing_for_session = ChallengeQuestionPool.objects.filter(
-            course=course,
-            batch=batch,
+    used_ids = []
+    if challenge:
+        used_ids = StudentChallengeDayQuestion.objects.filter(
+            challenge_day__challenge=challenge,
+            question__source_session=session,
+        ).values_list('question_id', flat=True)
+
+    def unused_count():
+        return _technical_question_queryset(ChallengeQuestionPool.objects.filter(
+            course=session.batch.course_name,
+            batch=session.batch,
             source_session=session,
             is_active=True,
-        ).count()
-        if existing_for_session >= 10:
-            continue
+        )).exclude(id__in=used_ids).count()
 
+    attempts = 0
+    while unused_count() < min_unused and attempts < 4:
+        attempts += 1
+        requested = min(20, max(min_unused - unused_count(), QUESTIONS_PER_DAY))
         try:
-            result = generate_questions_for_completed_session(session, count=10 - existing_for_session)
+            result = generate_questions_for_completed_session(session, count=requested)
         except (ChallengeValidationError, ChallengeAIError) as exc:
             logger.warning(
-                'Challenge question auto-generation skipped session_id=%s student_id=%s: %s',
+                'Challenge question auto-generation skipped session_id=%s: %s',
                 session.id,
-                student.id,
                 exc,
             )
-            continue
+            break
 
         created_total += len(result['created'])
         skipped_total += len(result['skipped'])
+        if not result['created'] and result['skipped']:
+            break
+
+    return {
+        'created': created_total,
+        'skipped': skipped_total,
+        'available': unused_count(),
+    }
+
+
+def ensure_question_pool_for_student_completed_sessions(student, course, batch, min_questions=QUESTIONS_PER_DAY):
+    created_total = 0
+    skipped_total = 0
+    for session in get_eligible_sessions(student, course, batch):
+        result = ensure_question_pool_for_session(session, min_unused=min_questions)
+        created_total += result['created']
+        skipped_total += result['skipped']
 
     return {
         'created': created_total,
@@ -269,6 +324,53 @@ def _select_questions_for_day(student, course, batch, challenge, day_number):
     return fallback_questions
 
 
+def _select_questions_for_session(student, course, batch, challenge, session):
+    used_question_ids = StudentChallengeDayQuestion.objects.filter(
+        challenge_day__challenge=challenge,
+        question__source_session=session,
+    ).values_list('question_id', flat=True)
+    qs = get_available_questions(student, course, batch).filter(source_session=session).exclude(id__in=used_question_ids)
+    return list(qs[:QUESTIONS_PER_DAY])
+
+
+def get_student_challenge_sessions(student, course, batch):
+    challenge = get_or_create_student_challenge(student, course, batch)
+    sessions = []
+    for session in get_eligible_sessions(student, course, batch):
+        completed_attempts = StudentChallengeDay.objects.filter(
+            challenge=challenge,
+            source_session=session,
+            status='completed',
+        ).count()
+        active_attempt = StudentChallengeDay.objects.filter(
+            challenge=challenge,
+            source_session=session,
+            status='assigned',
+        ).order_by('-attempt_number').first()
+        used_question_ids = StudentChallengeDayQuestion.objects.filter(
+            challenge_day__challenge=challenge,
+            question__source_session=session,
+        ).values_list('question_id', flat=True)
+        unused_count = _technical_question_queryset(ChallengeQuestionPool.objects.filter(
+            course=course,
+            batch=batch,
+            source_session=session,
+            is_active=True,
+        )).exclude(id__in=used_question_ids).count()
+        sessions.append({
+            'id': session.id,
+            'session_number': session.session_number,
+            'title': session.title,
+            'topics': session.topics,
+            'completed_attempts': completed_attempts,
+            'active_day_id': active_attempt.id if active_attempt else None,
+            'next_attempt': (active_attempt.attempt_number if active_attempt else completed_attempts + 1),
+            'available_questions': unused_count,
+            'can_start': True,
+        })
+    return challenge, sessions
+
+
 def _next_challenge_date(challenge, today):
     return today
 
@@ -321,7 +423,7 @@ def get_or_create_today_challenge_day(student, course, batch, today=None):
             'challenge': challenge,
             'day': None,
             'questions': [],
-            'message': 'Challenge already completed.',
+            'message': 'Daily activity already completed.',
         }
 
     if not challenge.start_date:
@@ -347,7 +449,7 @@ def get_or_create_today_challenge_day(student, course, batch, today=None):
             'challenge': challenge,
             'day': None,
             'questions': [],
-            'message': 'Challenge already completed.',
+            'message': 'Daily activity already completed.',
         }
 
     selected_questions = _select_questions_for_day(student, course, batch, challenge, next_day_number)
@@ -376,6 +478,83 @@ def get_or_create_today_challenge_day(student, course, batch, today=None):
         challenge=challenge,
         day_number=next_day_number,
         challenge_date=_next_challenge_date(challenge, today),
+        status='assigned',
+        total_questions=QUESTIONS_PER_DAY,
+        started_at=timezone.now(),
+    )
+    day_questions = [
+        StudentChallengeDayQuestion.objects.create(
+            challenge_day=day,
+            question=question,
+            question_order=index,
+        )
+        for index, question in enumerate(selected_questions, start=1)
+    ]
+    return {
+        'state': 'assigned',
+        'challenge': challenge,
+        'day': day,
+        'questions': day_questions,
+        'message': '',
+    }
+
+
+@transaction.atomic
+def get_or_create_session_challenge_day(student, course, batch, source_session, today=None):
+    today = today or timezone.localdate()
+    if source_session.batch_id != batch.id or source_session.batch.course_name_id != course.id:
+        raise ChallengeValidationError('Session does not belong to this course and batch.')
+    if source_session.id not in get_student_completed_session_ids(student, course, batch):
+        raise ChallengeValidationError('Complete this session before starting daily activity.')
+
+    challenge = get_or_create_student_challenge(student, course, batch)
+    if not challenge.start_date:
+        challenge.start_date = today
+        challenge.status = 'active'
+        challenge.save(update_fields=['start_date', 'status', 'updated_at'])
+    elif challenge.status == 'completed':
+        challenge.status = 'active'
+        challenge.save(update_fields=['status', 'updated_at'])
+
+    active_day = StudentChallengeDay.objects.filter(
+        challenge=challenge,
+        source_session=source_session,
+        status='assigned',
+    ).order_by('-attempt_number').first()
+    if active_day:
+        if _assigned_day_has_generic_questions(active_day):
+            active_day.delete()
+        else:
+            return {
+                'state': 'assigned',
+                'challenge': challenge,
+                'day': active_day,
+                'questions': list(active_day.day_questions.select_related('question', 'question__source_session').all()),
+                'message': '',
+            }
+
+    selected_questions = _select_questions_for_session(student, course, batch, challenge, source_session)
+    if len(selected_questions) < QUESTIONS_PER_DAY:
+        ensure_question_pool_for_session(source_session, challenge=challenge, min_unused=QUESTIONS_PER_DAY)
+        selected_questions = _select_questions_for_session(student, course, batch, challenge, source_session)
+
+    if len(selected_questions) < QUESTIONS_PER_DAY:
+        return {
+            'state': 'insufficient_questions',
+            'challenge': challenge,
+            'day': None,
+            'questions': [],
+            'message': 'Not enough fresh daily activity questions are available for this session.',
+        }
+
+    next_day_number = (StudentChallengeDay.objects.filter(challenge=challenge).order_by('-day_number').values_list('day_number', flat=True).first() or 0) + 1
+    attempt_number = (StudentChallengeDay.objects.filter(challenge=challenge, source_session=source_session).order_by('-attempt_number').values_list('attempt_number', flat=True).first() or 0) + 1
+    day = StudentChallengeDay.objects.create(
+        challenge=challenge,
+        source_session=source_session,
+        day_number=next_day_number,
+        attempt_number=attempt_number,
+        challenge_date=today,
         status='assigned',
         total_questions=QUESTIONS_PER_DAY,
         started_at=timezone.now(),
@@ -448,17 +627,14 @@ def submit_challenge_day(student, challenge_day, submitted_answers):
     challenge_day.completed_at = now
     challenge_day.save(update_fields=['score', 'total_questions', 'status', 'completed_at', 'updated_at'])
 
-    previous_day = StudentChallengeDay.objects.filter(
+    previous_completed = StudentChallengeDay.objects.filter(
         challenge=challenge,
-        day_number=challenge_day.day_number - 1,
         status='completed',
-    ).first()
-    is_consecutive_day = (
-        previous_day and
-        previous_day.challenge_date >= challenge_day.challenge_date - timedelta(days=1)
-    )
-    if challenge_day.day_number == 1 or is_consecutive_day:
-        challenge.current_streak += 1
+    ).exclude(id=challenge_day.id).order_by('-challenge_date', '-completed_at').first()
+    if previous_completed and previous_completed.challenge_date:
+        expected_previous_date = challenge_day.challenge_date - timezone.timedelta(days=1)
+        continues_streak = previous_completed.challenge_date in {challenge_day.challenge_date, expected_previous_date}
+        challenge.current_streak = challenge.current_streak + 1 if continues_streak else 1
     else:
         challenge.current_streak = 1
 
@@ -477,8 +653,9 @@ def submit_challenge_day(student, challenge_day, submitted_answers):
         status='completed',
     ).values_list('total_questions', flat=True)
     challenge.total_questions = sum(challenge.total_questions)
-    if challenge.completed_days >= MAX_CHALLENGE_DAYS:
-        challenge.status = 'completed'
+    challenge.status = 'completed' if challenge.completed_days >= MAX_CHALLENGE_DAYS else 'active'
+    if challenge.status == 'completed':
+        ensure_challenge_achievement(challenge, now)
     challenge.save(update_fields=[
         'current_streak',
         'longest_streak',
@@ -488,8 +665,6 @@ def submit_challenge_day(student, challenge_day, submitted_answers):
         'status',
         'updated_at',
     ])
-    if challenge.status == 'completed':
-        ensure_challenge_achievement(challenge, challenge_day.completed_at)
     return challenge_day
 
 

@@ -1,16 +1,19 @@
 import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
 import {
+  AwardItem,
   CalendarEvent,
   GalleryItem,
   NewsItem,
   VlogItem,
   getPublicHomeContent,
+  resolveMediaUrl,
   submitReferral,
 } from "@/services/api";
 import api from "@/services/api";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
+import { Picker } from "@react-native-picker/picker";
 import { ResizeMode, Video } from "expo-av";
 import { Href, useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -35,7 +38,7 @@ import {
 type ModuleKey =
   | "home"
   | "gallery"
-  | "vlogs"
+  | "awards"
   | "practice"
   | "calendar"
   | "eventDetail"
@@ -59,6 +62,13 @@ type WeeklyLoginRating = {
   }[];
 };
 
+type BirthdayWish = {
+  is_birthday?: boolean;
+  student_name?: string;
+  message?: string;
+  date?: string;
+};
+
 const sideNavItems: Array<{
   key: string;
   label: string;
@@ -70,16 +80,21 @@ const sideNavItems: Array<{
   { key: "overview", label: "Overview", icon: "grid-outline", route: "/home" },
   { key: "attendance", label: "Attendance", icon: "time-outline", route: "/attendance", privateOnly: true },
   { key: "logsheet", label: "Logsheet", icon: "document-text-outline", route: "/logsheet", privateOnly: true },
-  { key: "quizzes", label: "Quizzes", icon: "school-outline", route: "/quizzes", privateOnly: true },
-  { key: "practice", label: "Practice Test", icon: "clipboard-outline", module: "practice" },
+  { key: "student-desk", label: "Student Desk", icon: "desktop-outline", route: "/studentdesk", privateOnly: true },
+  { key: "daily-activity", label: "Daily Activity", icon: "flash-outline", route: "/challenge", privateOnly: true },
+  { key: "tests", label: "Tests", icon: "school-outline", route: "/quizzes", privateOnly: true },
+  { key: "practice", label: "Practice Your Skillset", icon: "clipboard-outline", module: "practice" },
   { key: "calendar", label: "Calendar", icon: "calendar-outline", module: "calendar" },
   { key: "announcement", label: "Announcements", icon: "megaphone-outline", module: "announcement", privateOnly: true },
-  { key: "materials", label: "Materials", icon: "book-outline", route: "/materials", privateOnly: true },
+  { key: "materials", label: "Materials", icon: "book-outline", route: "/(tabs)/materials", privateOnly: true },
+  { key: "library", label: "Library", icon: "library-outline", route: "/(tabs)/library", privateOnly: true },
+  { key: "fee-status", label: "Fee Status", icon: "cash-outline", route: "/feestatus", privateOnly: true },
   { key: "leave", label: "Leave", icon: "calendar-outline", route: "/leaveapply", privateOnly: true },
   { key: "support", label: "Support", icon: "help-buoy-outline", route: "/support", privateOnly: true },
   { key: "gallery", label: "Gallery", icon: "image-outline", module: "gallery" },
-  { key: "vlogs", label: "Vlogs", icon: "videocam-outline", module: "vlogs" },
+  { key: "awards", label: "Awards", icon: "trophy-outline", module: "awards" },
   { key: "news", label: "News", icon: "newspaper-outline", module: "news" },
+  { key: "referral", label: "Referral", icon: "person-add-outline", module: "referral" },
   { key: "contact", label: "Contact Us", icon: "business-outline", module: "contact" },
 ];
 
@@ -95,7 +110,7 @@ const bottomNavItems: Array<{
   { key: "news", label: "News", icon: "newspaper-outline", module: "news" },
   { key: "home", label: "Home", icon: "home", module: "home" },
   { key: "gallery", label: "Gallery", icon: "image-outline", module: "gallery" },
-  { key: "vlogs", label: "Vlogs", icon: "videocam-outline", module: "vlogs" },
+  { key: "skillset", label: "Skillset", icon: "clipboard-outline", module: "practice" },
 ];
 
 
@@ -174,31 +189,102 @@ const courseItems: CourseItem[] = [
   { name: "RHCE + AWS", category: "Cloud & DevOps", link: "https://indrainstitute.com/courses/rhceamazon-web-service/" },
 ];
 
+const referralBranches = [
+  "100ft",
+  "Hopes",
+  "Kuniyamuthur",
+];
+
 const instagramUrl = "https://www.instagram.com/iie_indra_institute?igsh=MXB1OW03N3QyNmV2ag==";
 const websiteUrl = "https://indrainstitute.com/";
 const facebookUrl = "https://www.facebook.com/share/1B52k1NCH7/";
+const youtubeUrl = "https://youtube.com/@learnwithiie?si=BMpOBSpsaclE7ILw";
 const googleFormUrl = "https://forms.gle/nKXHiEnnZHZeegig7";
 const appLogoLight = require("../../assets/images/icon.png");
 const heroStudentsImage = require("../../assets/images/hero-students.png");
+
+const prideSlides: Array<{
+  kicker: string;
+  title: string;
+  highlight?: string;
+  subtitle: string;
+  detail?: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  color: string;
+  softColor: string;
+  showJoin?: boolean;
+  showHeroImage?: boolean;
+}> = [
+  {
+    kicker: "IIE Pulse",
+    title: "Welcome",
+    highlight: "IIE",
+    subtitle: "Your success starts here.",
+    icon: "school-outline",
+    color: "#5523D2",
+    softColor: "#EEE7FF",
+    showJoin: true,
+    showHeroImage: true,
+  },
+  {
+    kicker: "IIE Prouds",
+    title: "ISO Certified",
+    subtitle: "Quality You Can Trust",
+    detail: "ISO 9001:2015 Certified",
+    icon: "ribbon-outline",
+    color: "#0EA5E9",
+    softColor: "#E0F2FE",
+  },
+  {
+    kicker: "IIE Prouds",
+    title: "Career Help",
+    subtitle: "Skills to Jobs",
+    detail: "Train • Guide • Place",
+    icon: "briefcase-outline",
+    color: "#16A34A",
+    softColor: "#DCFCE7",
+  },
+  {
+    kicker: "IIE Prouds",
+    title: "60K+",
+    subtitle: "Learners",
+    detail: "Learn • Grow • Win",
+    icon: "people-outline",
+    color: "#F59E0B",
+    softColor: "#FEF3C7",
+  },
+  {
+    kicker: "IIE Prouds",
+    title: "Our Vision",
+    subtitle: "Building Skills for a Better Future",
+    detail: "Learn • Grow • Succeed",
+    icon: "rocket-outline",
+    color: "#EC4899",
+    softColor: "#FCE7F3",
+  },
+];
 
 const contactLocations = [
   {
     name: "Head Office",
     branch: "Coimbatore",
     address: "65/1 S.S complex 2, 7th street, Tatabad, 100ft road, Near BEA, Coimbatore - 641012",
-    phone: "+919043119111",
+    phone: "+919159779111",
+    mapUrl: "https://maps.app.goo.gl/hVou5sSBtXymttwA8?g_st=aw",
   },
   {
     name: "Hopes Branch",
     branch: "Coimbatore",
     address: "GR complex 1st floor, 1567 Avinashi Road, Hopes, Coimbatore - 641004",
     phone: "+918124119111",
+    mapUrl: "https://maps.app.goo.gl/39gjrBTiZiXNG3r2A?g_st=aw",
   },
   {
     name: "Kuniyamuthur Branch",
     branch: "Coimbatore",
     address: "First Floor, AAKIFAA Complex, Palghat Main Road, Opposite to Muthoot Finance, Coimbatore - 641008",
     phone: "+919626779111",
+    mapUrl: "https://maps.app.goo.gl/BcE2Ahmd9q2y6cXH8?g_st=aw",
   },
 ];
 
@@ -215,8 +301,8 @@ function openPhone(phone: string) {
   Linking.openURL(`tel:${phone.replace(/\D/g, "")}`);
 }
 
-function openMap(address: string) {
-  Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`);
+function openMap(mapUrl: string) {
+  Linking.openURL(mapUrl);
 }
 
 export default function WelcomeScreen() {
@@ -228,6 +314,7 @@ export default function WelcomeScreen() {
   const [activeModule, setActiveModule] = useState<ModuleKey>("home");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [gallery, setGallery] = useState<GalleryItem[]>([]);
+  const [awards, setAwards] = useState<AwardItem[]>([]);
   const [vlogs, setVlogs] = useState<VlogItem[]>([]);
   const [news, setNews] = useState<NewsItem[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
@@ -239,6 +326,8 @@ export default function WelcomeScreen() {
   const [activeNewsIndex, setActiveNewsIndex] = useState(0);
   const [isPrivateUser, setIsPrivateUser] = useState(false);
   const [loginRating, setLoginRating] = useState<WeeklyLoginRating | null>(null);
+  const [birthdayWish, setBirthdayWish] = useState<BirthdayWish | null>(null);
+  const [drawerProfilePhoto, setDrawerProfilePhoto] = useState("");
   const drawerSwipeResponder = useMemo(
     () =>
       PanResponder.create({
@@ -264,7 +353,7 @@ export default function WelcomeScreen() {
 
   useEffect(() => {
     const requestedModule = Array.isArray(module) ? module[0] : module;
-    const allowedModules: ModuleKey[] = ["home", "gallery", "vlogs", "practice", "calendar", "announcement", "news", "referral", "contact", "about"];
+    const allowedModules: ModuleKey[] = ["home", "gallery", "awards", "practice", "calendar", "announcement", "news", "referral", "contact", "about"];
     if (requestedModule && allowedModules.includes(requestedModule as ModuleKey)) {
       setActiveModule(requestedModule as ModuleKey);
     }
@@ -381,12 +470,14 @@ export default function WelcomeScreen() {
 
     if (result.success) {
       setGallery(result.data.gallery);
+      setAwards(result.data.awards || []);
       setVlogs(result.data.vlogs);
       setNews(result.data.news);
       setCalendarEvents(result.data.calendarEvents || []);
       setErrorMsg("");
     } else {
       setGallery([]);
+      setAwards([]);
       setVlogs([]);
       setNews([]);
       setCalendarEvents([]);
@@ -408,12 +499,20 @@ export default function WelcomeScreen() {
     setIsPrivateUser(!!token);
     if (!token) {
       setLoginRating(null);
+      setBirthdayWish(null);
+      setDrawerProfilePhoto("");
       return;
     }
 
     try {
-      const response = await api.get("/student/login-rating/");
-      setLoginRating(response.data?.current_week || null);
+      const [ratingResponse, dashboardResponse, profileResponse] = await Promise.all([
+        api.get("/student/login-rating/"),
+        api.get("/dashboard/student/"),
+        api.get("/students/me/"),
+      ]);
+      setLoginRating(ratingResponse.data?.current_week || null);
+      setBirthdayWish(dashboardResponse.data?.birthday_wish || null);
+      setDrawerProfilePhoto(profileResponse.data?.photo ? resolveMediaUrl(profileResponse.data.photo, String(api.defaults.baseURL || "")) : "");
     } catch {
       setLoginRating({
         week_start: "",
@@ -422,6 +521,8 @@ export default function WelcomeScreen() {
         max_stars: 5,
         days: [],
       });
+      setBirthdayWish(null);
+      setDrawerProfilePhoto("");
     }
   };
 
@@ -429,7 +530,7 @@ export default function WelcomeScreen() {
     setDrawerOpen(false);
     Alert.alert(
       "Access restricted",
-      "kindly register here to access this page",
+      "This feature is available for enrolled students. Kindly contact our counsellor at 9159779111 to join with IIE Pulse.",
       [
         { text: "Cancel", style: "cancel" },
         { text: "Register", onPress: () => openExternalLink(googleFormUrl) },
@@ -515,9 +616,20 @@ export default function WelcomeScreen() {
           <Pressable style={styles.drawerOverlay} onPress={() => setDrawerOpen(false)} />
           <View style={styles.drawer}>
             <View style={styles.drawerHeader}>
-              <View style={styles.logoMarkSmall}>
-                <Image source={appLogo} style={styles.logoImageSmall} resizeMode="contain" />
-              </View>
+              <Pressable
+                style={styles.logoMarkSmall}
+                onPress={() => {
+                  if (!isPrivateUser) return;
+                  setDrawerOpen(false);
+                  router.push("/profile" as any);
+                }}
+              >
+                {drawerProfilePhoto ? (
+                  <Image source={{ uri: drawerProfilePhoto }} style={styles.drawerProfileImage} resizeMode="cover" />
+                ) : (
+                  <Ionicons name="person-circle-outline" size={56} color="#5523D2" />
+                )}
+              </Pressable>
               <View>
                 <ThemedText style={styles.drawerTitle}>IIE Pulse</ThemedText>
                 <ThemedText style={styles.drawerSubtitle}>
@@ -614,15 +726,15 @@ export default function WelcomeScreen() {
             activeNewsIndex={activeNewsIndex}
             slideStyle={slideStyle}
             moveNews={moveNews}
-            selectNews={setActiveNewsIndex}
             openModule={openModule}
             openEventDetail={openEventDetail}
             calendarEvents={calendarEvents}
+            birthdayWish={birthdayWish}
           />
         ) : activeModule === "gallery" ? (
-          <GalleryModule loading={loading} gallery={gallery} />
-        ) : activeModule === "vlogs" ? (
-          <VlogsModule loading={loading} vlogs={vlogs} />
+          <GalleryModule loading={loading} gallery={gallery} vlogs={vlogs} />
+        ) : activeModule === "awards" ? (
+          <AwardsModule loading={loading} awards={awards} />
         ) : activeModule === "news" ? (
           <NewsModule loading={loading} news={news} openNewsDetail={openNewsDetail} />
         ) : activeModule === "newsDetail" && selectedNews ? (
@@ -710,25 +822,24 @@ function HomeContent({
   activeNewsIndex,
   slideStyle,
   moveNews,
-  selectNews,
   openModule,
   openEventDetail,
   calendarEvents,
+  birthdayWish,
 }: {
   news: NewsItem[];
   newsError: string;
   activeNewsIndex: number;
   slideStyle: object;
   moveNews: (direction: "next" | "prev") => void;
-  selectNews: (index: number) => void;
   openModule: (module: ModuleKey) => void;
   openEventDetail: (event: CalendarEvent) => void;
   calendarEvents: CalendarEvent[];
+  birthdayWish: BirthdayWish | null;
 }) {
   const colorScheme = useColorScheme();
   const isDarkTheme = colorScheme === "dark";
   const headline = news[activeNewsIndex] || news[0];
-  const indicatorCount = Math.max(news.length, 1);
   const upcomingEvents = calendarEvents
     .filter((event) => event.event_date >= new Date().toISOString().slice(0, 10))
     .sort((a, b) => `${a.event_date}T${a.event_time}`.localeCompare(`${b.event_date}T${b.event_time}`))
@@ -737,7 +848,21 @@ function HomeContent({
   const [eventIndex, setEventIndex] = useState(0);
   const [showAllCourses, setShowAllCourses] = useState(false);
   const courseReveal = useRef(new Animated.Value(0)).current;
+  const heroSlideAnim = useRef(new Animated.Value(1)).current;
+  const [heroSlideIndex, setHeroSlideIndex] = useState(0);
   const visibleCourses = showAllCourses ? courseItems : courseItems.slice(0, 4);
+  const activeHeroSlide = prideSlides[heroSlideIndex] || prideSlides[0];
+  const heroSlideMotion = {
+    opacity: heroSlideAnim,
+    transform: [
+      {
+        translateX: heroSlideAnim.interpolate({
+          inputRange: [0, 1],
+          outputRange: [18, 0],
+        }),
+      },
+    ],
+  };
 
   useEffect(() => {
     if (upcomingEvents.length <= 1) return;
@@ -761,36 +886,109 @@ function HomeContent({
     }).start();
   }, [courseReveal, showAllCourses]);
 
+  useEffect(() => {
+    const timer = setInterval(() => {
+      Animated.timing(heroSlideAnim, {
+        toValue: 0,
+        duration: 180,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start(() => {
+        setHeroSlideIndex((current) => (current + 1) % prideSlides.length);
+        heroSlideAnim.setValue(0);
+        Animated.timing(heroSlideAnim, {
+          toValue: 1,
+          duration: 220,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }).start();
+      });
+    }, 2000);
+
+    return () => clearInterval(timer);
+  }, [heroSlideAnim]);
+
   return (
     <>
+      {birthdayWish?.is_birthday ? (
+        <WelcomeBirthdayHero studentName={birthdayWish.student_name || "Student"} />
+      ) : (
       <View style={[styles.hero, isDarkTheme && styles.heroDark]}>
-        <View style={styles.heroCopy}>
-          <ThemedText style={[styles.heroTitle, isDarkTheme && styles.heroTitleDark]}>
-            Welcome to <ThemedText style={[styles.heroHighlight, isDarkTheme && styles.heroHighlightDark]}>IIE</ThemedText>
-          </ThemedText>
-          <ThemedText style={[styles.heroSubtitle, isDarkTheme && styles.heroSubtitleDark]}>
-            Your journey to success starts here.
-          </ThemedText>
-          <View style={styles.heroLines}>
-            <View style={styles.heroLineLong} />
-            <View style={styles.heroLineShort} />
+        <Animated.View style={[styles.heroSlide, heroSlideMotion]}>
+        <View style={[styles.heroCopy, !activeHeroSlide.showJoin && styles.heroCopyProud]}>
+          <View style={[styles.heroKickerPill, { backgroundColor: activeHeroSlide.softColor }]}>
+            <Ionicons name={activeHeroSlide.icon} size={13} color={activeHeroSlide.color} />
+            <ThemedText style={[styles.heroKickerText, { color: activeHeroSlide.color }]}>
+              {activeHeroSlide.kicker}
+            </ThemedText>
           </View>
-          <Pressable style={styles.joinButton} onPress={() => openExternalLink(googleFormUrl)}>
-            <ThemedText style={styles.joinText}>Join with us</ThemedText>
-            <View style={styles.joinArrow}>
-              <Ionicons name="arrow-forward" size={22} color="#5523D2" />
+          <ThemedText style={[styles.heroTitle, isDarkTheme && styles.heroTitleDark]}>
+            {activeHeroSlide.title}
+            {activeHeroSlide.highlight ? (
+              <>
+                {" "}
+                <ThemedText style={[styles.heroHighlight, isDarkTheme && styles.heroHighlightDark]}>
+                  {activeHeroSlide.highlight}
+                </ThemedText>
+              </>
+            ) : null}
+          </ThemedText>
+          <ThemedText
+            style={[
+              styles.heroSubtitle,
+              isDarkTheme && styles.heroSubtitleDark,
+              !activeHeroSlide.showJoin && styles.heroSubtitleProud,
+            ]}
+          >
+            {activeHeroSlide.subtitle}
+          </ThemedText>
+          {activeHeroSlide.detail ? (
+            <ThemedText style={[styles.heroDetail, { color: activeHeroSlide.color }]}>
+              {activeHeroSlide.detail}
+            </ThemedText>
+          ) : null}
+          <View style={styles.heroLines}>
+            <View style={[styles.heroLineLong, { backgroundColor: activeHeroSlide.color }]} />
+            <View style={[styles.heroLineShort, { backgroundColor: activeHeroSlide.color }]} />
+          </View>
+          {activeHeroSlide.showJoin ? (
+            <Pressable style={styles.joinButton} onPress={() => openExternalLink(googleFormUrl)}>
+              <ThemedText style={styles.joinText}>Join Us</ThemedText>
+              <View style={styles.joinArrow}>
+                <Ionicons name="arrow-forward" size={22} color="#5523D2" />
+              </View>
+            </Pressable>
+          ) : (
+            <View style={[styles.proudBadge, { backgroundColor: activeHeroSlide.color }]}>
+              <ThemedText style={styles.proudBadgeText}>IIE Proud</ThemedText>
             </View>
-          </Pressable>
+          )}
         </View>
 
-        <View style={styles.heroArt}>
-          <Image
-            source={heroStudentsImage}
-            style={styles.heroStudentsImage}
-            resizeMode="contain"
-          />
+        <View style={[styles.heroArt, !activeHeroSlide.showJoin && styles.heroArtProud]}>
+          {activeHeroSlide.showHeroImage ? (
+            <Image
+              source={heroStudentsImage}
+              style={styles.heroStudentsImage}
+              resizeMode="contain"
+            />
+          ) : (
+            <View style={[styles.proudArtCard, { backgroundColor: activeHeroSlide.softColor }]}>
+              <View style={[styles.proudArtHalo, { borderColor: activeHeroSlide.color }]} />
+              <View style={[styles.proudArtIcon, { backgroundColor: activeHeroSlide.color }]}>
+                <Ionicons name={activeHeroSlide.icon} size={34} color="#FFFFFF" />
+              </View>
+              <View style={styles.proudDollRow}>
+                <View style={[styles.proudDoll, { backgroundColor: activeHeroSlide.color }]} />
+                <View style={[styles.proudDoll, styles.proudDollSmall, { backgroundColor: activeHeroSlide.color }]} />
+              </View>
+            </View>
+          )}
         </View>
+
+        </Animated.View>
       </View>
+      )}
 
       <View style={styles.flashNews}>
           <View style={styles.flashTopRow}>
@@ -834,18 +1032,6 @@ function HomeContent({
             </Pressable>
           </View>
 
-          <View style={styles.carouselIndicators}>
-            {Array.from({ length: indicatorCount }).map((_, index) => (
-              <Pressable
-                key={index}
-                style={[
-                  styles.carouselDot,
-                  activeNewsIndex === index && styles.carouselDotActive,
-                ]}
-                onPress={() => news.length && selectNews(index)}
-              />
-            ))}
-          </View>
         </View>
 
       <View style={styles.courseSection}>
@@ -973,9 +1159,9 @@ function HomeContent({
           <Ionicons name="notifications" size={28} color="#5523D2" />
         </View>
         <View style={styles.bannerCopy}>
-          <ThemedText style={styles.bannerTitle}>Stay Connected</ThemedText>
+          <ThemedText style={styles.bannerTitle}>IIE Spotlight</ThemedText>
           <ThemedText style={styles.bannerText}>
-            Follow IIE updates and visit our official website.
+            A glimpse into IIE. Discover what's new.
           </ThemedText>
           <View style={styles.socialLinks}>
             <Pressable
@@ -996,6 +1182,12 @@ function HomeContent({
             >
               <Ionicons name="logo-facebook" size={18} color="#5523D2" />
             </Pressable>
+            <Pressable
+              style={styles.socialButton}
+              onPress={() => openExternalLink(youtubeUrl)}
+            >
+              <Ionicons name="logo-youtube" size={18} color="#5523D2" />
+            </Pressable>
           </View>
         </View>
       </View>
@@ -1003,36 +1195,390 @@ function HomeContent({
   );
 }
 
+function WelcomeBirthdayHero({ studentName }: { studentName: string }) {
+  const floatAnim = useRef(new Animated.Value(0)).current;
+  const sparkleAnim = useRef(new Animated.Value(0)).current;
+  const confettiAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const floatLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(floatAnim, {
+          toValue: 1,
+          duration: 1800,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+        Animated.timing(floatAnim, {
+          toValue: 0,
+          duration: 1800,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    const sparkleLoop = Animated.loop(
+      Animated.timing(sparkleAnim, {
+        toValue: 1,
+        duration: 2400,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    );
+    const confettiLoop = Animated.loop(
+      Animated.timing(confettiAnim, {
+        toValue: 1,
+        duration: 1900,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      })
+    );
+    floatLoop.start();
+    sparkleLoop.start();
+    confettiLoop.start();
+    return () => {
+      floatLoop.stop();
+      sparkleLoop.stop();
+      confettiLoop.stop();
+    };
+  }, [confettiAnim, floatAnim, sparkleAnim]);
+
+  const lift = floatAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, -12],
+  });
+  const sparkleSpin = sparkleAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "360deg"],
+  });
+  const burstScale = confettiAnim.interpolate({
+    inputRange: [0, 0.18, 1],
+    outputRange: [0.3, 1, 4.8],
+  });
+  const burstOpacity = confettiAnim.interpolate({
+    inputRange: [0, 0.18, 1],
+    outputRange: [0, 1, 0],
+  });
+  const sprinkleDrop = confettiAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-18, 118],
+  });
+  const sprinkleOpacity = confettiAnim.interpolate({
+    inputRange: [0, 0.25, 0.85, 1],
+    outputRange: [0, 1, 1, 0],
+  });
+
+  return (
+    <View style={styles.welcomeBirthdayHero}>
+      <Animated.View
+        style={[
+          styles.welcomeBirthdayBurst,
+          { opacity: burstOpacity, transform: [{ scale: burstScale }] },
+        ]}
+      />
+      {[
+        ["12%", "#FDE68A", 0],
+        ["28%", "#2EC4B6", 35],
+        ["45%", "#FFFFFF", -18],
+        ["62%", "#F97316", 22],
+        ["79%", "#E84855", -32],
+        ["90%", "#C4B5FD", 14],
+      ].map(([left, color, rotate], index) => (
+        <Animated.View
+          key={`${left}-${index}`}
+          style={[
+            styles.welcomeBirthdaySprinkle,
+            {
+              left: left as any,
+              backgroundColor: color as string,
+              opacity: sprinkleOpacity,
+              transform: [
+                { translateY: sprinkleDrop },
+                { rotate: `${rotate}deg` },
+              ],
+            },
+          ]}
+        />
+      ))}
+      <Animated.Text
+        style={[
+          styles.welcomeBirthdayBalloon,
+          styles.welcomeBirthdayBalloonOne,
+          { transform: [{ translateY: lift }, { rotate: "-5deg" }] },
+        ]}
+      >
+        🎈
+      </Animated.Text>
+      <Animated.Text
+        style={[
+          styles.welcomeBirthdayBalloon,
+          styles.welcomeBirthdayBalloonTwo,
+          { transform: [{ translateY: lift }, { rotate: "7deg" }] },
+        ]}
+      >
+        🎉
+      </Animated.Text>
+      <Animated.View
+        style={[
+          styles.welcomeBirthdaySparkle,
+          { transform: [{ rotate: sparkleSpin }] },
+        ]}
+      >
+        <Ionicons name="sparkles-outline" size={26} color="#FDE68A" />
+      </Animated.View>
+      <View style={styles.welcomeBirthdayCopy}>
+        <ThemedText style={styles.welcomeBirthdayKicker}>Birthday Celebration</ThemedText>
+        <ThemedText style={styles.welcomeBirthdayTitle}>Happy Birthday</ThemedText>
+        <ThemedText style={styles.welcomeBirthdayName} numberOfLines={2}>{studentName}!</ThemedText>
+        <ThemedText style={styles.welcomeBirthdayText}>
+          Wishing you success, confidence, and a year full of bright learning moments.
+        </ThemedText>
+      </View>
+      <Animated.Text style={[styles.welcomeBirthdayCake, { transform: [{ translateY: lift }] }]}>
+        🎂
+      </Animated.Text>
+    </View>
+  );
+}
+
 function GalleryModule({
   loading,
   gallery,
+  vlogs,
 }: {
   loading: boolean;
   gallery: GalleryItem[];
+  vlogs: VlogItem[];
 }) {
+  const [activeTab, setActiveTab] = useState<"photos" | "videos">("photos");
+  const [openFolder, setOpenFolder] = useState<string | null>(null);
   if (loading) return <LoadingRow />;
+
+  const photoFolders = groupMediaFolders(gallery, "image");
+  const videoFolders = groupMediaFolders(vlogs, "video");
+  const activeFolders = activeTab === "photos" ? photoFolders : videoFolders;
+  const activeCount = activeTab === "photos" ? gallery.length : vlogs.length;
+  const selectedFolder = activeFolders.find((folder) => folder.name === openFolder) || null;
 
   return (
     <ModulePanel title="Gallery" icon="image-outline">
-      {gallery.length ? (
-        <View style={styles.galleryGrid}>
-          {gallery.map((item) => (
+      <View style={styles.mediaTabs}>
+        {[
+          { key: "photos", label: "Photos", count: gallery.length, icon: "image-outline" },
+          { key: "videos", label: "Videos", count: vlogs.length, icon: "videocam-outline" },
+        ].map((tab) => {
+          const selected = activeTab === tab.key;
+          return (
             <Pressable
-              key={item.id}
-              style={styles.galleryTile}
-              onPress={() => openMedia(item.image)}
+              key={tab.key}
+              style={[styles.mediaTab, selected && styles.mediaTabActive]}
+              onPress={() => {
+                setActiveTab(tab.key as "photos" | "videos");
+                setOpenFolder(null);
+              }}
             >
-              <Image source={{ uri: item.image }} style={styles.galleryImage} />
-              <ThemedText style={styles.tileTitle} numberOfLines={1}>
-                {item.title}
+              <Ionicons name={tab.icon as keyof typeof Ionicons.glyphMap} size={16} color={selected ? "#FFFFFF" : "#5523D2"} />
+              <ThemedText style={[styles.mediaTabText, selected && styles.mediaTabTextActive]}>
+                {tab.label} ({tab.count})
               </ThemedText>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {activeCount && selectedFolder ? (
+        <View style={styles.folderCard}>
+          <Pressable style={styles.folderBackButton} onPress={() => setOpenFolder(null)}>
+            <Ionicons name="arrow-back" size={16} color="#5523D2" />
+            <ThemedText style={styles.folderBackText}>Back to folders</ThemedText>
+          </Pressable>
+          <View style={styles.folderHeader}>
+            <View style={styles.folderIcon}>
+              <Ionicons name="folder-open-outline" size={18} color="#5523D2" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <ThemedText style={styles.folderTitle} numberOfLines={1}>{selectedFolder.name}</ThemedText>
+              <ThemedText style={styles.folderMeta}>{selectedFolder.items.length} {activeTab === "photos" ? "photos" : "videos"}</ThemedText>
+            </View>
+          </View>
+
+          {activeTab === "photos" ? (
+            <View style={styles.galleryGrid}>
+              {(selectedFolder.items as GalleryItem[]).map((item) => (
+                <Pressable
+                  key={item.id}
+                  style={styles.galleryTile}
+                  onPress={() => openMedia(item.image)}
+                >
+                  <Image source={{ uri: item.image }} style={styles.galleryImage} />
+                  <ThemedText style={styles.tileTitle} numberOfLines={1}>
+                    {item.title}
+                  </ThemedText>
+                </Pressable>
+              ))}
+            </View>
+          ) : (
+            <View style={styles.videoGrid}>
+              {(selectedFolder.items as VlogItem[]).map((item) => (
+                <Pressable key={item.id} style={styles.videoTile} onPress={() => openMedia(item.video)}>
+                  <View style={styles.videoThumb}>
+                    <Video
+                      source={{ uri: item.video }}
+                      style={styles.videoThumbVideo}
+                      resizeMode={ResizeMode.COVER}
+                      shouldPlay={false}
+                      isMuted
+                    />
+                    <View style={styles.videoThumbShade} />
+                    <View style={styles.videoPlayBubble}>
+                      <Ionicons name="play" size={18} color="#FFFFFF" />
+                    </View>
+                  </View>
+                  <ThemedText style={styles.videoTileTitle} numberOfLines={2}>
+                    {item.title}
+                  </ThemedText>
+                </Pressable>
+              ))}
+            </View>
+          )}
+        </View>
+      ) : activeCount ? (
+        <View style={styles.folderList}>
+          {activeFolders.map((folder) => (
+            <Pressable key={`${activeTab}-${folder.name}`} style={styles.folderCard} onPress={() => setOpenFolder(folder.name)}>
+              <View style={styles.folderHeader}>
+                <View style={styles.folderIcon}>
+                  <Ionicons name="folder-open-outline" size={18} color="#5523D2" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <ThemedText style={styles.folderTitle} numberOfLines={1}>{folder.name}</ThemedText>
+                  <ThemedText style={styles.folderMeta}>{folder.items.length} {activeTab === "photos" ? "photos" : "videos"}</ThemedText>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#94A3B8" />
+              </View>
+              <MediaFolderPreview folder={folder} type={activeTab} />
             </Pressable>
           ))}
         </View>
       ) : (
-        <EmptyRow text="No gallery photos posted yet." />
+        <EmptyRow text={`No gallery ${activeTab} posted yet.`} />
       )}
     </ModulePanel>
+  );
+}
+
+function AwardsModule({
+  loading,
+  awards,
+}: {
+  loading: boolean;
+  awards: AwardItem[];
+}) {
+  const [openFolder, setOpenFolder] = useState<string | null>(null);
+  if (loading) return <LoadingRow />;
+
+  const awardFolders = groupMediaFolders(awards, "image");
+  const selectedFolder = awardFolders.find((folder) => folder.name === openFolder) || null;
+
+  return (
+    <ModulePanel title="Awards" icon="trophy-outline">
+      {selectedFolder ? (
+        <View style={styles.folderCard}>
+          <Pressable style={styles.folderBackButton} onPress={() => setOpenFolder(null)}>
+            <Ionicons name="arrow-back" size={16} color="#5523D2" />
+            <ThemedText style={styles.folderBackText}>Back to folders</ThemedText>
+          </Pressable>
+          <View style={styles.folderHeader}>
+            <View style={styles.folderIcon}>
+              <Ionicons name="trophy-outline" size={18} color="#5523D2" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <ThemedText style={styles.folderTitle} numberOfLines={1}>{selectedFolder.name}</ThemedText>
+              <ThemedText style={styles.folderMeta}>{selectedFolder.items.length} awards</ThemedText>
+            </View>
+          </View>
+          <View style={styles.galleryGrid}>
+            {(selectedFolder.items as AwardItem[]).map((item) => (
+              <Pressable key={item.id} style={styles.galleryTile} onPress={() => openMedia(item.image)}>
+                <Image source={{ uri: item.image }} style={styles.galleryImage} />
+                <ThemedText style={styles.awardDescriptionHighlight} numberOfLines={4}>
+                  {item.description || item.title}
+                </ThemedText>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      ) : awardFolders.length ? (
+        <View style={styles.folderList}>
+          {awardFolders.map((folder) => (
+            <Pressable key={`awards-${folder.name}`} style={styles.folderCard} onPress={() => setOpenFolder(folder.name)}>
+              <View style={styles.folderHeader}>
+                <View style={styles.folderIcon}>
+                  <Ionicons name="trophy-outline" size={18} color="#5523D2" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <ThemedText style={styles.folderTitle} numberOfLines={1}>{folder.name}</ThemedText>
+                  <ThemedText style={styles.folderMeta}>{folder.items.length} awards</ThemedText>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#94A3B8" />
+              </View>
+              <MediaFolderPreview folder={folder} type="photos" />
+            </Pressable>
+          ))}
+        </View>
+      ) : (
+        <EmptyRow text="No awards posted yet." />
+      )}
+    </ModulePanel>
+  );
+}
+
+function groupMediaFolders<T extends { folder_name?: string; created_at?: string }>(
+  items: T[],
+  mediaKey: "image" | "video"
+) {
+  const grouped = items.reduce<Record<string, T[]>>((acc, item) => {
+    const name = (item.folder_name || "General").trim() || "General";
+    if (!acc[name]) acc[name] = [];
+    acc[name].push(item);
+    return acc;
+  }, {});
+
+  return Object.entries(grouped).map(([name, folderItems]) => ({
+    name,
+    items: folderItems.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()),
+    mediaKey,
+  }));
+}
+
+function MediaFolderPreview({
+  folder,
+  type,
+}: {
+  folder: { name: string; items: (GalleryItem | VlogItem)[] };
+  type: "photos" | "videos";
+}) {
+  const previewItems = folder.items.slice(0, 3);
+
+  return (
+    <View style={styles.folderPreviewRow}>
+      {previewItems.map((item, index) => (
+        <View key={`${type}-${item.id}`} style={[styles.folderPreviewTile, index > 0 && styles.folderPreviewOverlap]}>
+          {type === "photos" ? (
+            <Image source={{ uri: (item as GalleryItem).image }} style={styles.folderPreviewImage} />
+          ) : (
+            <View style={styles.folderPreviewVideo}>
+              <Ionicons name="play" size={18} color="#FFFFFF" />
+            </View>
+          )}
+        </View>
+      ))}
+      {folder.items.length > 3 ? (
+        <View style={[styles.folderPreviewTile, styles.folderPreviewMore, styles.folderPreviewOverlap]}>
+          <ThemedText style={styles.folderPreviewMoreText}>+{folder.items.length - 3}</ThemedText>
+        </View>
+      ) : null}
+    </View>
   );
 }
 
@@ -1214,25 +1760,21 @@ function CalendarModule({
   openEventDetail: (event: CalendarEvent) => void;
 }) {
   const today = new Date();
+  const todayKey = toDateKey(today);
   const firstEventDate = useMemo(() => {
-    const todayKey = toDateKey(today);
     const sorted = [...events].sort((a, b) =>
       `${a.event_date}T${a.event_time}`.localeCompare(`${b.event_date}T${b.event_time}`)
     );
     return (sorted.find((event) => event.event_date >= todayKey) || sorted[0])?.event_date || todayKey;
   }, [events]);
-  const [mode, setMode] = useState<"month" | "day">("day");
+  const [mode, setMode] = useState<"month" | "day">("month");
   const [viewDate, setViewDate] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
-  const [selectedDate, setSelectedDate] = useState(firstEventDate);
+  const [selectedDate, setSelectedDate] = useState(todayKey);
 
   useEffect(() => {
-    if (!events.length) return;
-    setSelectedDate((current) => {
-      const currentHasEvents = events.some((event) => event.event_date === current);
-      return currentHasEvents ? current : firstEventDate;
-    });
-    setViewDate(new Date(`${firstEventDate}T00:00:00`));
-  }, [events.length, firstEventDate]);
+    setSelectedDate((current) => current || todayKey);
+    setViewDate(new Date(today.getFullYear(), today.getMonth(), 1));
+  }, [events.length, firstEventDate, today.getFullYear(), today.getMonth(), todayKey]);
 
   const firstDay = new Date(viewDate.getFullYear(), viewDate.getMonth(), 1);
   const lastDay = new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 0);
@@ -1325,10 +1867,11 @@ function CalendarModule({
                     style={[
                       styles.monthCell,
                       hasEvents && styles.monthCellHasEvent,
-                      active && hasEvents && styles.monthCellActive,
+                      isToday && styles.monthCellToday,
+                      active && !isToday && hasEvents && styles.monthCellActive,
                     ]}
-                    disabled={!date || !hasEvents}
-                    onPress={() => date && hasEvents && selectDate(date)}
+                    disabled={!date}
+                    onPress={() => date && selectDate(date)}
                   >
                     {date ? (
                       <>
@@ -1336,7 +1879,7 @@ function CalendarModule({
                           styles.monthCellText,
                           hasEvents && styles.monthCellEventText,
                           isToday && styles.todayCellText,
-                          active && hasEvents && styles.monthCellTextActive,
+                          active && !isToday && hasEvents && styles.monthCellTextActive,
                         ]}>
                           {date.getDate()}
                         </ThemedText>
@@ -1361,22 +1904,23 @@ function CalendarModule({
                 const key = toDateKey(date);
                 const dayEvents = eventsByDate[key] || [];
                 const active = key === selectedDate;
+                const isToday = key === todayKey;
                 return (
                   <Pressable
                     key={key}
-                    style={[styles.dayDateChip, dayEvents.length > 0 && styles.dayDateChipHasEvent, active && styles.dayDateChipActive]}
+                    style={[styles.dayDateChip, dayEvents.length > 0 && styles.dayDateChipHasEvent, isToday && styles.dayDateChipToday, active && !isToday && styles.dayDateChipActive]}
                     onPress={() => setSelectedDate(key)}
                   >
-                    <ThemedText style={[styles.dayDateWeek, active && styles.dayDateTextActive]}>
+                    <ThemedText style={[styles.dayDateWeek, (active || isToday) && styles.dayDateTextActive]}>
                       {date.toLocaleDateString("en-IN", { weekday: "short" })}
                     </ThemedText>
                     <ThemedText style={[
                       styles.dayDateNumber,
                       dayEvents.length > 0 && styles.dayDateNumberHasEvent,
-                      active && styles.dayDateTextActive,
+                      (active || isToday) && styles.dayDateTextActive,
                     ]}>{date.getDate()}</ThemedText>
                     {dayEvents[0] ? (
-                      <ThemedText style={[styles.dayDateEventName, active && styles.dayDateTextActive]} numberOfLines={1}>
+                      <ThemedText style={[styles.dayDateEventName, (active || isToday) && styles.dayDateTextActive]} numberOfLines={1}>
                         {dayEvents[0].event_name}
                       </ThemedText>
                     ) : (
@@ -1447,6 +1991,10 @@ function EventDetailModule({ event }: { event: CalendarEvent; onBack: () => void
 
 function ReferralModule() {
   const [name, setName] = useState("");
+  const [branch, setBranch] = useState("");
+  const [course, setCourse] = useState("");
+  const [trainerName, setTrainerName] = useState("");
+  const [referralStudentName, setReferralStudentName] = useState("");
   const [mobile, setMobile] = useState("");
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -1454,6 +2002,10 @@ function ReferralModule() {
 
   const submit = async () => {
     const trimmedName = name.trim();
+    const trimmedBranch = branch.trim();
+    const trimmedCourse = course.trim();
+    const trimmedTrainerName = trainerName.trim();
+    const trimmedReferralStudentName = referralStudentName.trim();
     const digits = mobile.replace(/\D/g, "");
 
     setMessage("");
@@ -1464,6 +2016,12 @@ function ReferralModule() {
       return;
     }
 
+    if (!trimmedBranch || !trimmedCourse || !trimmedTrainerName || !trimmedReferralStudentName) {
+      setMessageType("error");
+      setMessage("Please fill branch, course, trainer name, and referral student name.");
+      return;
+    }
+
     if (digits.length < 10 || digits.length > 15) {
       setMessageType("error");
       setMessage("Please enter a valid mobile number.");
@@ -1471,11 +2029,22 @@ function ReferralModule() {
     }
 
     setSaving(true);
-    const result = await submitReferral({ name: trimmedName, mobile: digits });
+    const result = await submitReferral({
+      name: trimmedName,
+      branch: trimmedBranch,
+      course: trimmedCourse,
+      trainer_name: trimmedTrainerName,
+      referral_student_name: trimmedReferralStudentName,
+      mobile: digits,
+    });
     setSaving(false);
 
     if (result.success) {
       setName("");
+      setBranch("");
+      setCourse("");
+      setTrainerName("");
+      setReferralStudentName("");
       setMobile("");
       setMessageType("success");
       setMessage("Referral submitted successfully.");
@@ -1488,8 +2057,18 @@ function ReferralModule() {
   return (
     <ModulePanel title="Referral" icon="person-add-outline">
       <View style={styles.referralForm}>
+        <View style={styles.referralReward}>
+          <Ionicons name="gift-outline" size={22} color="#5523D2" />
+          <View style={{ flex: 1 }}>
+            <ThemedText style={styles.referralRewardTitle}>Refer and get rewarded</ThemedText>
+            <ThemedText style={styles.referralRewardText}>
+              Refer a student to IIE Pulse and earn a reward when they join.
+            </ThemedText>
+          </View>
+        </View>
+
         <View style={styles.inputWrap}>
-          <ThemedText style={styles.inputLabel}>Name</ThemedText>
+          <ThemedText style={styles.inputLabel}>Name *</ThemedText>
           <TextInput
             style={styles.referralInput}
             value={name}
@@ -1500,7 +2079,63 @@ function ReferralModule() {
         </View>
 
         <View style={styles.inputWrap}>
-          <ThemedText style={styles.inputLabel}>Mobile Number</ThemedText>
+          <ThemedText style={styles.inputLabel}>Branch *</ThemedText>
+          <View style={styles.referralPickerWrap}>
+            <Picker
+              selectedValue={branch}
+              onValueChange={(value) => setBranch(String(value))}
+              style={styles.referralPicker}
+              dropdownIconColor="#A78BFA"
+            >
+              <Picker.Item label="Choose branch" value="" />
+              {referralBranches.map((item) => (
+                <Picker.Item key={item} label={item} value={item} />
+              ))}
+            </Picker>
+          </View>
+        </View>
+
+        <View style={styles.inputWrap}>
+          <ThemedText style={styles.inputLabel}>Course *</ThemedText>
+          <View style={styles.referralPickerWrap}>
+            <Picker
+              selectedValue={course}
+              onValueChange={(value) => setCourse(String(value))}
+              style={styles.referralPicker}
+              dropdownIconColor="#A78BFA"
+            >
+              <Picker.Item label="Choose course" value="" />
+              {courseItems.map((item) => (
+                <Picker.Item key={item.name} label={item.name} value={item.name} />
+              ))}
+            </Picker>
+          </View>
+        </View>
+
+        <View style={styles.inputWrap}>
+          <ThemedText style={styles.inputLabel}>Trainer Name *</ThemedText>
+          <TextInput
+            style={styles.referralInput}
+            value={trainerName}
+            onChangeText={setTrainerName}
+            placeholder="Enter trainer name"
+            placeholderTextColor="#98A2B3"
+          />
+        </View>
+
+        <View style={styles.inputWrap}>
+          <ThemedText style={styles.inputLabel}>Referral Student Name *</ThemedText>
+          <TextInput
+            style={styles.referralInput}
+            value={referralStudentName}
+            onChangeText={setReferralStudentName}
+            placeholder="Enter referred student name"
+            placeholderTextColor="#98A2B3"
+          />
+        </View>
+
+        <View style={styles.inputWrap}>
+          <ThemedText style={styles.inputLabel}>Mobile Number (Referral Student) *</ThemedText>
           <TextInput
             style={styles.referralInput}
             value={mobile}
@@ -1567,7 +2202,7 @@ function PracticeModule() {
       const response = await api.get("/quiz/practice/");
       setQuizzes(response.data?.results || []);
     } catch (err: any) {
-      setError(err?.response?.data?.error || "Practice quizzes not loaded.");
+      setError(err?.response?.data?.error || "Skillset quizzes not loaded.");
     } finally {
       setLoading(false);
     }
@@ -1578,13 +2213,13 @@ function PracticeModule() {
   }, []);
 
   return (
-    <ModulePanel title="Practice Tests" icon="clipboard-outline">
+    <ModulePanel title="Skillset" icon="clipboard-outline">
       {loading ? (
         <ActivityIndicator size="large" color="#5523D2" />
       ) : error ? (
         <EmptyRow text={error} />
       ) : quizzes.length === 0 ? (
-        <EmptyRow text="No practice quizzes published yet." />
+        <EmptyRow text="No skillset quizzes published yet." />
       ) : (
         <View style={styles.practiceList}>
           <View style={styles.practiceHero}>
@@ -1592,9 +2227,9 @@ function PracticeModule() {
               <Ionicons name="sparkles-outline" size={24} color="#FFFFFF" />
             </View>
             <View style={styles.practiceHeroCopy}>
-              <ThemedText style={styles.practiceHeroTitle}>Practice Test Hub</ThemedText>
+              <ThemedText style={styles.practiceHeroTitle}>Skillset Hub</ThemedText>
               <ThemedText style={styles.practiceHeroText}>
-                Choose a test and get instant answer feedback after each option.
+                Choose a skillset quiz and get instant answer feedback.
               </ThemedText>
             </View>
             <View style={styles.practiceHeroCount}>
@@ -1654,7 +2289,7 @@ function PracticeModule() {
                   }
                 >
                   <ThemedText style={styles.practiceStartText}>
-                    {available ? "Start Practice Test" : "Not Available"}
+                    {available ? "Start Skillset" : "Not Available"}
                   </ThemedText>
                   <View style={styles.practiceStartIcon}>
                     <Ionicons name={available ? "arrow-forward" : "lock-closed-outline"} size={18} color="#5523D2" />
@@ -1710,7 +2345,7 @@ function ContactModule() {
               </View>
             </View>
 
-            <Pressable style={styles.contactInfoRow} onPress={() => openMap(location.address)}>
+            <Pressable style={styles.contactInfoRow} onPress={() => openMap(location.mapUrl)}>
               <View style={styles.contactInfoIcon}>
                 <Ionicons name="location-outline" size={19} color="#5523D2" />
               </View>
@@ -1729,7 +2364,7 @@ function ContactModule() {
                 <Ionicons name="call" size={16} color="#FFFFFF" />
                 <ThemedText style={styles.contactActionText}>Call Branch</ThemedText>
               </Pressable>
-              <Pressable style={styles.contactMapButton} onPress={() => openMap(location.address)}>
+              <Pressable style={styles.contactMapButton} onPress={() => openMap(location.mapUrl)}>
                 <Ionicons name="navigate-outline" size={16} color="#5523D2" />
                 <ThemedText style={styles.contactMapText}>Map</ThemedText>
               </Pressable>
@@ -1853,8 +2488,8 @@ function PlaceholderModule({ module }: { module: ModuleKey }) {
   const titles: Record<ModuleKey, string> = {
     home: "Home",
     gallery: "Gallery",
-    vlogs: "Vlogs",
-    practice: "Practice Test",
+    awards: "Awards",
+    practice: "Practice Your Skillset",
     calendar: "Calendar",
     eventDetail: "Event Details",
     announcement: "Announcement",
@@ -2224,6 +2859,10 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
   },
+  drawerProfileImage: {
+    width: "100%",
+    height: "100%",
+  },
   drawerTitle: {
     color: "#FFFFFF",
     fontSize: 20,
@@ -2319,56 +2958,204 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
   },
   hero: {
-    minHeight: 258,
+    height: 248,
     position: "relative",
     marginBottom: 16,
-    backgroundColor: "#FBF9FF",
+    backgroundColor: "#1B0E34",
     borderRadius: 16,
-    padding: 18,
+    padding: 16,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "#EFE7FF",
+    borderColor: "#3B2461",
   },
   heroDark: {
     backgroundColor: "#1F1335",
     borderColor: "#3B2461",
   },
-  heroCopy: {
-    width: "62%",
+  welcomeBirthdayHero: {
+    height: 248,
+    position: "relative",
+    marginBottom: 16,
+    backgroundColor: "#5523D2",
+    borderRadius: 16,
+    padding: 18,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "#7C3AED",
+    shadowColor: "#5523D2",
+    shadowOpacity: 0.22,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 8,
+  },
+  welcomeBirthdayCopy: {
+    width: "68%",
     zIndex: 2,
   },
-  heroTitle: {
-    color: "#071846",
+  welcomeBirthdayKicker: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    overflow: "hidden",
+    backgroundColor: "rgba(255,255,255,0.16)",
+    color: "#FDE68A",
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+  },
+  welcomeBirthdayTitle: {
+    marginTop: 14,
+    color: "#FFFFFF",
     fontSize: 30,
-    lineHeight: 36,
+    lineHeight: 34,
+    fontWeight: "900",
+  },
+  welcomeBirthdayName: {
+    color: "#FDE68A",
+    fontSize: 29,
+    lineHeight: 33,
+    fontWeight: "900",
+  },
+  welcomeBirthdayText: {
+    marginTop: 8,
+    color: "#EDE9FE",
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: "800",
+  },
+  welcomeBirthdayCake: {
+    position: "absolute",
+    right: 22,
+    bottom: 20,
+    fontSize: 72,
+    zIndex: 3,
+  },
+  welcomeBirthdayBalloon: {
+    position: "absolute",
+    fontSize: 38,
+    zIndex: 1,
+  },
+  welcomeBirthdayBalloonOne: {
+    right: 94,
+    top: 24,
+  },
+  welcomeBirthdayBalloonTwo: {
+    right: 22,
+    top: 38,
+  },
+  welcomeBirthdaySparkle: {
+    position: "absolute",
+    right: 73,
+    bottom: 104,
+    width: 48,
+    height: 48,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.14)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
+    zIndex: 2,
+  },
+  welcomeBirthdayBurst: {
+    position: "absolute",
+    right: 82,
+    top: 42,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+    borderColor: "#FDE68A",
+    zIndex: 1,
+  },
+  welcomeBirthdaySprinkle: {
+    position: "absolute",
+    top: 12,
+    width: 7,
+    height: 13,
+    borderRadius: 4,
+    zIndex: 4,
+  },
+  heroSlide: {
+    height: "100%",
+    width: "100%",
+    position: "relative",
+  },
+  heroCopy: {
+    width: "60%",
+    minHeight: 190,
+    paddingBottom: 34,
+    zIndex: 2,
+  },
+  heroCopyProud: {
+    width: "56%",
+    paddingTop: 6,
+    minHeight: 190,
+    paddingBottom: 34,
+  },
+  heroKickerPill: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    marginBottom: 7,
+  },
+  heroKickerText: {
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+  },
+  heroTitle: {
+    color: "#FFFFFF",
+    fontSize: 26,
+    lineHeight: 31,
     fontWeight: "900",
   },
   heroTitleDark: {
     color: "#FFFFFF",
   },
   heroHighlight: {
-    color: "#5523D2",
-    fontSize: 30,
-    lineHeight: 36,
+    color: "#C4B5FD",
+    fontSize: 26,
+    lineHeight: 31,
     fontWeight: "900",
   },
   heroHighlightDark: {
     color: "#C4B5FD",
   },
   heroSubtitle: {
-    color: "#667085",
-    fontSize: 16,
-    lineHeight: 25,
+    color: "#DDD6FE",
+    fontSize: 14,
+    lineHeight: 21,
     fontWeight: "700",
-    marginTop: 14,
+    marginTop: 8,
   },
   heroSubtitleDark: {
     color: "#DDD6FE",
   },
+  heroSubtitleProud: {
+    fontStyle: "italic",
+    marginTop: 8,
+  },
+  heroDetail: {
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: "900",
+    marginTop: 5,
+    textShadowColor: "rgba(0,0,0,0.18)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
   heroLines: {
     flexDirection: "row",
     gap: 8,
-    marginVertical: 16,
+    marginVertical: 9,
   },
   heroLineLong: {
     width: 52,
@@ -2383,11 +3170,11 @@ const styles = StyleSheet.create({
     backgroundColor: "#5523D2",
   },
   joinButton: {
-    width: 166,
+    width: 136,
     backgroundColor: "#5523D2",
     borderRadius: 14,
-    paddingVertical: 12,
-    paddingLeft: 16,
+    paddingVertical: 10,
+    paddingLeft: 15,
     paddingRight: 8,
     flexDirection: "row",
     alignItems: "center",
@@ -2395,7 +3182,7 @@ const styles = StyleSheet.create({
   },
   joinText: {
     color: "#FFFFFF",
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: "900",
   },
   joinArrow: {
@@ -2406,19 +3193,99 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  proudBadge: {
+    alignSelf: "flex-start",
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  proudBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "900",
+  },
   heroArt: {
     position: "absolute",
-    right: 0,
-    bottom: 48,
-    width: 148,
-    height: 104,
+    right: 14,
+    bottom: 56,
+    width: 124,
+    height: 112,
     alignItems: "center",
     justifyContent: "center",
     zIndex: 1,
   },
+  heroArtProud: {
+    right: 10,
+    bottom: 66,
+    width: 116,
+    height: 116,
+  },
   heroStudentsImage: {
     width: "100%",
     height: "100%",
+  },
+  proudArtCard: {
+    width: 112,
+    height: 112,
+    borderRadius: 30,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.75)",
+    shadowColor: "#111827",
+    shadowOpacity: 0.12,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
+  },
+  proudArtHalo: {
+    position: "absolute",
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    borderWidth: 2,
+    opacity: 0.22,
+  },
+  proudArtIcon: {
+    width: 60,
+    height: 60,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  proudDollRow: {
+    position: "absolute",
+    bottom: 11,
+    flexDirection: "row",
+    gap: 7,
+  },
+  proudDoll: {
+    width: 15,
+    height: 15,
+    borderRadius: 8,
+    opacity: 0.58,
+  },
+  proudDollSmall: {
+    width: 11,
+    height: 11,
+    marginTop: 4,
+    opacity: 0.38,
+  },
+  heroDots: {
+    position: "absolute",
+    left: 20,
+    bottom: 10,
+    flexDirection: "row",
+    gap: 6,
+  },
+  heroDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: "rgba(255,255,255,0.3)",
+  },
+  heroDotActive: {
+    width: 22,
   },
   aiGlow: {
     position: "absolute",
@@ -3180,6 +4047,293 @@ const styles = StyleSheet.create({
     fontSize: 26,
     fontWeight: "900",
   },
+  mediaTabs: {
+    flexDirection: "row",
+    gap: 10,
+    padding: 5,
+    borderRadius: 999,
+    backgroundColor: "#F5F3FF",
+    marginBottom: 16,
+  },
+  mediaTab: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: 999,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+  },
+  mediaTabActive: {
+    backgroundColor: "#5523D2",
+  },
+  mediaTabText: {
+    color: "#5523D2",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  mediaTabTextActive: {
+    color: "#FFFFFF",
+  },
+  folderList: {
+    gap: 16,
+  },
+  folderCard: {
+    borderRadius: 18,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#E9D5FF",
+    padding: 12,
+    shadowColor: "#5523D2",
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 2,
+  },
+  folderHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 12,
+  },
+  folderIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    backgroundColor: "#F5F3FF",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  folderTitle: {
+    color: "#071846",
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  folderMeta: {
+    color: "#64748B",
+    fontSize: 11,
+    fontWeight: "700",
+    marginTop: 2,
+  },
+  folderBackButton: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: "#F5F3FF",
+    marginBottom: 14,
+  },
+  folderBackText: {
+    color: "#5523D2",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  folderPreviewRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 2,
+    minHeight: 48,
+  },
+  folderPreviewTile: {
+    width: 54,
+    height: 42,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: "#FFFFFF",
+    overflow: "hidden",
+    backgroundColor: "#EDE9FE",
+  },
+  folderPreviewOverlap: {
+    marginLeft: -12,
+  },
+  folderPreviewImage: {
+    width: "100%",
+    height: "100%",
+  },
+  folderPreviewVideo: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#111827",
+  },
+  folderPreviewMore: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#1F1335",
+  },
+  folderPreviewMoreText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  awardsHero: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "#1F1335",
+    borderRadius: 22,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#A855F7",
+  },
+  awardsHeroIcon: {
+    width: 54,
+    height: 54,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FDE68A",
+  },
+  awardsHeroEmoji: {
+    fontSize: 28,
+  },
+  awardsHeroTitle: {
+    color: "#FFFFFF",
+    fontSize: 18,
+    fontWeight: "900",
+  },
+  awardsHeroText: {
+    color: "#DDD6FE",
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 3,
+    fontWeight: "700",
+  },
+  awardFolderList: {
+    gap: 14,
+  },
+  awardFolderCard: {
+    borderRadius: 22,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#E9D5FF",
+    padding: 14,
+    shadowColor: "#5523D2",
+    shadowOpacity: 0.12,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 3,
+  },
+  awardOpenCard: {
+    borderRadius: 22,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#E9D5FF",
+    padding: 14,
+  },
+  awardFolderHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 12,
+  },
+  awardFolderIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FEF3C7",
+  },
+  awardFolderEmoji: {
+    fontSize: 22,
+  },
+  awardFolderTitle: {
+    color: "#160D2E",
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  awardFolderMeta: {
+    color: "#7C3AED",
+    fontSize: 12,
+    fontWeight: "800",
+    marginTop: 2,
+  },
+  awardChevron: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#5523D2",
+  },
+  awardBackButton: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: "#F5F3FF",
+    marginBottom: 14,
+  },
+  awardGrid: {
+    gap: 14,
+  },
+  awardGalleryTile: {
+    width: "48%",
+    borderRadius: 8,
+    backgroundColor: "#EEF6FF",
+    overflow: "hidden",
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: "#E9D5FF",
+  },
+  awardGalleryBody: {
+    minHeight: 82,
+  },
+  awardTile: {
+    borderRadius: 20,
+    overflow: "hidden",
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#E9D5FF",
+    shadowColor: "#5523D2",
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 2,
+  },
+  awardImage: {
+    width: "100%",
+    height: 190,
+    backgroundColor: "#EDE9FE",
+  },
+  awardTileBody: {
+    padding: 13,
+  },
+  awardBadgeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    marginBottom: 7,
+  },
+  awardBadgeText: {
+    color: "#7C2D12",
+    fontSize: 11,
+    fontWeight: "900",
+    backgroundColor: "#FEF3C7",
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 999,
+  },
+  awardDate: {
+    color: "#64748B",
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  awardTitle: {
+    color: "#160D2E",
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: "900",
+  },
   galleryGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -3202,6 +4356,22 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "800",
     padding: 10,
+  },
+  awardDescription: {
+    color: "#64748B",
+    fontSize: 11,
+    lineHeight: 16,
+    paddingHorizontal: 10,
+    paddingBottom: 10,
+  },
+  awardDescriptionHighlight: {
+    color: "#F8FAFC",
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: "900",
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    backgroundColor: "#111827",
   },
   listItem: {
     flexDirection: "row",
@@ -3236,6 +4406,54 @@ const styles = StyleSheet.create({
   },
   vlogList: {
     gap: 14,
+  },
+  videoGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+  },
+  videoTile: {
+    width: "48%",
+    borderRadius: 16,
+    backgroundColor: "#F8FAFC",
+    overflow: "hidden",
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: "#E9D5FF",
+  },
+  videoThumb: {
+    width: "100%",
+    height: 146,
+    backgroundColor: "#111827",
+    position: "relative",
+  },
+  videoThumbVideo: {
+    width: "100%",
+    height: "100%",
+  },
+  videoThumbShade: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.18)",
+  },
+  videoPlayBubble: {
+    position: "absolute",
+    left: "50%",
+    top: "50%",
+    width: 44,
+    height: 44,
+    marginLeft: -22,
+    marginTop: -22,
+    borderRadius: 18,
+    backgroundColor: "rgba(85,35,210,0.92)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  videoTileTitle: {
+    color: "#071846",
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "900",
+    padding: 10,
   },
   vlogCard: {
     backgroundColor: "#FFFFFF",
@@ -3667,6 +4885,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#22C55E",
   },
+  monthCellToday: {
+    backgroundColor: "#1674E8",
+    borderWidth: 1,
+    borderColor: "#1674E8",
+    borderRadius: 14,
+  },
   monthCellActive: {
     backgroundColor: "#16A34A",
   },
@@ -3704,7 +4928,7 @@ const styles = StyleSheet.create({
     color: "#15803D",
   },
   todayCellText: {
-    color: "#DC2626",
+    color: "#FFFFFF",
   },
   eventDot: {
     width: 5,
@@ -3734,6 +4958,15 @@ const styles = StyleSheet.create({
   dayDateChipHasEvent: {
     borderColor: "#22C55E",
     backgroundColor: "#DCFCE7",
+  },
+  dayDateChipToday: {
+    backgroundColor: "#1674E8",
+    borderColor: "#1674E8",
+    shadowColor: "#1674E8",
+    shadowOpacity: 0.22,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 4,
   },
   dayDateChipActive: {
     backgroundColor: "#16A34A",
@@ -3919,6 +5152,28 @@ const styles = StyleSheet.create({
     borderColor: "#EEF2F7",
     gap: 14,
   },
+  referralReward: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "#F5F3FF",
+    borderWidth: 1,
+    borderColor: "#E9D5FF",
+    borderRadius: 8,
+    padding: 13,
+  },
+  referralRewardTitle: {
+    color: "#5523D2",
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  referralRewardText: {
+    color: "#475467",
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: "700",
+    marginTop: 2,
+  },
   inputWrap: {
     gap: 7,
   },
@@ -3937,6 +5192,20 @@ const styles = StyleSheet.create({
     color: "#101828",
     fontSize: 15,
     fontWeight: "700",
+  },
+  referralPickerWrap: {
+    minHeight: 50,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#D0D5DD",
+    backgroundColor: "#FFFFFF",
+    overflow: "hidden",
+    justifyContent: "center",
+  },
+  referralPicker: {
+    minHeight: 50,
+    color: "#101828",
+    backgroundColor: "#FFFFFF",
   },
   formMessage: {
     fontSize: 13,

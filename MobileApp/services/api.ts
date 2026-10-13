@@ -41,7 +41,7 @@ function getApiBaseUrl() {
   return DEFAULT_API;
 }
 
-const API_BASE_URL = getApiBaseUrl();
+export const API_BASE_URL = getApiBaseUrl();
     
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/?$/, "");
 
@@ -73,6 +73,8 @@ api.interceptors.request.use(async (config) => {
 
   if (
     requestUrl.includes("auth/login/") ||
+    requestUrl.includes("auth/forgot-password/") ||
+    requestUrl.includes("auth/reset-password/") ||
     requestUrl.includes("auth/otp/") ||
     requestUrl.includes("gallery/") ||
     requestUrl.includes("vlogs/") ||
@@ -206,6 +208,16 @@ export type GalleryItem = {
   id: number;
   title: string;
   image: string;
+  folder_name?: string;
+  created_at?: string;
+};
+
+export type AwardItem = {
+  id: number;
+  title: string;
+  description?: string;
+  image: string;
+  folder_name?: string;
   created_at?: string;
 };
 
@@ -213,6 +225,7 @@ export type VlogItem = {
   id: number;
   title: string;
   video: string;
+  folder_name?: string;
   created_at?: string;
 };
 
@@ -292,6 +305,10 @@ export type StudentChallengeQuestion = {
 export type StudentChallengeDay = {
   id: number;
   day_number: number;
+  attempt_number?: number;
+  source_session?: number | null;
+  source_session_number?: number;
+  source_session_title?: string;
   challenge_date: string;
   status: "assigned" | "completed" | string;
   score: number;
@@ -306,6 +323,18 @@ export type StudentChallengeToday = {
   message?: string;
   challenge: StudentChallengeSummary;
   day: StudentChallengeDay | null;
+};
+
+export type StudentChallengeSession = {
+  id: number;
+  session_number: number;
+  title: string;
+  topics?: string | null;
+  completed_attempts: number;
+  active_day_id?: number | null;
+  next_attempt: number;
+  available_questions: number;
+  can_start: boolean;
 };
 
 export type StudentBatchSummary = {
@@ -332,6 +361,10 @@ export type StudentBatchSummary = {
 
 export type ReferralPayload = {
   name: string;
+  branch: string;
+  course: string;
+  trainer_name: string;
+  referral_student_name: string;
   mobile: string;
 };
 
@@ -463,15 +496,11 @@ export async function loginUser(payload: LoginPayload) {
   } catch (error: any) {
     const networkError =
       !error?.response && String(error?.message).toLowerCase() === "network error";
-    const attemptedUrls = Array.isArray(error?.apiBaseUrls)
-      ? error.apiBaseUrls.join(", ")
-      : getCandidateApiBaseUrls().join(", ");
-
     return {
       success: false,
       error:
         (networkError &&
-          `Cannot connect to backend. Tried: ${attemptedUrls}. Please start the backend server or set EXPO_PUBLIC_API_URL.`) ||
+          "No connection. Please connect to the internet to login. Saved Library materials are still available inside the app.") ||
         getApiErrorMessage(error, "Login failed"),
       data: error?.response?.data,
     };
@@ -481,13 +510,9 @@ export async function loginUser(payload: LoginPayload) {
 function formatNetworkError(error: any, fallback: string) {
   const networkError =
     !error?.response && String(error?.message).toLowerCase() === "network error";
-  const attemptedUrls = Array.isArray(error?.apiBaseUrls)
-    ? error.apiBaseUrls.join(", ")
-    : getCandidateApiBaseUrls().join(", ");
-
   return (
     (networkError &&
-      `Cannot connect to backend. Tried: ${attemptedUrls}. Please start the backend server or set EXPO_PUBLIC_API_URL.`) ||
+      "No connection. Please try again after connecting to the internet.") ||
     getApiErrorMessage(error, fallback)
   );
 }
@@ -555,6 +580,75 @@ export async function verifyLoginOtp(mobileNo: string, reqId: string, otp: strin
     return {
       success: false,
       error: formatNetworkError(error, "Unable to verify OTP"),
+      data: error?.response?.data,
+    };
+  }
+}
+
+async function postPublicAuthWithFallback(endpoint: string, payload: Record<string, string>) {
+  let lastNetworkError: any = null;
+  const attemptedUrls: string[] = [];
+
+  for (const baseUrl of getCandidateApiBaseUrls()) {
+    attemptedUrls.push(baseUrl);
+
+    try {
+      const response = await axios.post(`${baseUrl}${endpoint}`, payload, {
+        timeout: 15000,
+        headers: { "Content-Type": "application/json" },
+      });
+
+      api.defaults.baseURL = baseUrl;
+      return response;
+    } catch (error: any) {
+      const isNetworkError =
+        !error?.response && String(error?.message).toLowerCase() === "network error";
+
+      if (!isNetworkError) {
+        throw error;
+      }
+
+      lastNetworkError = error;
+      error.apiBaseUrls = attemptedUrls;
+    }
+  }
+
+  if (lastNetworkError) {
+    lastNetworkError.apiBaseUrls = attemptedUrls;
+  }
+
+  throw lastNetworkError;
+}
+
+export async function requestPasswordResetOtp(email: string) {
+  try {
+    const response = await postPublicAuthWithFallback("auth/forgot-password/", {
+      email: email.trim().toLowerCase(),
+    });
+
+    return { success: true, data: response.data };
+  } catch (error: any) {
+    return {
+      success: false,
+      error: formatNetworkError(error, "Unable to send OTP"),
+      data: error?.response?.data,
+    };
+  }
+}
+
+export async function resetStudentPassword(email: string, otp: string, newPassword: string) {
+  try {
+    const response = await postPublicAuthWithFallback("auth/reset-password/", {
+      email: email.trim().toLowerCase(),
+      otp: otp.trim(),
+      new_password: newPassword,
+    });
+
+    return { success: true, data: response.data };
+  } catch (error: any) {
+    return {
+      success: false,
+      error: formatNetworkError(error, "Unable to reset password"),
       data: error?.response?.data,
     };
   }
@@ -859,6 +953,43 @@ export async function getTodayChallenge(courseId: number | string, batchId: numb
   }
 }
 
+export async function getChallengeSessions(courseId: number | string, batchId: number | string) {
+  try {
+    const response = await api.get("student/challenge/sessions/", {
+      params: { course_id: courseId, batch_id: batchId },
+    });
+    return {
+      success: true,
+      data: {
+        challenge: response.data?.challenge as StudentChallengeSummary,
+        sessions: (Array.isArray(response.data?.sessions) ? response.data.sessions : []) as StudentChallengeSession[],
+      },
+      error: "",
+    };
+  } catch (error: any) {
+    return {
+      success: false,
+      data: { challenge: null as StudentChallengeSummary | null, sessions: [] as StudentChallengeSession[] },
+      error: getApiErrorMessage(error, "Unable to load daily activity sessions."),
+    };
+  }
+}
+
+export async function startSessionChallenge(courseId: number | string, batchId: number | string, sessionId: number | string) {
+  try {
+    const response = await api.get("student/challenge/today/", {
+      params: { course_id: courseId, batch_id: batchId, session_id: sessionId },
+    });
+    return { success: true, data: response.data as StudentChallengeToday, error: "" };
+  } catch (error: any) {
+    return {
+      success: false,
+      data: null as StudentChallengeToday | null,
+      error: getApiErrorMessage(error, "Unable to start daily activity."),
+    };
+  }
+}
+
 export async function submitChallengeDay(
   dayId: number | string,
   answers: { question_id: number; selected_answer: string }[]
@@ -877,9 +1008,13 @@ export async function submitChallengeDay(
 
 export async function getPublicHomeContent() {
   try {
-    const [galleryResult, vlogResult, newsResult, calendarResult] =
+    const [galleryResult, awardsResult, vlogResult, newsResult, calendarResult] =
       await Promise.allSettled([
       fetchListWithFallback<GalleryItem>("gallery/", "GALLERY", (item, baseUrl) => ({
+        ...item,
+        image: resolveMediaUrl(item.image, baseUrl),
+      })),
+      fetchListWithFallback<AwardItem>("awards/", "AWARDS", (item, baseUrl) => ({
         ...item,
         image: resolveMediaUrl(item.image, baseUrl),
       })),
@@ -902,6 +1037,8 @@ export async function getPublicHomeContent() {
 
     const gallery =
       galleryResult.status === "fulfilled" ? galleryResult.value.items : [];
+    const awards =
+      awardsResult.status === "fulfilled" ? awardsResult.value.items : [];
     const vlogs =
       vlogResult.status === "fulfilled" ? vlogResult.value.items : [];
     const news = newsResult.status === "fulfilled" ? newsResult.value.items : [];
@@ -911,6 +1048,9 @@ export async function getPublicHomeContent() {
       galleryResult.status === "fulfilled"
         ? galleryResult.value.error
         : `Gallery not loaded: ${getApiErrorMessage(galleryResult.reason)}`,
+      awardsResult.status === "fulfilled"
+        ? awardsResult.value.error
+        : `Awards not loaded: ${getApiErrorMessage(awardsResult.reason)}`,
       vlogResult.status === "fulfilled"
         ? vlogResult.value.error
         : `Vlogs not loaded: ${getApiErrorMessage(vlogResult.reason)}`,
@@ -924,6 +1064,7 @@ export async function getPublicHomeContent() {
 
     console.log("PUBLIC HOME API:", API_BASE_URL);
     console.log("PUBLIC HOME GALLERY COUNT:", gallery.length);
+    console.log("PUBLIC HOME AWARDS COUNT:", awards.length);
     console.log("PUBLIC HOME VLOGS COUNT:", vlogs.length);
     console.log("PUBLIC HOME NEWS COUNT:", news.length);
     console.log("PUBLIC HOME CALENDAR COUNT:", calendarEvents.length);
@@ -936,6 +1077,7 @@ export async function getPublicHomeContent() {
       error: "",
       data: {
         gallery,
+        awards,
         news,
         vlogs,
         calendarEvents,
@@ -947,6 +1089,7 @@ export async function getPublicHomeContent() {
       error: getApiErrorMessage(error),
       data: {
         gallery: [],
+        awards: [],
         news: [],
         vlogs: [],
         calendarEvents: [],

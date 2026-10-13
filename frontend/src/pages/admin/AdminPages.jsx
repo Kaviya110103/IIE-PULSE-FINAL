@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import api from '../../api/client'
 import toast from 'react-hot-toast'
 import { useLocation, useNavigate } from 'react-router-dom'  // ← ADD THIS
@@ -4198,7 +4198,7 @@ export function QuizResults() {
   return (
     <div className="admin-root admin-fade">
       <AdminStyles />
-      <AdminPageHeader title="Quiz Results" sub="Practice test attended results" />
+      <AdminPageHeader title="Quiz Results" sub="Skillset attended results" />
       <div className="admin-card">
         <div style={{ padding: '14px 16px 0', borderBottom: `1px solid ${T.border}` }}>
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
@@ -4220,9 +4220,9 @@ export function QuizResults() {
         </div>
         <AdminSectionHeader title={activeSegment === 'students' ? 'Our Students' : 'Public Users'} count={activeCount} />
         {loading ? <AdminSpin /> : activeSegment === 'students' && results.length === 0 ? (
-          <AdminEmpty msg="No practice test results yet" icon="fa-chart-bar" />
+          <AdminEmpty msg="No skillset results yet" icon="fa-chart-bar" />
         ) : activeSegment === 'public' && publicResults.length === 0 ? (
-          <AdminEmpty msg="No public practice test results yet" icon="fa-chart-bar" />
+          <AdminEmpty msg="No public skillset results yet" icon="fa-chart-bar" />
         ) : activeSegment === 'students' ? (
           <div style={{ overflowX: 'auto' }}>
             <table className="admin-table">
@@ -5648,42 +5648,156 @@ function resolveAdminMediaUrl(url) {
   return `${origin}${url.startsWith('/') ? '' : '/'}${url}`
 }
 
-function AdminMediaManager({ type }) {
-  const config = {
-    gallery: { title: 'Gallery', endpoint: '/gallery/', fileKey: 'image', accept: 'image/*', icon: 'fa-images' },
-    vlogs: { title: 'Vlogs', endpoint: '/vlogs/', fileKey: 'video', accept: 'video/*', icon: 'fa-video' },
-  }[type]
-  const [items, setItems] = useState([])
+function AdminMediaManager({ mode = 'gallery' }) {
+  const isAwards = mode === 'awards'
+  const mediaTypes = isAwards ? {
+    awards: { label: 'Award Photos', endpoint: '/awards/', fileKey: 'image', accept: 'image/*', icon: 'fa-award' },
+  } : {
+    photos: { label: 'Photos', endpoint: '/gallery/', fileKey: 'image', accept: 'image/*', icon: 'fa-images' },
+    videos: { label: 'Videos', endpoint: '/vlogs/', fileKey: 'video', accept: 'video/*', icon: 'fa-video' },
+  }
+  const firstType = Object.keys(mediaTypes)[0]
+  const [activeType, setActiveType] = useState(firstType)
+  const config = mediaTypes[activeType]
+  const [items, setItems] = useState(() => Object.fromEntries(Object.keys(mediaTypes).map(key => [key, []])))
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [form, setForm] = useState({ title: '', file: null })
+  const [form, setForm] = useState({ folder_name: '', files: [] })
+  const [openFolder, setOpenFolder] = useState(null)
+  const [dragActive, setDragActive] = useState(false)
+  const fileInputRef = useRef(null)
+  const folderInputRef = useRef(null)
 
   const load = async () => {
     setLoading(true)
     try {
-      const r = await api.get(config.endpoint)
-      setItems(r.data.results || r.data || [])
+      const responses = await Promise.all(Object.entries(mediaTypes).map(async ([key, media]) => {
+        const response = await api.get(media.endpoint)
+        return [key, response.data.results || response.data || []]
+      }))
+      setItems(Object.fromEntries(responses))
     } catch {
-      toast.error(`Failed to load ${config.title.toLowerCase()}`)
+      toast.error(`Failed to load ${isAwards ? 'awards' : 'gallery'}`)
     } finally {
       setLoading(false)
     }
   }
 
-  useEffect(() => { load() }, [config.endpoint])
+  useEffect(() => { load() }, [])
+
+  const activeItems = items[activeType] || []
+  const groupedItems = activeItems.reduce((groups, item) => {
+    const folder = (item.folder_name || 'General').trim() || 'General'
+    if (!groups[folder]) groups[folder] = []
+    groups[folder].push(item)
+    return groups
+  }, {})
+  const folderRows = Object.entries(groupedItems).map(([folder, group]) => ({
+    folder,
+    group,
+    latest: group.reduce((latest, item) => {
+      if (!latest) return item
+      return new Date(item.created_at || 0) > new Date(latest.created_at || 0) ? item : latest
+    }, null),
+  }))
+
+  const acceptsFile = (file) => {
+    if (!file?.type) {
+      const ext = file?.name?.split('.').pop()?.toLowerCase()
+      if (config.fileKey === 'image') return ['jpg', 'jpeg', 'png', 'webp'].includes(ext)
+      return ['mp4', 'mov', 'webm', 'mkv'].includes(ext)
+    }
+    return config.fileKey === 'image' ? file.type.startsWith('image/') : file.type.startsWith('video/')
+  }
+
+  const applySelectedFiles = (selectedFiles, fallbackFolder = '') => {
+    const files = Array.from(selectedFiles || []).filter(acceptsFile)
+    if (!files.length) {
+      toast.error(`Please choose valid ${config.label.toLowerCase()} files`)
+      return
+    }
+    const folderName = (
+      fallbackFolder ||
+      files[0]?.webkitRelativePath?.split('/')?.[0] ||
+      form.folder_name ||
+      ''
+    ).trim()
+    setForm(p => ({
+      ...p,
+      folder_name: p.folder_name || folderName,
+      files,
+    }))
+    toast.success(`${files.length} ${config.label.toLowerCase()} ready to upload`)
+  }
+
+  const readDroppedEntry = (entry, path = '') =>
+    new Promise((resolve) => {
+      if (!entry) return resolve([])
+      if (entry.isFile) {
+        entry.file(file => {
+          if (path && !file.webkitRelativePath) {
+            Object.defineProperty(file, 'webkitRelativePath', { value: `${path}${file.name}` })
+          }
+          resolve([file])
+        }, () => resolve([]))
+        return
+      }
+      if (entry.isDirectory) {
+        const reader = entry.createReader()
+        const files = []
+        const readBatch = () => {
+          reader.readEntries(async entries => {
+            if (!entries.length) return resolve(files)
+            const nested = await Promise.all(entries.map(child => readDroppedEntry(child, `${path}${entry.name}/`)))
+            files.push(...nested.flat())
+            readBatch()
+          }, () => resolve(files))
+        }
+        readBatch()
+        return
+      }
+      resolve([])
+    })
+
+  const handleDrop = async (event) => {
+    event.preventDefault()
+    setDragActive(false)
+    const items = Array.from(event.dataTransfer?.items || [])
+    const entries = items.map(item => item.webkitGetAsEntry?.()).filter(Boolean)
+    if (entries.length) {
+      const nested = await Promise.all(entries.map(entry => readDroppedEntry(entry)))
+      applySelectedFiles(nested.flat())
+      return
+    }
+    applySelectedFiles(event.dataTransfer?.files || [])
+  }
+
+  const handlePaste = (event) => {
+    const files = Array.from(event.clipboardData?.files || [])
+    if (!files.length) return
+    applySelectedFiles(files)
+  }
 
   const submit = async (e) => {
     e.preventDefault()
-    if (!form.title.trim()) return toast.error('Title is required')
-    if (!form.file) return toast.error('File is required')
-    const data = new FormData()
-    data.append('title', form.title.trim())
-    data.append(config.fileKey, form.file)
+    const files = Array.from(form.files || [])
+    const folderName = (form.folder_name || files[0]?.webkitRelativePath?.split('/')?.[0] || '').trim()
+    if (!folderName) return toast.error('Folder / event name is required')
+    if (!files.length) return toast.error(`${config.label} files are required`)
     setSaving(true)
     try {
-      await api.post(config.endpoint, data, { headers: { 'Content-Type': 'multipart/form-data' } })
-      toast.success(`${config.title} item uploaded`)
-      setForm({ title: '', file: null })
+      await Promise.all(files.map(file => {
+        const data = new FormData()
+        const baseTitle = file.name.replace(/\.[^/.]+$/, '').replace(/[_-]+/g, ' ').trim()
+        data.append('title', baseTitle || folderName)
+        data.append('description', form.description || '')
+        data.append('folder_name', folderName)
+        data.append(config.fileKey, file)
+        return api.post(config.endpoint, data, { headers: { 'Content-Type': 'multipart/form-data' } })
+      }))
+      toast.success(`${files.length} ${config.label.toLowerCase()} uploaded to ${folderName}`)
+      setForm({ folder_name: '', description: '', files: [] })
+      setOpenFolder(folderName)
       e.target.reset()
       load()
     } catch (err) {
@@ -5707,12 +5821,138 @@ function AdminMediaManager({ type }) {
   return (
     <div className="admin-root admin-fade">
       <AdminStyles />
-      <AdminPageHeader title={config.title} sub={`Manage ${config.title.toLowerCase()} content`} />
+      <AdminPageHeader
+        title={isAwards ? 'Awards' : 'Gallery'}
+        sub={isAwards ? 'Post student award photos in folder-based collections' : 'Manage event photos and videos in folder-based collections'}
+      />
       <div className="admin-card">
-        <AdminSectionHeader title={`Upload ${config.title}`} />
-        <form onSubmit={submit} style={{ padding: 22, display: 'grid', gap: 14 }}>
-          <input className="admin-input" placeholder="Title" value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value }))} />
-          <input className="admin-input" type="file" accept={config.accept} onChange={e => setForm(p => ({ ...p, file: e.target.files?.[0] || null }))} />
+        {!isAwards ? <div style={{ padding: '18px 22px 0', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          {Object.entries(mediaTypes).map(([key, media]) => (
+            <button
+              key={key}
+              type="button"
+              className={`admin-btn ${activeType === key ? 'admin-btn-primary' : 'admin-btn-ghost'}`}
+              onClick={() => {
+                setActiveType(key)
+                setOpenFolder(null)
+              }}
+            >
+              <i className={`fas ${media.icon}`} />
+              {media.label}
+            </button>
+          ))}
+        </div> : null}
+        <AdminSectionHeader title={`Upload ${config.label}`} />
+        <form onSubmit={submit} onPaste={handlePaste} style={{ padding: 22, display: 'grid', gap: 14 }}>
+          <input
+            className="admin-input"
+            placeholder="Folder / event name (e.g. Freshers Day 2026)"
+            value={form.folder_name}
+            onChange={e => setForm(p => ({ ...p, folder_name: e.target.value }))}
+          />
+          {isAwards ? (
+            <textarea
+              className="admin-input"
+              rows={3}
+              placeholder="Description (optional)"
+              value={form.description || ''}
+              onChange={e => setForm(p => ({ ...p, description: e.target.value }))}
+            />
+          ) : null}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={config.accept}
+            multiple
+            hidden
+            onChange={e => applySelectedFiles(e.target.files || [])}
+          />
+          <input
+            ref={folderInputRef}
+            type="file"
+            accept={config.accept}
+            multiple
+            hidden
+            webkitdirectory=""
+            directory=""
+            onChange={e => {
+              const files = Array.from(e.target.files || [])
+              const folderName = files[0]?.webkitRelativePath?.split('/')?.[0] || form.folder_name
+              applySelectedFiles(files, folderName)
+            }}
+          />
+          <div
+            tabIndex={0}
+            onPaste={handlePaste}
+            onDragEnter={e => {
+              e.preventDefault()
+              setDragActive(true)
+            }}
+            onDragOver={e => {
+              e.preventDefault()
+              setDragActive(true)
+            }}
+            onDragLeave={e => {
+              e.preventDefault()
+              setDragActive(false)
+            }}
+            onDrop={handleDrop}
+            style={{
+              border: `1.5px dashed ${dragActive ? '#5523d2' : '#cbd5e1'}`,
+              borderRadius: 16,
+              padding: 22,
+              background: dragActive ? '#f5f3ff' : '#f8fafc',
+              display: 'grid',
+              gap: 12,
+              justifyItems: 'center',
+              textAlign: 'center',
+              outline: 'none'
+            }}
+          >
+            <div style={{ width: 52, height: 52, borderRadius: 16, background: '#ede9fe', color: '#5523d2', display: 'grid', placeItems: 'center', fontSize: 22 }}>
+              <i className={`fas ${config.icon}`} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 900, color: '#111827', fontSize: 16 }}>
+                Drag & drop files or folders here
+              </div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 5 }}>
+                You can also copy images/videos and paste here. Folder name will be used automatically when available.
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
+              <button type="button" className="admin-btn admin-btn-ghost" onClick={() => fileInputRef.current?.click()}>
+                <i className="fas fa-file-upload" />
+                Choose Files
+              </button>
+              <button type="button" className="admin-btn admin-btn-ghost" onClick={() => folderInputRef.current?.click()}>
+                <i className="fas fa-folder-open" />
+                Choose Folder
+              </button>
+            </div>
+            {form.files?.length ? (
+              <div style={{ width: '100%', background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, padding: '10px 12px', textAlign: 'left' }}>
+                <div style={{ fontSize: 12, fontWeight: 900, color: '#334155', marginBottom: 6 }}>
+                  Selected {form.files.length} file{form.files.length > 1 ? 's' : ''}
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {form.files.slice(0, 5).map(file => (
+                    <span key={`${file.name}-${file.size}`} style={{ fontSize: 11, background: '#f1f5f9', color: '#475569', borderRadius: 999, padding: '4px 8px' }}>
+                      {file.webkitRelativePath || file.name}
+                    </span>
+                  ))}
+                  {form.files.length > 5 ? (
+                    <span style={{ fontSize: 11, background: '#ede9fe', color: '#5523d2', borderRadius: 999, padding: '4px 8px' }}>
+                      +{form.files.length - 5} more
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+          </div>
+          <div style={{ fontSize: 12, color: '#64748b' }}>
+            Supports individual files, multiple files, folders, drag & drop, and paste upload for {config.label.toLowerCase()}.
+          </div>
           <button className="admin-btn admin-btn-primary" style={{ width: 'fit-content', minWidth: 112, justifySelf: 'start' }} disabled={saving}>
             <i className={`fas ${saving ? 'fa-spinner fa-spin' : config.icon}`} />
             {saving ? 'Uploading...' : 'Upload'}
@@ -5720,37 +5960,82 @@ function AdminMediaManager({ type }) {
         </form>
       </div>
       <div className="admin-card">
-        <AdminSectionHeader title={config.title} count={items.length} />
-        {loading ? <AdminSpin /> : items.length === 0 ? (
-          <AdminEmpty msg={`No ${config.title.toLowerCase()} yet`} icon={config.icon} />
+        <AdminSectionHeader title={openFolder ? `${openFolder} - ${config.label}` : `${config.label} Folders`} count={openFolder ? (groupedItems[openFolder] || []).length : folderRows.length} />
+        {loading ? <AdminSpin /> : activeItems.length === 0 ? (
+          <AdminEmpty msg={`No ${config.label.toLowerCase()} yet`} icon={config.icon} />
+        ) : !openFolder ? (
+          <div style={{ padding: 22, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 16 }}>
+            {folderRows.map(({ folder, group, latest }) => (
+              <button
+                key={folder}
+                type="button"
+                onClick={() => setOpenFolder(folder)}
+                style={{
+                  textAlign: 'left',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: 14,
+                  background: '#fff',
+                  padding: 14,
+                  cursor: 'pointer',
+                  boxShadow: '0 8px 22px rgba(15,23,42,.06)'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div style={{ width: 44, height: 44, borderRadius: 12, background: '#f5f3ff', color: '#5523d2', display: 'grid', placeItems: 'center' }}>
+                    <i className={`fas ${activeType === 'photos' ? 'fa-folder-open' : 'fa-video'}`} />
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 900, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{folder}</div>
+                    <div style={{ fontSize: 12, color: '#64748b', marginTop: 3 }}>{group.length} {config.label.toLowerCase()}</div>
+                  </div>
+                </div>
+                {latest ? (
+                  <div style={{ marginTop: 12, height: 86, borderRadius: 12, overflow: 'hidden', background: '#111827' }}>
+                    {config.fileKey === 'image' ? (
+                      <img src={resolveAdminMediaUrl(latest.image)} alt={latest.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    ) : (
+                      <video src={resolveAdminMediaUrl(latest.video)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} muted />
+                    )}
+                  </div>
+                ) : null}
+              </button>
+            ))}
+          </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
+            <div style={{ padding: '16px 18px 0' }}>
+              <button className="admin-btn admin-btn-ghost" type="button" onClick={() => setOpenFolder(null)}>
+                <i className="fas fa-arrow-left" />
+                Back to folders
+              </button>
+            </div>
             <table className="admin-table">
-              <thead><tr><th>Preview</th><th>Title</th><th>Uploaded By</th><th>Created</th><th>Actions</th></tr></thead>
+              <thead><tr><th>Preview</th><th>Title</th>{isAwards ? <th>Description</th> : null}<th>Uploaded By</th><th>Created</th><th>Actions</th></tr></thead>
               <tbody>
-                {items.map(item => (
-                  <tr key={item.id}>
-                    <td>
-                      {type === 'gallery' ? (
-                        <img
-                          src={resolveAdminMediaUrl(item.image)}
-                          alt={item.title}
-                          style={{ width: 86, height: 58, objectFit: 'cover', borderRadius: 8, border: '1px solid #e5e7eb' }}
-                        />
-                      ) : (
-                        <video
-                          src={resolveAdminMediaUrl(item.video)}
-                          style={{ width: 110, height: 62, objectFit: 'cover', borderRadius: 8, border: '1px solid #e5e7eb', background: '#111827' }}
-                          controls
-                        />
-                      )}
-                    </td>
-                    <td style={{ fontWeight: 700 }}>{item.title}</td>
-                    <td>{item.uploaded_by_name || '-'}</td>
-                    <td>{item.created_at ? new Date(item.created_at).toLocaleString('en-IN') : '-'}</td>
-                    <td><button className="admin-btn admin-btn-danger admin-btn-sm" onClick={() => remove(item)}><i className="fas fa-trash" /> Delete</button></td>
-                  </tr>
-                ))}
+                {(groupedItems[openFolder] || []).map(item => (
+                    <tr key={`${activeType}-${item.id}`}>
+                      <td>
+                        {config.fileKey === 'image' ? (
+                          <img
+                            src={resolveAdminMediaUrl(item.image)}
+                            alt={item.title}
+                            style={{ width: 86, height: 58, objectFit: 'cover', borderRadius: 8, border: '1px solid #e5e7eb' }}
+                          />
+                        ) : (
+                          <video
+                            src={resolveAdminMediaUrl(item.video)}
+                            style={{ width: 110, height: 62, objectFit: 'cover', borderRadius: 8, border: '1px solid #e5e7eb', background: '#111827' }}
+                            controls
+                          />
+                        )}
+                      </td>
+                      <td style={{ fontWeight: 700 }}>{item.title}</td>
+                      {isAwards ? <td>{item.description || '-'}</td> : null}
+                      <td>{item.uploaded_by_name || '-'}</td>
+                      <td>{item.created_at ? new Date(item.created_at).toLocaleString('en-IN') : '-'}</td>
+                      <td><button className="admin-btn admin-btn-danger admin-btn-sm" onClick={() => remove(item)}><i className="fas fa-trash" /> Delete</button></td>
+                    </tr>
+                  ))}
               </tbody>
             </table>
           </div>
@@ -5760,8 +6045,9 @@ function AdminMediaManager({ type }) {
   )
 }
 
-export function AdminGallery() { return <AdminMediaManager type="gallery" /> }
-export function AdminVlogs() { return <AdminMediaManager type="vlogs" /> }
+export function AdminGallery() { return <AdminMediaManager /> }
+export function AdminVlogs() { return <AdminMediaManager /> }
+export function AdminAwards() { return <AdminMediaManager mode="awards" /> }
 
 export function AdminNews() {
   const [items, setItems] = useState([])
@@ -5952,9 +6238,13 @@ export function AdminReferrals() {
     <div className="admin-root admin-fade">
       <AdminStyles />
       <AdminPageHeader title="Referrals" sub="View referral contacts submitted from the mobile app" />
-      <SimpleAdminTable title="Referral Submissions" items={items} loading={loading} emptyIcon="fa-user-plus" emptyMsg="No referrals submitted yet" columns={['Name', 'Mobile Number', 'Submitted At']} renderRow={(item) => (
+      <SimpleAdminTable title="Referral Submissions" items={items} loading={loading} emptyIcon="fa-user-plus" emptyMsg="No referrals submitted yet" columns={['Name', 'Branch', 'Course', 'Trainer', 'Referral Student', 'Mobile Number', 'Submitted At']} renderRow={(item) => (
         <>
           <td style={{ fontWeight: 700 }}>{item.name}</td>
+          <td>{item.branch || '-'}</td>
+          <td>{item.course || '-'}</td>
+          <td>{item.trainer_name || '-'}</td>
+          <td>{item.referral_student_name || '-'}</td>
           <td>{item.mobile}</td>
           <td>{item.created_at ? new Date(item.created_at).toLocaleString('en-IN') : '-'}</td>
           <td><button className="admin-btn admin-btn-danger admin-btn-sm" onClick={() => remove(item)}><i className="fas fa-trash" /> Delete</button></td>
@@ -5966,20 +6256,34 @@ export function AdminReferrals() {
 
 const publicUserTabs = [
   { key: 'users', label: 'New Users', icon: 'fa-user-plus' },
-  { key: 'results', label: 'Test Results', icon: 'fa-chart-line' },
-  { key: 'logins', label: 'Login Records', icon: 'fa-user-clock' },
+  { key: 'enrolled', label: 'Enrolled', icon: 'fa-user-check' },
+  { key: 'walked_in', label: 'Walked In', icon: 'fa-walking' },
 ]
 
 export function AdminPublicUsers() {
   const [activeTab, setActiveTab] = useState('users')
   const [items, setItems] = useState([])
+  const [branches, setBranches] = useState([])
+  const [branchFilter, setBranchFilter] = useState('')
+  const [tabCounts, setTabCounts] = useState({ users: 0, enrolled: 0, walked_in: 0 })
+  const [remarks, setRemarks] = useState({})
   const [loading, setLoading] = useState(true)
+  const navigate = useNavigate()
+  const { user } = useAuth()
+  const isCounselor = user?.designation === 'counselor'
+  const addStudentPath = isCounselor ? '/counselor/add-student' : '/admin/students'
 
   const load = async (tab = activeTab) => {
     setLoading(true)
     try {
-      const res = await api.get(`/admin/public-users/?tab=${tab}`)
-      setItems(res.data.results || [])
+      const params = new URLSearchParams({ tab })
+      if (tab === 'enrolled' && branchFilter) params.set('branch', branchFilter)
+      const res = await api.get(`/admin/public-users/?${params.toString()}`)
+      const rows = res.data.results || []
+      setItems(rows)
+      setBranches(res.data.branches || [])
+      setTabCounts(res.data.counts || { users: 0, enrolled: 0, walked_in: 0 })
+      setRemarks(rows.reduce((next, item) => ({ ...next, [item.id]: item.remark || '' }), {}))
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to load public users')
     } finally {
@@ -5987,72 +6291,106 @@ export function AdminPublicUsers() {
     }
   }
 
-  useEffect(() => { load(activeTab) }, [activeTab])
+  useEffect(() => { load(activeTab) }, [activeTab, branchFilter])
 
-  const renderUsers = () => (
+  useEffect(() => {
+    if (activeTab !== 'enrolled') setBranchFilter('')
+  }, [activeTab])
+
+  const markWalkedIn = async (item) => {
+    try {
+      await api.post(`/admin/public-users/${item.id}/status/`, { status: 'walked_in' })
+      toast.success('Moved to walked in')
+      load(activeTab)
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to update public user')
+    }
+  }
+
+  const enrollUser = (item) => {
+    navigate(`${addStudentPath}?public_user=${item.id}&open_add=1`, {
+      state: {
+        openAddStudent: true,
+        publicUser: item,
+      },
+    })
+  }
+
+  const saveRemark = async (item) => {
+    const nextRemark = remarks[item.id] || ''
+    if (nextRemark === (item.remark || '')) return
+    try {
+      const res = await api.post(`/admin/public-users/${item.id}/status/`, { remark: nextRemark })
+      const updated = res.data?.data || {}
+      setItems(prev => prev.map(row => row.id === item.id ? { ...row, remark: updated.remark || nextRemark } : row))
+      toast.success('Remark saved')
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to save remark')
+    }
+  }
+
+  const renderUsers = (mode = activeTab) => (
     <PublicUsersTable
-      columns={['Name', 'Username', 'Contact', 'Qualification', 'Location', 'Registered']}
+      columns={[
+        'Name',
+        'Contact',
+        'Qualification',
+        'Location',
+        mode === 'enrolled' ? 'Branch' : 'Registered',
+        ...(mode === 'users' || mode === 'walked_in' ? ['Remark'] : []),
+        ...(mode === 'enrolled' ? [] : ['Action']),
+      ]}
       items={items}
       emptyMsg="No public users registered yet"
       emptyIcon="fa-user-plus"
       renderRow={(item) => (
         <>
           <td style={{ fontWeight: 700 }}>{item.name || '-'}</td>
-          <td>{item.username || '-'}</td>
           <td>
             <div>{item.mobile || '-'}</div>
             <div style={{ fontSize: 11, color: T.slate }}>{item.email || ''}</div>
           </td>
           <td>{item.qualification || '-'}</td>
           <td>{[item.city, item.state].filter(Boolean).join(', ') || item.location || '-'}</td>
-          <td>{formatMonitoringTime(item.created_at)}</td>
-        </>
-      )}
-    />
-  )
-
-  const renderResults = () => (
-    <PublicUsersTable
-      columns={['User', 'Practice Test', 'Score', 'Result', 'Questions', 'Completed']}
-      items={items}
-      emptyMsg="No public practice test results yet"
-      emptyIcon="fa-chart-bar"
-      renderRow={(item) => (
-        <>
-          <td>
-            <div style={{ fontWeight: 700 }}>{item.name || item.username || '-'}</div>
-            <div style={{ fontSize: 11, color: T.slate }}>{item.username || ''}</div>
-          </td>
-          <td>{item.quiz_title || '-'}</td>
-          <td>{Number(item.score || 0)} / {Number(item.total_marks || 0)} ({Number(item.percentage || 0)}%)</td>
-          <td>
-            <span className={`status-pill ${item.is_passed ? 'approved' : 'rejected'}`}>
-              {item.is_passed ? 'Passed' : 'Failed'}
-            </span>
-          </td>
-          <td>{item.correct_count || 0} correct / {item.attempted_count || 0} attempted / {item.total_questions || 0} total</td>
-          <td>{formatMonitoringTime(item.completed_at)}</td>
-        </>
-      )}
-    />
-  )
-
-  const renderLogins = () => (
-    <PublicUsersTable
-      columns={['User', 'Email', 'Login Time', 'Logout Time', 'Last Seen']}
-      items={items}
-      emptyMsg="No public login records found"
-      emptyIcon="fa-user-clock"
-      renderRow={(item) => (
-        <>
-          <td>
-            <div style={{ fontWeight: 700 }}>{item.name || '-'}</div>
-            <div style={{ fontSize: 11, color: T.slate }}>{item.username || ''}</div>
-          </td>
-          <td>{item.email || '-'}</td>
-          <td>{formatMonitoringTime(item.login_time)}</td>
-          <td>{item.logout_time ? formatMonitoringTime(item.logout_time) : 'Still active'}</td>
-          <td>{formatMonitoringTime(item.last_seen)}</td>
+          {mode === 'enrolled' ? (
+            <td>
+              <div style={{ fontWeight: 800 }}>{item.branch || '-'}</div>
+              <div style={{ fontSize: 11, color: T.slate }}>{item.student_code || ''}</div>
+            </td>
+          ) : (
+            <td>{formatMonitoringTime(item.created_at)}</td>
+          )}
+          {(mode === 'users' || mode === 'walked_in') && (
+            <td>
+              <input
+                className="admin-input"
+                style={{ minWidth: 220, height: 38, padding: '8px 10px' }}
+                placeholder="Add remark..."
+                value={remarks[item.id] ?? ''}
+                onChange={e => setRemarks(prev => ({ ...prev, [item.id]: e.target.value }))}
+                onBlur={() => saveRemark(item)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    e.currentTarget.blur()
+                  }
+                }}
+              />
+            </td>
+          )}
+          {mode !== 'enrolled' && (
+            <td>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button className="admin-btn admin-btn-primary admin-btn-sm" onClick={() => enrollUser(item)}>
+                  <i className="fas fa-user-check" /> Enroll
+                </button>
+                {mode !== 'walked_in' && (
+                  <button className="admin-btn admin-btn-ghost admin-btn-sm" onClick={() => markWalkedIn(item)}>
+                    <i className="fas fa-walking" /> Walk In
+                  </button>
+                )}
+              </div>
+            </td>
+          )}
         </>
       )}
     />
@@ -6063,10 +6401,10 @@ export function AdminPublicUsers() {
       <AdminStyles />
       <AdminPageHeader
         title="Public Users"
-        sub="View public registrations, practice test attempts, and login activity"
+        sub="Track public registrations, enrolled users, and walked-in leads"
       />
       <div className="admin-card">
-        <div style={{ padding: 16, borderBottom: `1px solid ${T.border}`, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ padding: 16, borderBottom: `1px solid ${T.border}`, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           {publicUserTabs.map(tab => (
             <button
               key={tab.key}
@@ -6075,10 +6413,28 @@ export function AdminPublicUsers() {
               onClick={() => setActiveTab(tab.key)}
             >
               <i className={`fas ${tab.icon}`} /> {tab.label}
+              <span style={{
+                marginLeft: 6,
+                minWidth: 22,
+                height: 22,
+                borderRadius: 999,
+                display: 'inline-grid',
+                placeItems: 'center',
+                padding: '0 7px',
+                background: activeTab === tab.key ? 'rgba(255,255,255,.22)' : 'rgba(15,23,42,.08)',
+                fontSize: 12,
+                fontWeight: 900,
+              }}>{tabCounts[tab.key] || 0}</span>
             </button>
           ))}
+          {activeTab === 'enrolled' && (
+            <select className="admin-select" style={{ width: 190, marginLeft: 'auto' }} value={branchFilter} onChange={e => setBranchFilter(e.target.value)}>
+              <option value="">All Branches</option>
+              {branches.map(branch => <option key={branch.id} value={branch.id}>{branch.label}</option>)}
+            </select>
+          )}
         </div>
-        {loading ? <AdminSpin /> : activeTab === 'users' ? renderUsers() : activeTab === 'results' ? renderResults() : renderLogins()}
+        {loading ? <AdminSpin /> : renderUsers(activeTab)}
       </div>
     </div>
   )

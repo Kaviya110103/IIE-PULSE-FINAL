@@ -1,6 +1,6 @@
 import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
-import { loginGuest, loginUser } from "@/services/api";
+import { loginGuest, loginUser, requestPasswordResetOtp, resetStudentPassword } from "@/services/api";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -26,6 +26,14 @@ export default function LoginForm() {
   const [loginId, setLoginId] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [showForgot, setShowForgot] = useState(false);
+  const [forgotStep, setForgotStep] = useState<"email" | "reset">("email");
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotOtp, setForgotOtp] = useState("");
+  const [forgotPassword, setForgotPassword] = useState("");
+  const [forgotConfirm, setForgotConfirm] = useState("");
+  const [forgotMessage, setForgotMessage] = useState("");
+  const [forgotLoading, setForgotLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [loading, setLoading] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -149,6 +157,59 @@ export default function LoginForm() {
     }
   };
 
+  const sendForgotOtp = async () => {
+    const email = forgotEmail.trim().toLowerCase();
+    setForgotMessage("");
+
+    if (!email) {
+      setForgotMessage("Please enter your registered email.");
+      return;
+    }
+
+    setForgotLoading(true);
+    const result = await requestPasswordResetOtp(email);
+    setForgotLoading(false);
+
+    if (!result.success) {
+      setForgotMessage(result.error || "Unable to send OTP.");
+      return;
+    }
+
+    setForgotStep("reset");
+    setForgotMessage("OTP sent to your registered email.");
+  };
+
+  const resetForgotPassword = async () => {
+    setForgotMessage("");
+
+    if (!forgotOtp.trim() || !forgotPassword.trim() || !forgotConfirm.trim()) {
+      setForgotMessage("Please enter OTP and new password.");
+      return;
+    }
+
+    if (forgotPassword !== forgotConfirm) {
+      setForgotMessage("Passwords do not match.");
+      return;
+    }
+
+    setForgotLoading(true);
+    const result = await resetStudentPassword(forgotEmail, forgotOtp, forgotPassword);
+    setForgotLoading(false);
+
+    if (!result.success) {
+      setForgotMessage(result.error || "Unable to reset password.");
+      return;
+    }
+
+    setShowForgot(false);
+    setForgotStep("email");
+    setPassword("");
+    setForgotOtp("");
+    setForgotPassword("");
+    setForgotConfirm("");
+    setErrorMsg("Password reset successful. Login with your new password.");
+  };
+
   return (
     <ThemedView style={styles.container}>
       <KeyboardAvoidingView
@@ -212,6 +273,92 @@ export default function LoginForm() {
               />
             </Pressable>
           </View>
+
+          <Pressable
+            onPress={() => {
+              setShowForgot((value) => !value);
+              setForgotMessage("");
+              setForgotStep("email");
+            }}
+            disabled={loading}
+            style={styles.forgotLink}
+          >
+            <ThemedText style={styles.forgotText}>Forgot password?</ThemedText>
+          </Pressable>
+
+          {showForgot ? (
+            <View style={styles.forgotBox}>
+              <ThemedText style={styles.forgotTitle}>Reset Student Password</ThemedText>
+              {forgotStep === "email" ? (
+                <>
+                  <View style={styles.inputWrapper}>
+                    <Ionicons name="mail-outline" size={18} color="#5523D2" />
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Registered email"
+                      placeholderTextColor="#9CA3AF"
+                      value={forgotEmail}
+                      onChangeText={setForgotEmail}
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      editable={!forgotLoading}
+                    />
+                  </View>
+                  <Pressable style={styles.forgotButton} onPress={sendForgotOtp} disabled={forgotLoading}>
+                    <ThemedText style={styles.forgotButtonText}>
+                      {forgotLoading ? "Sending..." : "Send OTP"}
+                    </ThemedText>
+                  </Pressable>
+                </>
+              ) : (
+                <>
+                  <View style={styles.inputWrapper}>
+                    <Ionicons name="key-outline" size={18} color="#5523D2" />
+                    <TextInput
+                      style={styles.input}
+                      placeholder="OTP"
+                      placeholderTextColor="#9CA3AF"
+                      value={forgotOtp}
+                      onChangeText={setForgotOtp}
+                      keyboardType="number-pad"
+                      editable={!forgotLoading}
+                    />
+                  </View>
+                  <View style={styles.inputWrapper}>
+                    <Ionicons name="lock-closed-outline" size={18} color="#5523D2" />
+                    <TextInput
+                      style={styles.input}
+                      placeholder="New password"
+                      placeholderTextColor="#9CA3AF"
+                      secureTextEntry
+                      value={forgotPassword}
+                      onChangeText={setForgotPassword}
+                      editable={!forgotLoading}
+                    />
+                  </View>
+                  <View style={styles.inputWrapper}>
+                    <Ionicons name="shield-checkmark-outline" size={18} color="#5523D2" />
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Confirm password"
+                      placeholderTextColor="#9CA3AF"
+                      secureTextEntry
+                      value={forgotConfirm}
+                      onChangeText={setForgotConfirm}
+                      editable={!forgotLoading}
+                    />
+                  </View>
+                  <Pressable style={styles.forgotButton} onPress={resetForgotPassword} disabled={forgotLoading}>
+                    <ThemedText style={styles.forgotButtonText}>
+                      {forgotLoading ? "Resetting..." : "Reset Password"}
+                    </ThemedText>
+                  </Pressable>
+                </>
+              )}
+              {forgotMessage ? <ThemedText style={styles.forgotMessage}>{forgotMessage}</ThemedText> : null}
+            </View>
+          ) : null}
 
           {errorMsg ? (
             <ThemedText style={styles.errorText}>{errorMsg}</ThemedText>
@@ -382,6 +529,50 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     marginBottom: 12,
     alignSelf: "flex-start",
+  },
+  forgotLink: {
+    alignSelf: "flex-end",
+    marginTop: -4,
+    marginBottom: 10,
+  },
+  forgotText: {
+    color: "#5523D2",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  forgotBox: {
+    width: "100%",
+    borderRadius: 18,
+    padding: 14,
+    backgroundColor: "#F5F3FF",
+    borderWidth: 1,
+    borderColor: "#DDD6FE",
+    marginBottom: 12,
+  },
+  forgotTitle: {
+    color: "#1F1335",
+    fontSize: 14,
+    fontWeight: "900",
+    marginBottom: 10,
+  },
+  forgotButton: {
+    minHeight: 44,
+    borderRadius: 14,
+    backgroundColor: "#5523D2",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  forgotButtonText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  forgotMessage: {
+    color: "#5523D2",
+    fontSize: 12,
+    fontWeight: "700",
+    marginTop: 10,
+    lineHeight: 17,
   },
   pressableBtn: {
     width: "100%",

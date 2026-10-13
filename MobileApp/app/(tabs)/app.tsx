@@ -5,12 +5,14 @@ import {
   ActivityIndicator,
   Alert,
   BackHandler,
+  Linking,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
+import * as DocumentPicker from "expo-document-picker";
 import api from "@/services/api";
 
 type QuizQuestion = {
@@ -37,6 +39,10 @@ type QuizItem = {
   user_attempts?: number;
   best_score?: number | null;
   questions: QuizQuestion[];
+  test_type?: string;
+  creation_method?: string;
+  instructions?: string;
+  question_paper_url?: string | null;
 };
 
 type QuizResult = {
@@ -68,6 +74,7 @@ export default function App() {
   const [current, setCurrent] = useState(0);
   const [timeLeft, setTimeLeft] = useState(0);
   const [resolvedMode, setResolvedMode] = useState<QuizMode | null>(null);
+  const [submissionFile, setSubmissionFile] = useState<any>(null);
 
   const questions = quiz?.questions || [];
   const activeMode: QuizMode = resolvedMode ?? (isAssignedTestMode ? "assigned-test" : isPracticeMode ? "practice" : "excel");
@@ -96,12 +103,12 @@ export default function App() {
       return;
     }
 
-    router.replace("/quizzes" as any);
+      router.replace("/quizzes" as any);
   };
 
   const loadQuiz = async () => {
     if (!quizId) {
-      Alert.alert("Error", "Quiz id not found.");
+      Alert.alert("Error", "Test id not found.");
       returnToSource();
       return;
     }
@@ -116,9 +123,14 @@ export default function App() {
         selectedQuiz = {
           id: Number(response.data?.test_id || quizId),
           title: response.data?.test_title || "Upcoming Test",
+          description: response.data?.test_description || "",
+          test_type: response.data?.test_type,
+          creation_method: response.data?.creation_method,
+          instructions: response.data?.instructions,
+          question_paper_url: response.data?.question_paper_url || null,
           total_questions: response.data?.total_questions || 0,
           total_marks: response.data?.total_questions || 0,
-          duration_minutes: 0,
+          duration_minutes: response.data?.duration_minutes || 0,
           passing_marks: 50,
           questions: (response.data?.questions || []).map((question: any) => ({
             id: question.id,
@@ -179,11 +191,12 @@ export default function App() {
       setCurrent(0);
       setAnswers({});
       setResult(null);
+      setSubmissionFile(null);
     } catch (error: any) {
       Alert.alert(
         "Error",
         error?.response?.data?.error ||
-          `Failed to load ${isAssignedTestMode ? "test" : isPracticeMode ? "practice test" : "quiz"}.`
+          `Failed to load ${isAssignedTestMode ? "test" : isPracticeMode ? "skillset" : "quiz"}.`
       );
     } finally {
       setLoading(false);
@@ -225,6 +238,11 @@ export default function App() {
 
   const handleSubmit = async () => {
     if (!quiz) return;
+
+    if (isAssignedTestAttempt && (quiz.creation_method === "upload" || quiz.question_paper_url) && questions.length === 0) {
+      submitUploadedTest();
+      return;
+    }
 
     const answeredCount = Object.keys(answers).length;
     if (answeredCount < questions.length) {
@@ -279,8 +297,53 @@ export default function App() {
       Alert.alert(
         "Error",
         error?.response?.data?.error ||
-          `Failed to submit ${isAssignedTestAttempt ? "test" : isPracticeAttempt ? "practice test" : "quiz"}.`
+          `Failed to submit ${isAssignedTestAttempt ? "test" : isPracticeAttempt ? "skillset" : "quiz"}.`
       );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const pickSubmissionFile = async () => {
+    try {
+      const picked = await DocumentPicker.getDocumentAsync({
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+      if (picked.canceled) return;
+      setSubmissionFile(picked.assets?.[0] || null);
+    } catch (error) {
+      Alert.alert("File selection failed", "Unable to select this file. Please try again.");
+    }
+  };
+
+  const submitUploadedTest = async () => {
+    if (!quiz) return;
+    if (!submissionFile) {
+      Alert.alert("Upload required", "Please choose your answer file before submitting the test.");
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      const formData = new FormData();
+      formData.append("submission_file", {
+        uri: submissionFile.uri,
+        name: submissionFile.name || "answer-file",
+        type: submissionFile.mimeType || "application/octet-stream",
+      } as any);
+
+      const response = await api.post(`/tests/${quiz.id}/take/`, formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+
+      setResult({
+        ...response.data,
+        total_marks: response.data?.total_marks ?? response.data?.total_questions ?? 0,
+        correct_count: 0,
+      });
+    } catch (error: any) {
+      Alert.alert("Error", error?.response?.data?.error || "Failed to submit test.");
     } finally {
       setSubmitting(false);
     }
@@ -338,7 +401,7 @@ export default function App() {
     return (
       <View style={styles.loaderWrap}>
         <ActivityIndicator size="large" color="#5523D2" />
-        <Text style={styles.loaderText}>Loading quiz...</Text>
+        <Text style={styles.loaderText}>Loading test...</Text>
       </View>
     );
   }
@@ -347,7 +410,7 @@ export default function App() {
     return (
       <View style={styles.loaderWrap}>
         <Text style={styles.loaderText}>
-          {isAssignedTestAttempt ? "Test" : isPracticeAttempt ? "Practice test" : "Quiz"} not found.
+          {isAssignedTestAttempt ? "Test" : isPracticeAttempt ? "Skillset" : "Quiz"} not found.
         </Text>
       </View>
     );
@@ -363,7 +426,7 @@ export default function App() {
 
       <View style={styles.summaryRow}>
         <Text style={styles.summaryText}>
-          {isAssignedTestAttempt ? "Test" : isPracticeAttempt ? "Practice" : "Quiz"}: {current + 1}/{questions.length || 0}
+          {isAssignedTestAttempt ? "Test" : isPracticeAttempt ? "Skillset" : "Quiz"}: {current + 1}/{questions.length || 0}
         </Text>
         {(quiz.duration_minutes || 0) > 0 ? (
           <Text style={[styles.summaryText, timeLeft <= 60 && styles.timerDanger]}>
@@ -385,7 +448,26 @@ export default function App() {
         />
       </View>
 
-      {questions.length === 0 ? (
+      {isAssignedTestAttempt && (quiz.creation_method === "upload" || quiz.question_paper_url) && questions.length === 0 ? (
+        <View style={styles.card}>
+          <Text style={styles.question}>Question Paper Test</Text>
+          {!!quiz.instructions && <Text style={styles.description}>{quiz.instructions}</Text>}
+          {!!quiz.question_paper_url && (
+            <TouchableOpacity
+              style={styles.paperBtn}
+              onPress={() => Linking.openURL(quiz.question_paper_url || "").catch(() => Alert.alert("Unable to open", "Could not open the question paper."))}
+            >
+              <Text style={styles.paperBtnText}>View Test PDF</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity style={styles.uploadBtn} onPress={pickSubmissionFile}>
+            <Text style={styles.uploadBtnText}>
+              {submissionFile?.name ? `Selected: ${submissionFile.name}` : "Choose Answer File"}
+            </Text>
+          </TouchableOpacity>
+          <Text style={styles.uploadHint}>For folder submissions, compress the folder as ZIP and upload it here.</Text>
+        </View>
+      ) : questions.length === 0 ? (
         <View style={styles.card}>
           <Text style={styles.question}>No questions available for this quiz.</Text>
         </View>
@@ -503,7 +585,7 @@ export default function App() {
         <TouchableOpacity
           style={[styles.submitBtn, submitting && { opacity: 0.7 }]}
           onPress={handleSubmit}
-          disabled={submitting || questions.length === 0}
+          disabled={submitting || (questions.length === 0 && !(isAssignedTestAttempt && (quiz.creation_method === "upload" || quiz.question_paper_url)))}
         >
           <Text style={styles.submitText}>
             {submitting ? "Submitting..." : isAssignedTestAttempt || isPracticeAttempt ? "Submit Test" : "Submit Quiz"}
@@ -511,14 +593,23 @@ export default function App() {
         </TouchableOpacity>
       ) : (
         <>
-          <Text style={styles.scoreText}>
-            Your Score: {result.score} / {result.total_marks}
-          </Text>
-          <Text style={styles.resultText}>
-            Percentage: {result.percentage}% | {result.is_passed ? "Passed" : "Failed"}
-          </Text>
+          {isAssignedTestAttempt && (quiz.creation_method === "upload" || quiz.question_paper_url) && questions.length === 0 ? (
+            <>
+              <Text style={styles.scoreText}>Test Submitted</Text>
+              <Text style={styles.resultText}>Your answer file was submitted. Your mentor will update the mark after review.</Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.scoreText}>
+                Your Score: {result.score} / {result.total_marks}
+              </Text>
+              <Text style={styles.resultText}>
+                Percentage: {result.percentage}% | {result.is_passed ? "Passed" : "Failed"}
+              </Text>
+            </>
+          )}
 
-          <View style={styles.reviewSection}>
+          {questions.length > 0 && <View style={styles.reviewSection}>
             <Text style={styles.reviewTitle}>Answer Review</Text>
             <Text style={styles.reviewSubtitle}>
               Check every question with your answer and the correct answer.
@@ -566,7 +657,7 @@ export default function App() {
                 </View>
               );
             })}
-          </View>
+          </View>}
 
           {isPracticeAttempt ? (
             <TouchableOpacity style={styles.restartBtn} onPress={handleRestart}>
@@ -574,7 +665,7 @@ export default function App() {
             </TouchableOpacity>
           ) : (
             <TouchableOpacity style={styles.backBtn} onPress={returnToSource}>
-              <Text style={styles.backText}>Back to Quizzes</Text>
+              <Text style={styles.backText}>Back to Tests</Text>
             </TouchableOpacity>
           )}
         </>
@@ -749,6 +840,41 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
     marginTop: 3,
+  },
+  paperBtn: {
+    backgroundColor: "#5523D2",
+    borderRadius: 16,
+    paddingVertical: 14,
+    alignItems: "center",
+    marginTop: 16,
+  },
+  paperBtnText: {
+    color: "#FFFFFF",
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  uploadBtn: {
+    backgroundColor: "#F8F5FF",
+    borderWidth: 1,
+    borderColor: "#C4B5FD",
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    alignItems: "center",
+    marginTop: 12,
+  },
+  uploadBtnText: {
+    color: "#4C1D95",
+    fontSize: 15,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  uploadHint: {
+    color: "#667085",
+    fontSize: 12,
+    fontWeight: "700",
+    textAlign: "center",
+    marginTop: 10,
   },
   navRow: {
     flexDirection: "row",

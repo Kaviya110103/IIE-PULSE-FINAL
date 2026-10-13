@@ -414,6 +414,11 @@ class StudentLoginRatingEvent ( models.Model ) :
 
 
 class PublicUser(models.Model):
+    STATUS_CHOICES = [
+        ('new', 'New'),
+        ('walked_in', 'Walked In'),
+    ]
+
     name = models.CharField(max_length=120)
     email = models.EmailField(blank=True, null=True)
     mobile = models.CharField(max_length=20, blank=True, null=True)
@@ -423,6 +428,9 @@ class PublicUser(models.Model):
     state = models.CharField(max_length=100, blank=True, null=True)
     username = models.CharField(max_length=120, unique=True)
     password = models.CharField(max_length=255)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='new')
+    status_updated_at = models.DateTimeField(null=True, blank=True)
+    remark = models.TextField(blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -635,6 +643,11 @@ class TestResult ( models.Model ) :
     score = models.IntegerField ( )
     total_questions = models.IntegerField ( )
     percentage = models.FloatField ( )
+    submission_file = models.FileField ( upload_to = 'technical_test_submissions/' , blank = True , null = True )
+    manual_mark = models.FloatField ( blank = True , null = True )
+    max_marks = models.FloatField ( blank = True , null = True )
+    evaluated_by = models.ForeignKey ( Employee , on_delete = models.SET_NULL , blank = True , null = True , related_name = 'evaluated_test_results' )
+    evaluated_at = models.DateTimeField ( blank = True , null = True )
     submitted_at = models.DateTimeField ( auto_now_add = True )
     
     class Meta :
@@ -1128,7 +1141,15 @@ class StudentChallengeDay ( models.Model ) :
     ]
 
     challenge = models.ForeignKey ( StudentChallenge , on_delete = models.CASCADE , related_name = 'days' )
+    source_session = models.ForeignKey (
+            CourseSession ,
+            on_delete = models.CASCADE ,
+            related_name = 'challenge_attempts' ,
+            null = True ,
+            blank = True ,
+    )
     day_number = models.PositiveIntegerField ( )
+    attempt_number = models.PositiveIntegerField ( default = 1 )
     challenge_date = models.DateField ( )
     status = models.CharField ( max_length = 20 , choices = STATUS_CHOICES , default = 'assigned' )
     score = models.PositiveIntegerField ( default = 0 )
@@ -1144,6 +1165,7 @@ class StudentChallengeDay ( models.Model ) :
         indexes = [
                 models.Index ( fields = [ 'challenge' , 'challenge_date' ] ) ,
                 models.Index ( fields = [ 'challenge_date' , 'status' ] ) ,
+                models.Index ( fields = [ 'challenge' , 'source_session' , 'attempt_number' ] ) ,
         ]
 
     def __str__ ( self ) :
@@ -1873,6 +1895,7 @@ class CourseType(models.Model):
 class GalleryItem(models.Model):
     """Event photo uploaded by admin for the gallery."""
     title = models.CharField(max_length=200)
+    folder_name = models.CharField(max_length=200, blank=True, default='General')
     image = models.ImageField(
         upload_to='gallery/',
         validators=[FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png', 'webp'])]
@@ -1888,9 +1911,30 @@ class GalleryItem(models.Model):
         return self.title
 
 
+class AwardItem(models.Model):
+    """Award photo uploaded by admin or counselor for public viewing."""
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True, default='')
+    folder_name = models.CharField(max_length=200, blank=True, default='General')
+    image = models.ImageField(
+        upload_to='awards/',
+        validators=[FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png', 'webp'])]
+    )
+    uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'award_items'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.title
+
+
 class VlogItem(models.Model):
     """Video uploaded by admin for vlogs."""
     title = models.CharField(max_length=200)
+    folder_name = models.CharField(max_length=200, blank=True, default='General')
     video = models.FileField(
         upload_to='vlogs/',
         validators=[FileExtensionValidator(allowed_extensions=['mp4', 'mov', 'webm', 'mkv'])]
@@ -1955,6 +1999,10 @@ class CalendarEvent(models.Model):
 class Referral(models.Model):
     """Referral submitted from the public mobile app."""
     name = models.CharField(max_length=120)
+    branch = models.CharField(max_length=120, blank=True)
+    course = models.CharField(max_length=160, blank=True)
+    trainer_name = models.CharField(max_length=160, blank=True)
+    referral_student_name = models.CharField(max_length=160, blank=True)
     mobile = models.CharField(max_length=20)
     created_at = models.DateTimeField(auto_now_add=True)
 

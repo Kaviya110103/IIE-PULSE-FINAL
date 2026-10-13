@@ -152,7 +152,7 @@ function AdminNav() {
         <SubLink to="/admin/employee-tracking" label="Employee Tracking" />
       </NavGroup>
       <NavItem to="/admin/gallery" icon="fa-images" label="Gallery" />
-      <NavItem to="/admin/vlogs" icon="fa-video" label="Vlogs" />
+      <NavItem to="/admin/awards" icon="fa-award" label="Awards" />
       <NavItem to="/admin/news" icon="fa-newspaper" label="News" />
       <NavItem to="/admin/calendar" icon="fa-calendar-alt" label="Calendar" />
       <NavItem to="/admin/referrals" icon="fa-user-plus" label="Referrals" />
@@ -191,6 +191,8 @@ function CounselorNav() {
       </NavGroup>
       <NavItem to="/counselor/admin-announcements" icon="fa-bullhorn" label="Admin Announcements" />
       <NavItem to="/counselor/announcements" icon="fa-pen-nib" label="My Announcements" />
+      <NavItem to="/counselor/awards" icon="fa-award" label="Awards" />
+      <NavItem to="/counselor/public-users" icon="fa-users-viewfinder" label="Public Users" />
       <NavGroup icon="fa-calendar-check" label="Leave Request">
         <SubLink to="/counselor/leave/apply" label="Apply Leave" />
         {/* <SubLink to="/counselor/leave" label="Leave Status" /> */}
@@ -229,12 +231,9 @@ function EmployeeNav() {
       <NavItem to="/employee/announcements" icon="fa-bullhorn" label="Admin Announcements" />
       <NavItem to="/employee/branch-announcements" icon="fa-map-marker-alt" label="Branch Announcements" />
       <NavItem to="/employee/monitoring/students" icon="fa-user-clock" label="Student Login Records" />
+      <NavItem to="/employee/daily-activity-results" icon="fa-bolt" label="Daily Activity Result" />
 
-      <NavGroup icon="fa-book" label="Materials">
-        <SubLink to="/employee/materials/upload" label="Upload Materials" />
-        <SubLink to="/employee/material-library" label="Material Library" />
-        {/* <SubLink to="/employee/materials" label="View Materials" /> */}
-      </NavGroup>
+      <NavItem to="/employee/material-library" icon="fa-book" label="Materials" />
       <NavGroup icon="fa-pencil-alt" label="Technical Tests">
         <SubLink to="/employee/tests/create" label="Create Technical Test" />
         <SubLink to="/employee/tests" label="Manage Technical Tests" />
@@ -266,10 +265,12 @@ function StudentNav() {
     <>
       <NavItem to="/student" icon="fa-home" label="Dashboard" />
       <SectionLabel label="My Learning" />
+      <NavItem to="/student/profile" icon="fa-user-circle" label="Profile" />
       <NavItem to="/student/announcements" icon="fa-bullhorn" label="Announcements" />
       <NavItem to="/student/attendance" icon="fa-user-check" label="Attendance" />
+      <NavItem to="/student/desk" icon="fa-desktop" label="Student Desk" />
       <NavItem to="/student/batches" icon="fa-layer-group" label="My Batches" />
-      <NavItem to="/student/challenge" icon="fa-bolt" label="15-Day Challenge" />
+      <NavItem to="/student/challenge" icon="fa-bolt" label="Daily Activity" />
       <NavGroup icon="fa-flask" label="Tests & Quizzes">
         <SubLink to="/student/tests" label="Upcoming Tests" />
         <SubLink to="/student/quiz" label="Excel Quizzes" />

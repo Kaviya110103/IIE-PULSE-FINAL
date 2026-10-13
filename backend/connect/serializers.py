@@ -10,7 +10,7 @@ from .models import (
     DoubtResponse, Announcement, AnnouncementView, CounselorLeaveRequest,
     CounselorSupportRequest, Quiz, QuizQuestion, QuizAttempt, QuizAnswer,
     CompletedStudent, SessionCompletionRequest, TrainerSessionReport, TestResult,
-    GalleryItem, VlogItem, NewsItem, CalendarEvent, Referral, CounselorAnnouncement,
+    GalleryItem, AwardItem, VlogItem, NewsItem, CalendarEvent, Referral, CounselorAnnouncement,
     ReassignedStudentRecord, ChallengeQuestionPool, StudentChallenge,
     StudentChallengeAchievement, StudentChallengeDay, StudentChallengeDayQuestion
 )
@@ -56,6 +56,15 @@ class GalleryItemSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = GalleryItem
+        fields = '__all__'
+        read_only_fields = ['uploaded_by', 'created_at']
+
+
+class AwardItemSerializer(serializers.ModelSerializer):
+    uploaded_by_name = serializers.CharField(source='uploaded_by.username', read_only=True)
+
+    class Meta:
+        model = AwardItem
         fields = '__all__'
         read_only_fields = ['uploaded_by', 'created_at']
 
@@ -120,6 +129,12 @@ class ReferralSerializer(serializers.ModelSerializer):
         if len(cleaned) < 10 or len(cleaned) > 15:
             raise serializers.ValidationError('Enter a valid mobile number.')
         return cleaned
+
+    def validate(self, attrs):
+        for field in ('branch', 'course', 'trainer_name', 'referral_student_name'):
+            if field in attrs and attrs[field]:
+                attrs[field] = strip_unsupported_mysql_chars(str(attrs[field])).strip()
+        return attrs
 
 
 class EmployeeSerializer(serializers.ModelSerializer):
@@ -524,6 +539,7 @@ class AssignedTestSerializer(serializers.ModelSerializer):
 
 class ChallengeQuestionSerializer(serializers.ModelSerializer):
     options = serializers.SerializerMethodField()
+    question_text = serializers.SerializerMethodField()
     source_session_number = serializers.IntegerField(source='question.source_session.session_number', read_only=True)
     source_session_title = serializers.CharField(source='question.source_session.title', read_only=True)
 
@@ -534,7 +550,21 @@ class ChallengeQuestionSerializer(serializers.ModelSerializer):
             'source_session_title', 'question_text', 'options',
         ]
 
-    question_text = serializers.CharField(source='question.question_text', read_only=True)
+    def get_question_text(self, obj):
+        text = str(obj.question.question_text or '').strip()
+        text = re.sub(
+            r'^In\s+Session\s+\d+\s*:\s*.*?,\s*(which\s+concept\s+is\s+part\s+of\s+the\s+completed\s+session\s+content\?\s*(?:\(\d+\))?)$',
+            lambda match: match.group(1).replace('which', 'Which', 1),
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        text = re.sub(
+            r'^In\s+[^,]{1,240},\s*(which\s+concept\s+is\s+part\s+of\s+the\s+completed\s+session\s+content\?\s*(?:\(\d+\))?)$',
+            lambda match: match.group(1).replace('which', 'Which', 1),
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        return re.sub(r'\s+', ' ', text).strip()
 
     def get_options(self, obj):
         question = obj.question
@@ -577,7 +607,8 @@ class StudentChallengeSummarySerializer(serializers.ModelSerializer):
         ]
 
     def get_progress_percentage(self, obj):
-        return round((obj.completed_days / 15) * 100, 2) if obj.completed_days else 0
+        total_sessions = self.get_total_sessions(obj)
+        return round((obj.completed_days / total_sessions) * 100, 2) if total_sessions else 0
 
     def _session_counts(self, obj):
         if not hasattr(obj, '_student_challenge_session_counts'):
@@ -627,8 +658,7 @@ class StudentChallengeSummarySerializer(serializers.ModelSerializer):
             return 1
         if latest_day.status != 'completed':
             return latest_day.day_number
-        next_day = latest_day.day_number + 1
-        return next_day if next_day <= 15 else None
+        return latest_day.day_number + 1
 
     def get_today_available(self, obj):
         latest_day = self._latest_day(obj)
@@ -697,25 +727,34 @@ class StudentChallengeSummarySerializer(serializers.ModelSerializer):
 
     def get_quick_completion(self, obj):
         days_taken = self.get_calendar_days_taken(obj)
-        return bool(obj.status == 'completed' and days_taken and days_taken < 15)
+        return bool(obj.status == 'completed' and days_taken and obj.completed_days and days_taken < obj.completed_days)
 
 
 class StudentChallengeDaySerializer(serializers.ModelSerializer):
     questions = ChallengeQuestionSerializer(source='day_questions', many=True, read_only=True)
+    source_session_number = serializers.IntegerField(source='source_session.session_number', read_only=True)
+    source_session_title = serializers.CharField(source='source_session.title', read_only=True)
 
     class Meta:
         model = StudentChallengeDay
         fields = [
-            'id', 'day_number', 'challenge_date', 'status', 'score',
+            'id', 'day_number', 'attempt_number', 'source_session',
+            'source_session_number', 'source_session_title',
+            'challenge_date', 'status', 'score',
             'total_questions', 'started_at', 'completed_at', 'questions',
         ]
 
 
 class StudentChallengeHistorySerializer(serializers.ModelSerializer):
+    source_session_number = serializers.IntegerField(source='source_session.session_number', read_only=True)
+    source_session_title = serializers.CharField(source='source_session.title', read_only=True)
+
     class Meta:
         model = StudentChallengeDay
         fields = [
-            'id', 'day_number', 'challenge_date', 'status', 'score',
+            'id', 'day_number', 'attempt_number', 'source_session',
+            'source_session_number', 'source_session_title',
+            'challenge_date', 'status', 'score',
             'total_questions', 'started_at', 'completed_at',
         ]
 

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import api from '../../api/client'
 import toast from 'react-hot-toast'
 import { useNavigate } from 'react-router-dom'  // ← ADD THIS
+import heroStudentsImage from '../../assets/hero-students.png'
 
 // ── Design tokens ─────────────────────────────────────────────────────────
 const T = {
@@ -29,6 +30,56 @@ const attendanceSessionText = (record) => {
   if (record.session_number) return `Session ${record.session_number}: ${record.session_title || ''}`
   return '-'
 }
+
+const IIE_PROUD_SLIDES = [
+  {
+    kicker: 'IIE Pulse',
+    title: 'Welcome',
+    highlight: 'IIE',
+    subtitle: 'Your success starts here.',
+    icon: 'fa-graduation-cap',
+    color: '#5523D2',
+    softColor: '#EEE7FF',
+    showJoin: true,
+    showHeroImage: true,
+  },
+  {
+    kicker: 'IIE Prouds',
+    title: 'ISO Certified',
+    subtitle: 'Quality You Can Trust',
+    note: 'ISO 9001:2015 Certified',
+    icon: 'fa-certificate',
+    color: '#0EA5E9',
+    softColor: '#E0F2FE',
+  },
+  {
+    kicker: 'IIE Prouds',
+    title: 'Career Help',
+    subtitle: 'Skills to Jobs',
+    note: 'Train • Guide • Place',
+    icon: 'fa-briefcase',
+    color: '#16A34A',
+    softColor: '#DCFCE7',
+  },
+  {
+    kicker: 'IIE Prouds',
+    title: '60K+',
+    subtitle: 'Learners',
+    note: 'Learn • Grow • Win',
+    icon: 'fa-users',
+    color: '#F59E0B',
+    softColor: '#FEF3C7',
+  },
+  {
+    kicker: 'IIE Prouds',
+    title: 'Our Vision',
+    subtitle: 'Building Skills for a Better Future',
+    note: 'Learn. Grow. Succeed.',
+    icon: 'fa-rocket',
+    color: '#EC4899',
+    softColor: '#FCE7F3',
+  },
+]
 
 // ── Global Styles ─────────────────────────────────────────────────────────
 export function StudentStyles() {
@@ -243,6 +294,190 @@ export function StudentStyles() {
         font-size: 13px;
         color: ${T.slate};
         font-weight: 500;
+      }
+
+      .student-proud-card {
+        position: relative;
+        overflow: hidden;
+        border: 1px solid rgba(85,35,210,.12);
+        background:
+          radial-gradient(circle at 88% 18%, rgba(196,181,253,.22), transparent 28%),
+          linear-gradient(135deg, #1f1335 0%, #1f1335 62%, #2b1850 100%);
+        color: #fff;
+        height: 286px;
+      }
+      .student-proud-card::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,.08), transparent);
+        transform: translateX(-100%);
+        animation: studentProudSweep 3.6s ease-in-out infinite;
+        pointer-events: none;
+      }
+      .student-proud-slide {
+        position: relative;
+        z-index: 1;
+        height: 286px;
+        padding: 34px 42px;
+        box-sizing: border-box;
+        display: grid;
+        grid-template-columns: minmax(0, 60%) minmax(210px, 1fr);
+        align-items: center;
+        gap: 22px;
+        animation: studentProudIn .42s ease both;
+      }
+      .student-proud-kicker {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 10px;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 900;
+        letter-spacing: .04em;
+        text-transform: uppercase;
+      }
+      .student-proud-title {
+        margin: 12px 0 8px;
+        color: #fff;
+        font-family: 'DM Sans', sans-serif;
+        font-size: clamp(34px, 4.3vw, 60px);
+        font-weight: 900;
+        line-height: 1.06;
+      }
+      .student-proud-title span {
+        color: #c4b5fd;
+      }
+      .student-proud-subtitle {
+        margin: 0;
+        max-width: 420px;
+        color: #ddd6fe;
+        font-size: 20px;
+        font-weight: 900;
+        line-height: 1.42;
+      }
+      .student-proud-note {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin: 6px 0 0;
+        font-size: 14px;
+        font-weight: 900;
+      }
+      .student-proud-lines {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: 18px 0;
+      }
+      .student-proud-line-long,
+      .student-proud-line-short {
+        display: block;
+        height: 6px;
+        border-radius: 999px;
+      }
+      .student-proud-line-long {
+        width: 92px;
+      }
+      .student-proud-line-short {
+        width: 54px;
+      }
+      .student-proud-action {
+        width: 188px;
+        border: 0;
+        border-radius: 18px;
+        padding: 13px 10px 13px 18px;
+        background: #6423d2;
+        color: #fff;
+        font-weight: 900;
+        display: inline-flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        box-shadow: 0 16px 34px rgba(100,35,210,.28);
+      }
+      .student-proud-action span {
+        width: 42px;
+        height: 42px;
+        border-radius: 999px;
+        background: #fff;
+        color: #5523d2;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .student-proud-badge {
+        display: inline-flex;
+        width: fit-content;
+        border-radius: 14px;
+        padding: 10px 16px;
+        color: #fff;
+        font-size: 14px;
+        font-weight: 900;
+      }
+      .student-proud-visual {
+        position: relative;
+        height: 210px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .student-proud-hero-img {
+        width: 100%;
+        max-width: 260px;
+        height: 100%;
+        object-fit: contain;
+      }
+      .student-proud-art-card {
+        position: relative;
+        width: 172px;
+        height: 172px;
+        border-radius: 36px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid rgba(255,255,255,.75);
+        box-shadow: 0 18px 38px rgba(0,0,0,.18);
+        animation: studentProudFloat 2.4s ease-in-out infinite;
+      }
+      .student-proud-art-halo {
+        position: absolute;
+        width: 118px;
+        height: 118px;
+        border-radius: 999px;
+        border: 2px solid currentColor;
+        opacity: .22;
+      }
+      .student-proud-art-icon {
+        position: relative;
+        width: 78px;
+        height: 78px;
+        border-radius: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+        font-size: 34px;
+      }
+      .student-proud-doll-row {
+        position: absolute;
+        bottom: 16px;
+        display: flex;
+        gap: 8px;
+      }
+      .student-proud-doll,
+      .student-proud-doll-small {
+        width: 18px;
+        height: 18px;
+        border-radius: 999px;
+        opacity: .58;
+      }
+      .student-proud-doll-small {
+        width: 13px;
+        height: 13px;
+        margin-top: 5px;
+        opacity: .38;
       }
 
       .student-live-news-card {
@@ -509,6 +744,142 @@ export function StudentStyles() {
         width: 23px;
         background: ${T.teal};
       }
+      .student-birthday-card {
+        position: relative;
+        overflow: hidden;
+        min-height: 234px;
+        border: 1px solid rgba(244,169,64,.28);
+        background:
+          radial-gradient(circle at 12% 18%, rgba(244,169,64,.28), transparent 24%),
+          radial-gradient(circle at 86% 8%, rgba(232,72,85,.22), transparent 26%),
+          linear-gradient(135deg, #32105f, #6423d2 52%, #0f1b2d);
+        color: #fff;
+        animation: studentBirthdayGlow 3.4s ease-in-out infinite;
+      }
+      .student-birthday-card::before,
+      .student-birthday-card::after {
+        content: '';
+        position: absolute;
+        border-radius: 999px;
+        background: rgba(255,255,255,.12);
+        filter: blur(1px);
+        animation: studentBirthdayFloat 5.2s ease-in-out infinite;
+      }
+      .student-birthday-card::before {
+        width: 110px;
+        height: 110px;
+        right: 8%;
+        top: 18%;
+      }
+      .student-birthday-card::after {
+        width: 72px;
+        height: 72px;
+        left: 8%;
+        bottom: 12%;
+        animation-delay: -1.8s;
+      }
+      .student-birthday-body {
+        position: relative;
+        z-index: 1;
+        min-height: 234px;
+        padding: 28px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 190px;
+        align-items: center;
+        gap: 20px;
+      }
+      .student-birthday-kicker {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        width: fit-content;
+        padding: 7px 12px;
+        border-radius: 999px;
+        background: rgba(255,255,255,.14);
+        color: #fde68a;
+        font-size: 11px;
+        font-weight: 900;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+      }
+      .student-birthday-title {
+        margin: 14px 0 8px;
+        color: #fff;
+        font-family: 'Playfair Display', serif;
+        font-size: clamp(30px, 4.4vw, 54px);
+        line-height: 1.02;
+      }
+      .student-birthday-title span {
+        color: #fde68a;
+      }
+      .student-birthday-copy {
+        margin: 0;
+        max-width: 560px;
+        color: rgba(255,255,255,.82);
+        font-size: 15px;
+        line-height: 1.55;
+      }
+      .student-birthday-art {
+        position: relative;
+        min-height: 172px;
+      }
+      .student-birthday-cake {
+        position: absolute;
+        left: 50%;
+        bottom: 8px;
+        transform: translateX(-50%);
+        font-size: 84px;
+        filter: drop-shadow(0 16px 22px rgba(0,0,0,.28));
+        animation: studentBirthdayCake 2.6s ease-in-out infinite;
+      }
+      .student-birthday-balloon {
+        position: absolute;
+        font-size: 42px;
+        animation: studentBirthdayBalloon 4.4s ease-in-out infinite;
+      }
+      .student-birthday-balloon.one { left: 8px; top: 8px; }
+      .student-birthday-balloon.two { right: 8px; top: 24px; animation-delay: -1.2s; }
+      .student-birthday-confetti {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 2;
+      }
+      .student-birthday-confetti span {
+        position: absolute;
+        width: 8px;
+        height: 14px;
+        border-radius: 4px;
+        background: #fde68a;
+        animation: studentBirthdayConfetti 2.15s ease-in-out infinite;
+      }
+      .student-birthday-confetti span:nth-child(1) { left: 11%; top: 18%; background: #2ec4b6; }
+      .student-birthday-confetti span:nth-child(2) { left: 29%; top: 10%; animation-delay: -.4s; }
+      .student-birthday-confetti span:nth-child(3) { left: 48%; top: 20%; background: #e84855; animation-delay: -.9s; }
+      .student-birthday-confetti span:nth-child(4) { left: 66%; top: 12%; background: #fff; animation-delay: -1.3s; }
+      .student-birthday-confetti span:nth-child(5) { left: 83%; top: 25%; background: #2ec4b6; animation-delay: -1.7s; }
+      .student-birthday-confetti span:nth-child(6) { left: 17%; top: 2%; width: 6px; height: 6px; background: #fff; animation-delay: -.15s; }
+      .student-birthday-confetti span:nth-child(7) { left: 38%; top: 4%; width: 7px; height: 7px; background: #f4a940; animation-delay: -.75s; }
+      .student-birthday-confetti span:nth-child(8) { left: 58%; top: 1%; width: 6px; height: 6px; background: #2ec4b6; animation-delay: -1.05s; }
+      .student-birthday-confetti span:nth-child(9) { left: 74%; top: 6%; width: 7px; height: 7px; background: #e84855; animation-delay: -1.45s; }
+      .student-birthday-confetti span:nth-child(10) { left: 91%; top: 14%; width: 6px; height: 6px; background: #fde68a; animation-delay: -1.9s; }
+      .student-birthday-burst {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+      }
+      .student-birthday-burst span {
+        position: absolute;
+        width: 16px;
+        height: 16px;
+        border-radius: 999px;
+        border: 2px solid rgba(253,230,138,.9);
+        animation: studentBirthdayBurst 1.85s ease-out infinite;
+      }
+      .student-birthday-burst span:nth-child(1) { right: 16%; top: 20%; }
+      .student-birthday-burst span:nth-child(2) { left: 42%; top: 18%; border-color: rgba(46,196,182,.9); animation-delay: -.65s; }
+      .student-birthday-burst span:nth-child(3) { right: 30%; bottom: 22%; border-color: rgba(255,255,255,.75); animation-delay: -1.2s; }
       @keyframes studentNewsSweep {
         0%, 42% { transform: translateX(-40%) rotate(18deg); opacity: 0; }
         52% { opacity: 1; }
@@ -540,7 +911,91 @@ export function StudentStyles() {
         0% { background-position: 0% 50%; }
         100% { background-position: 220% 50%; }
       }
+      @keyframes studentProudIn {
+        0% { opacity: 0; transform: translateX(26px) scale(.985); }
+        100% { opacity: 1; transform: translateX(0) scale(1); }
+      }
+      @keyframes studentProudSweep {
+        0%, 45% { transform: translateX(-100%); opacity: 0; }
+        60% { opacity: 1; }
+        100% { transform: translateX(100%); opacity: 0; }
+      }
+      @keyframes studentProudFloat {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-10px); }
+      }
+      @keyframes studentProudOrbit {
+        0% { transform: rotate(0deg) scale(1); }
+        100% { transform: rotate(360deg) scale(1); }
+      }
+      @keyframes studentBirthdayFloat {
+        0%, 100% { transform: translateY(0) scale(1); opacity: .7; }
+        50% { transform: translateY(-18px) scale(1.04); opacity: 1; }
+      }
+      @keyframes studentBirthdayGlow {
+        0%, 100% { box-shadow: 0 12px 34px rgba(85,35,210,.22); }
+        50% { box-shadow: 0 18px 48px rgba(244,169,64,.22); }
+      }
+      @keyframes studentBirthdayCake {
+        0%, 100% { transform: translateX(-50%) translateY(0) rotate(-2deg) scale(1); }
+        45% { transform: translateX(-50%) translateY(-11px) rotate(2deg) scale(1.04); }
+        58% { transform: translateX(-50%) translateY(-3px) rotate(-1deg) scale(.98); }
+      }
+      @keyframes studentBirthdayBalloon {
+        0%, 100% { transform: translateY(0) rotate(-5deg) scale(1); }
+        35% { transform: translateY(-22px) rotate(6deg) scale(1.05); }
+        70% { transform: translateY(-9px) rotate(-3deg) scale(.98); }
+      }
+      @keyframes studentBirthdayConfetti {
+        0% { transform: translateY(-18px) rotate(0deg) scale(.8); opacity: 0; }
+        45% { opacity: 1; }
+        100% { transform: translateY(118px) rotate(230deg) scale(1.1); opacity: 0; }
+      }
+      @keyframes studentBirthdayBurst {
+        0% { transform: scale(.3); opacity: 0; }
+        22% { opacity: 1; }
+        100% { transform: scale(5.8); opacity: 0; }
+      }
       @media (max-width: 640px) {
+        .student-proud-slide {
+          grid-template-columns: minmax(0, 1fr);
+          height: 330px;
+          padding: 22px;
+          gap: 12px;
+          text-align: center;
+        }
+        .student-proud-card {
+          height: 330px;
+        }
+        .student-proud-action {
+          margin: 0 auto;
+        }
+        .student-proud-kicker,
+        .student-proud-note {
+          margin-left: auto;
+          margin-right: auto;
+        }
+        .student-proud-visual {
+          height: 120px;
+        }
+        .student-proud-hero-img {
+          max-width: 190px;
+        }
+        .student-proud-art-card {
+          width: 108px;
+          height: 108px;
+          border-radius: 28px;
+        }
+        .student-proud-art-halo {
+          width: 78px;
+          height: 78px;
+        }
+        .student-proud-art-icon {
+          width: 58px;
+          height: 58px;
+          border-radius: 22px;
+          font-size: 26px;
+        }
         .student-live-news-body {
           padding: 14px;
         }
@@ -564,6 +1019,17 @@ export function StudentStyles() {
         }
         .student-news-link {
           margin-top: 8px;
+        }
+        .student-birthday-body {
+          grid-template-columns: 1fr;
+          padding: 22px;
+          text-align: center;
+        }
+        .student-birthday-kicker {
+          margin: 0 auto;
+        }
+        .student-birthday-art {
+          min-height: 138px;
         }
       }
 
@@ -964,15 +1430,68 @@ export function StudentSectionHeader({ title, count, actions }) {
   )
 }
 
+function IIEProudCarousel({ activeIndex }) {
+  const slide = IIE_PROUD_SLIDES[activeIndex] || IIE_PROUD_SLIDES[0]
+
+  return (
+    <div className="student-card student-proud-card">
+      <div key={slide.title} className="student-proud-slide">
+        <div>
+          <div className="student-proud-kicker" style={{ backgroundColor: slide.softColor, color: slide.color }}>
+            <i className={`fas ${slide.icon}`} />
+            {slide.kicker}
+          </div>
+          <h2 className="student-proud-title">
+            {slide.title}
+            {slide.highlight ? <> <span>{slide.highlight}</span></> : null}
+          </h2>
+          <p className="student-proud-subtitle">{slide.subtitle}</p>
+          {slide.note ? <p className="student-proud-note" style={{ color: slide.color }}>{slide.note}</p> : null}
+          <div className="student-proud-lines">
+            <span className="student-proud-line-long" style={{ backgroundColor: slide.color }} />
+            <span className="student-proud-line-short" style={{ backgroundColor: slide.color }} />
+          </div>
+          {slide.showJoin ? (
+            <button className="student-proud-action" type="button" onClick={() => window.open(STUDENT_JOIN_FORM_URL, '_blank', 'noopener,noreferrer')}>
+              Join Us
+              <span><i className="fas fa-arrow-right" /></span>
+            </button>
+          ) : (
+            <div className="student-proud-badge" style={{ backgroundColor: slide.color }}>IIE Proud</div>
+          )}
+        </div>
+        <div className="student-proud-visual" aria-hidden="true">
+          {slide.showHeroImage ? (
+            <img className="student-proud-hero-img" src={heroStudentsImage} alt="" />
+          ) : (
+            <div className="student-proud-art-card" style={{ backgroundColor: slide.softColor, color: slide.color }}>
+              <span className="student-proud-art-halo" />
+              <span className="student-proud-art-icon" style={{ backgroundColor: slide.color }}>
+                <i className={`fas ${slide.icon}`} />
+              </span>
+              <span className="student-proud-doll-row">
+                <span className="student-proud-doll" style={{ backgroundColor: slide.color }} />
+                <span className="student-proud-doll-small" style={{ backgroundColor: slide.color }} />
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 const STUDENT_FEEDBACK_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLScO29CvpRNB0057OxNROPr0IVPH6dAZZpueHFRRespT0g1E_A/viewform'
 const STUDENT_FEEDBACK_EMBED_URL = `${STUDENT_FEEDBACK_FORM_URL}?embedded=true`
 const STUDENT_FEEDBACK_INTERVAL_MS = 20 * 24 * 60 * 60 * 1000
 const STUDENT_FEEDBACK_LAST_PROMPT_KEY = 'iie_student_feedback_last_prompt_at'
+const STUDENT_JOIN_FORM_URL = 'https://forms.gle/nKXHiEnnZHZeegig7'
 
 export function StudentDashboard() {
   const [data, setData] = useState(null)
   const [liveNews, setLiveNews] = useState([])
   const [activeNewsIndex, setActiveNewsIndex] = useState(0)
+  const [activeProudIndex, setActiveProudIndex] = useState(0)
   const [newsLoading, setNewsLoading] = useState(true)
   const [loading, setLoading] = useState(true)
   const [showFeedbackPrompt, setShowFeedbackPrompt] = useState(false)
@@ -1011,6 +1530,13 @@ export function StudentDashboard() {
     }, 4200)
     return () => clearInterval(timer)
   }, [liveNews.length])
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setActiveProudIndex(index => (index + 1) % IIE_PROUD_SLIDES.length)
+    }, 2000)
+    return () => clearInterval(timer)
+  }, [])
 
   const scheduleFeedbackPrompt = (delay = STUDENT_FEEDBACK_INTERVAL_MS) => {
     if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current)
@@ -1054,12 +1580,14 @@ export function StudentDashboard() {
     })
   })
   const assignedBatchesCount = assignedBatchIds.size || (data?.student?.assigned_batch ? 1 : 0)
+  const birthdayWish = data?.birthday_wish
+  const isBirthday = Boolean(birthdayWish?.is_birthday)
 
   const stats = [
     { label: 'Announcements', value: data?.announcements_count ?? data?.announcements?.length ?? 0, icon: 'fa-bullhorn', color: T.teal, bgColor: 'rgba(46,196,182,0.1)', to: '/student/announcements' },
     { label: 'Attendance %', value: `${data?.attendance_percentage ?? 0}%`, icon: 'fa-calendar-check', color: T.sage, bgColor: 'rgba(76,175,129,0.1)', to: '/student/attendance' },
     { label: 'My Batches', value: assignedBatchesCount, icon: 'fa-layer-group', color: T.navy, bgColor: 'rgba(15,27,45,0.1)', to: '/student/batches' },
-    { label: '15-Day Challenge', value: 'Play', icon: 'fa-bolt', color: T.amber, bgColor: 'rgba(244,169,64,0.12)', to: '/student/challenge' },
+    { label: 'Daily Activity', value: 'Play', icon: 'fa-bolt', color: T.amber, bgColor: 'rgba(244,169,64,0.12)', to: '/student/challenge' },
     { label: 'Completed Sessions', value: data?.completed_sessions_count ?? 0, icon: 'fa-check-double', color: T.sage, bgColor: 'rgba(76,175,129,0.1)', to: '/student/sessions' },
     { label: 'Tests', value: data?.tests_count ?? 0, icon: 'fa-file-alt', color: T.navy, bgColor: 'rgba(15,27,45,0.1)', to: '/student/tests' },
     { label: 'Quizzes', value: data?.quizzes_count ?? 0, icon: 'fa-question-circle', color: T.teal, bgColor: 'rgba(46,196,182,0.1)', to: '/student/quiz' },
@@ -1081,6 +1609,37 @@ export function StudentDashboard() {
           style={{ width: '100%', height: '72vh', border: 0, borderRadius: 12, background: '#fff' }}
         />
       </StudentModal>
+      <IIEProudCarousel activeIndex={activeProudIndex} />
+      {isBirthday ? (
+        <div className="student-card student-birthday-card">
+          <div className="student-birthday-confetti" aria-hidden="true">
+            <span /><span /><span /><span /><span />
+            <span /><span /><span /><span /><span />
+          </div>
+          <div className="student-birthday-burst" aria-hidden="true">
+            <span /><span /><span />
+          </div>
+          <div className="student-birthday-body">
+            <div>
+              <div className="student-birthday-kicker">
+                <i className="fas fa-wand-magic-sparkles" />
+                Birthday Celebration
+              </div>
+              <h2 className="student-birthday-title">
+                Happy Birthday, <span>{birthdayWish?.student_name || data?.student?.first_name || 'Student'}!</span>
+              </h2>
+              <p className="student-birthday-copy">
+                Wishing you a bright year filled with learning, confidence, success, and beautiful new milestones.
+              </p>
+            </div>
+            <div className="student-birthday-art" aria-hidden="true">
+              <span className="student-birthday-balloon one">🎈</span>
+              <span className="student-birthday-balloon two">🎉</span>
+              <span className="student-birthday-cake">🎂</span>
+            </div>
+          </div>
+        </div>
+      ) : (
       <div className="student-card student-live-news-card">
         <StudentSectionHeader
           title="📰 Live Technology News"
@@ -1183,6 +1742,7 @@ export function StudentDashboard() {
           )}
         </div>
       </div>
+      )}
       <div className="student-stat-grid">
         {stats.map((stat, idx) => (
           <div
@@ -1277,7 +1837,7 @@ export function StudentLoginRatingHistory() {
               <div key={week.week_start} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: 16, border: `1px solid ${T.border}`, borderRadius: 14, background: '#fff' }}>
                 <div>
                   <div style={{ fontWeight: 800, color: T.navy }}>{formatWeek(week)}</div>
-                  <div style={{ fontSize: 12, color: T.slate, marginTop: 4 }}>2 logins per day earns 1 star</div>
+                  <div style={{ fontSize: 12, color: T.slate, marginTop: 4 }}>Starts at 5 stars. Low usage reduces stars.</div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <div style={{ display: 'flex', gap: 3 }}>
@@ -1362,7 +1922,7 @@ export function StudentChallenge() {
         <div className="student-challenge-card-top">
           <div className="student-challenge-icon"><i className="fas fa-bolt" /></div>
           <div>
-            <div className="student-challenge-kicker">15-Day Challenge</div>
+            <div className="student-challenge-kicker">Daily Activity</div>
             <h4>{challenge.course_name || 'Course Challenge'}</h4>
             <p>{challenge.batch_code || challenge.batch_number || 'Assigned batch'}</p>
           </div>
@@ -1402,7 +1962,7 @@ export function StudentChallenge() {
     <div className="student-root">
       <StudentStyles />
       <StudentPageHeader
-        title="⚡ 15-Day Challenge"
+        title="⚡ Daily Activity"
         sub="Daily gamified MCQ practice from your completed sessions"
         btn={selected && <button className="student-btn student-btn-ghost" onClick={() => { setSelected(null); setToday(null) }}>Back to Challenges</button>}
       />
@@ -1417,8 +1977,8 @@ export function StudentChallenge() {
         <div className="student-challenge-play">
           <div className="student-challenge-hero">
             <div>
-              <div className="student-challenge-kicker">15-Day Challenge</div>
-              <h3>{activeChallenge?.course_name || 'Daily Practice'}</h3>
+              <div className="student-challenge-kicker">Daily Activity</div>
+              <h3>{activeChallenge?.course_name || 'Daily Skillset'}</h3>
               <p>{activeChallenge?.batch_code || activeChallenge?.batch_number || 'Assigned batch'}</p>
             </div>
             <div className="student-challenge-hero-stats">
@@ -1428,11 +1988,11 @@ export function StudentChallenge() {
           </div>
 
           {today?.state === 'insufficient_questions' ? (
-            <ChallengeState icon="fa-hourglass-half" title="Challenge Not Ready" text="Your completed sessions do not have enough challenge questions yet. Please try again later." />
+            <ChallengeState icon="fa-hourglass-half" title="Daily Activity Not Ready" text="Your completed sessions do not have enough daily activity questions yet. Please try again later." />
           ) : today?.state === 'outside_window' ? (
-            <ChallengeState icon="fa-calendar-times" title="Challenge Window Closed" text="This challenge is outside the active window." />
+            <ChallengeState icon="fa-calendar-times" title="Daily Activity Window Closed" text="This daily activity is outside the active window." />
           ) : isCompleted ? (
-            <ChallengeState icon="fa-trophy" title={activeChallenge?.status === 'completed' ? 'Challenge Completed!' : `Day ${activeDay?.day_number || activeChallenge?.completed_days || 0} Complete`} text={`Score ${activeDay?.score ?? activeChallenge?.total_score ?? 0}/${activeDay?.total_questions || 5}`} />
+            <ChallengeState icon="fa-trophy" title={activeChallenge?.status === 'completed' ? 'Daily Activity Completed!' : `Day ${activeDay?.day_number || activeChallenge?.completed_days || 0} Complete`} text={`Score ${activeDay?.score ?? activeChallenge?.total_score ?? 0}/${activeDay?.total_questions || 5}`} />
           ) : activeDay && currentQuestion ? (
             <>
               <div className="student-challenge-question-card">
@@ -2138,6 +2698,7 @@ function StudentLeaveForm({ onClose, onSaved }) {
 export function StudentMaterials() {
   const [materials, setMaterials] = useState([])
   const [loading, setLoading] = useState(true)
+  const [libraryMaterial, setLibraryMaterial] = useState(null)
 
   useEffect(() => { api.get('/materials/').then(r => setMaterials(r.data.results || r.data)).finally(() => setLoading(false)) }, [])
 
@@ -2146,35 +2707,6 @@ export function StudentMaterials() {
     if (url.includes('.pdf')) return 'fa-file-pdf'
     if (url.includes('.doc')) return 'fa-file-word'
     return 'fa-file-alt'
-  }
-
-  const downloadMaterial = async (material) => {
-    try {
-      const res = await api.get(`/materials/${material.id}/download/`, { responseType: 'blob' })
-      const blob = new Blob([res.data])
-      const fileURL = window.URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = fileURL
-      link.download = material.file?.split('/').pop() || material.title || 'material'
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      window.URL.revokeObjectURL(fileURL)
-    } catch (err) {
-      let message = 'File missing on server. Re-upload required or persistent storage required.'
-      const data = err.response?.data
-      if (data instanceof Blob) {
-        try {
-          const parsed = JSON.parse(await data.text())
-          message = parsed.error || message
-        } catch {
-          // Uploaded files need persistent storage to survive redeploys.
-        }
-      } else if (data?.error) {
-        message = data.error
-      }
-      toast.error(message)
-    }
   }
 
   return (
@@ -2193,7 +2725,7 @@ export function StudentMaterials() {
                     <td><div style={{ display: 'flex', alignItems: 'center', gap: 10 }}><div style={{ width: 36, height: 36, borderRadius: 8, background: `linear-gradient(135deg, ${T.amber}, ${T.rose})`, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><i className={`fas ${fileIcon(m.file)}`} /></div><span style={{ fontWeight: 600 }}>{m.title}</span></div></td>
                     <td><StudentBadge text={m.batch_code || m.display_name || m.batch_number} variant="info" /></td>
                     <td style={{ fontSize: 12 }}>{m.uploaded_at ? new Date(m.uploaded_at).toLocaleDateString('en-IN') : '—'}</td>
-                    <td>{m.file ? <button type="button" onClick={() => downloadMaterial(m)} className="student-btn student-btn-sm student-btn-ghost"><i className="fas fa-download" /> Download</button> : '—'}</td>
+                    <td><button type="button" onClick={() => setLibraryMaterial(m)} className="student-btn student-btn-sm student-btn-ghost"><i className="fas fa-book-reader" /> View Library</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -2201,6 +2733,38 @@ export function StudentMaterials() {
           </div>
         )}
       </div>
+      {libraryMaterial && (
+        <StudentModal open onClose={() => setLibraryMaterial(null)} title="Protected Library Material" size="md">
+          <div style={{ display: 'grid', gap: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ width: 48, height: 48, borderRadius: 12, background: '#f5f3ff', color: T.primary, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <i className={`fas ${fileIcon(libraryMaterial.file)}`} />
+              </div>
+              <div>
+                <h4 style={{ margin: 0 }}>{libraryMaterial.title}</h4>
+                <p style={{ margin: '4px 0 0', color: T.slate, fontSize: 13 }}>Sharing and direct downloading are disabled.</p>
+              </div>
+            </div>
+            {libraryMaterial.description && (
+              <div className="student-card" style={{ padding: 14, margin: 0 }}>
+                <div style={{ fontSize: 11, fontWeight: 900, color: T.primary, textTransform: 'uppercase' }}>Description</div>
+                <div style={{ marginTop: 5, color: T.dark }}>{libraryMaterial.description}</div>
+              </div>
+            )}
+            <div className="student-row-grid-2">
+              <div className="student-card" style={{ padding: 14, margin: 0 }}>
+                <div style={{ fontSize: 11, fontWeight: 900, color: T.primary, textTransform: 'uppercase' }}>Batch</div>
+                <div style={{ marginTop: 5, color: T.dark, fontWeight: 700 }}>{libraryMaterial.batch_code || libraryMaterial.display_name || libraryMaterial.batch_number || 'N/A'}</div>
+              </div>
+              <div className="student-card" style={{ padding: 14, margin: 0 }}>
+                <div style={{ fontSize: 11, fontWeight: 900, color: T.primary, textTransform: 'uppercase' }}>Uploaded</div>
+                <div style={{ marginTop: 5, color: T.dark, fontWeight: 700 }}>{libraryMaterial.uploaded_at ? new Date(libraryMaterial.uploaded_at).toLocaleDateString('en-IN') : 'N/A'}</div>
+              </div>
+            </div>
+            <button type="button" className="student-btn student-btn-primary" onClick={() => setLibraryMaterial(null)}>Done</button>
+          </div>
+        </StudentModal>
+      )}
     </div>
   )
 }
@@ -2301,7 +2865,7 @@ export function StudentTests() {
 
   const startTest = async (test) => {
     if (test.creation_method === 'upload' && test.question_paper_url) {
-      window.open(test.question_paper_url, '_blank', 'noopener,noreferrer')
+      setActiveTest({ ...test, questions: [], isUploadTest: true })
       return
     }
     try {
@@ -2367,7 +2931,7 @@ export function StudentTests() {
                       disabled={test.creation_method !== 'upload' && test.total_questions === 0}
                     >
                       {test.creation_method === 'upload'
-                        ? 'Open Question Paper'
+                        ? 'View & Submit Test'
                         : test.total_questions === 0 ? 'No Questions' : 'View Questions'}
                     </button>
                   </div>
@@ -2398,7 +2962,13 @@ export function StudentTests() {
                 {testResults.map((result, idx) => (
                   <tr key={result.id || idx}>
                     <td style={{ fontWeight: 600 }}>{result.test_title || 'Test'}</td>
-                    <td>{result.score || 0}/{result.total_questions || 0}</td>
+                    <td>
+                      {result.manual_mark != null
+                        ? `${result.manual_mark}/${result.max_marks || 100}`
+                        : result.creation_method === 'upload'
+                          ? 'Waiting for mark'
+                          : `${result.score || 0}/${result.total_questions || 0}`}
+                    </td>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <div style={{ flex: 1, height: 6, background: '#e9ecef', borderRadius: 3, minWidth: 60 }}>
@@ -2409,13 +2979,13 @@ export function StudentTests() {
                             borderRadius: 3
                           }} />
                         </div>
-                        <strong>{(result.percentage || 0).toFixed(1)}%</strong>
+                        <strong>{result.manual_mark == null && result.creation_method === 'upload' ? 'Pending' : `${(result.percentage || 0).toFixed(1)}%`}</strong>
                       </div>
                     </td>
                     <td>
                       <StudentBadge
-                        text={(result.percentage || 0) >= 50 ? '✅ Passed' : '❌ Failed'}
-                        variant={(result.percentage || 0) >= 50 ? 'success' : 'danger'}
+                        text={result.manual_mark == null && result.creation_method === 'upload' ? '⏳ Submitted' : (result.percentage || 0) >= 50 ? '✅ Passed' : '❌ Failed'}
+                        variant={result.manual_mark == null && result.creation_method === 'upload' ? 'pending' : (result.percentage || 0) >= 50 ? 'success' : 'danger'}
                       />
                     </td>
                     <td style={{ fontSize: 12, color: T.slate }}>
@@ -2465,7 +3035,94 @@ function TakeTestComponent({ test, onDone }) {
   const [current, setCurrent] = useState(0)
   const [submitting, setSubmitting] = useState(false)
   const [result, setResult] = useState(null)
+  const [submissionFile, setSubmissionFile] = useState(null)
+  const [submissionFiles, setSubmissionFiles] = useState([])
   const questions = test.questions || []
+
+  const submitUploadTest = async () => {
+    if (!submissionFile && submissionFiles.length === 0) return toast.error('Please choose your answer file or folder.')
+    setSubmitting(true)
+    try {
+      const fd = new FormData()
+      if (submissionFiles.length > 0) {
+        submissionFiles.forEach(file => fd.append('submission_files', file))
+      } else {
+        fd.append('submission_file', submissionFile)
+      }
+      const response = await api.post(`/tests/${test.test_id || test.id}/take/`, fd, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+      toast.success(response.data?.message || 'Test submitted successfully!')
+      setResult({
+        ...response.data,
+        total_marks: response.data?.total_marks ?? response.data?.total_questions ?? 0,
+      })
+      setTimeout(() => onDone(), 1400)
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to submit test')
+      setSubmitting(false)
+    }
+  }
+
+  if (test.isUploadTest || test.creation_method === 'upload') {
+    return (
+      <div className="student-root">
+        <StudentStyles />
+        <StudentPageHeader
+          title={test.test_title || test.title || 'Technical Test'}
+          sub={`${test.course_name || 'Course'} - ${test.test_date || 'Date not set'} ${test.start_time ? `- ${test.start_time}` : ''}`}
+          btn={<button className="student-btn student-btn-ghost" onClick={onDone}>Back to Tests</button>}
+        />
+        <div className="student-card" style={{ maxWidth: 720, margin: '0 auto' }}>
+          <StudentSectionHeader title="Question Paper Submission" />
+          <div style={{ padding: 22, display: 'grid', gap: 16 }}>
+            {test.instructions && (
+              <div className="student-alert-info">
+                <strong>Instructions:</strong> {test.instructions}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+              {test.question_paper_url && (
+                <button className="student-btn student-btn-primary" type="button" onClick={() => window.open(test.question_paper_url, '_blank', 'noopener,noreferrer')}>
+                  <i className="fas fa-file-pdf" /> View Test PDF
+                </button>
+              )}
+            </div>
+            <div className="student-fg">
+              <label className="student-label">Upload Answer File *</label>
+              <input
+                className="student-input"
+                type="file"
+                accept=".pdf,.doc,.docx,.zip,.rar,.png,.jpg,.jpeg,.txt"
+                onChange={e => {
+                  setSubmissionFile(e.target.files?.[0] || null)
+                  setSubmissionFiles([])
+                }}
+              />
+            </div>
+            <div className="student-fg">
+              <label className="student-label">Or Upload Answer Folder</label>
+              <input
+                className="student-input"
+                type="file"
+                multiple
+                webkitdirectory="true"
+                directory="true"
+                onChange={e => {
+                  setSubmissionFiles(Array.from(e.target.files || []))
+                  setSubmissionFile(null)
+                }}
+              />
+              <small style={{ color: T.slate }}>Folder files will be saved as one ZIP for your mentor to view.</small>
+            </div>
+            <button className="student-btn student-btn-success" type="button" onClick={submitUploadTest} disabled={submitting || (!submissionFile && submissionFiles.length === 0)}>
+              <i className="fas fa-paper-plane" /> {submitting ? 'Submitting...' : 'Submit Test'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   if (test.test_type === 'technical') {
     return (
@@ -2531,6 +3188,25 @@ function TakeTestComponent({ test, onDone }) {
   }
 
   if (result) {
+    if (test.isUploadTest || test.creation_method === 'upload') {
+      return (
+        <div className="student-root">
+          <StudentStyles />
+          <div className="student-card" style={{ maxWidth: 520, margin: '40px auto', textAlign: 'center' }}>
+            <div style={{ padding: 40 }}>
+              <div style={{ fontSize: 58, marginBottom: 18 }}>📤</div>
+              <h3 style={{ color: T.sage }}>Test Submitted</h3>
+              <p style={{ color: T.slate, lineHeight: 1.6 }}>
+                {result.message || 'Your answer file has been submitted. Your mentor will update the mark after review.'}
+              </p>
+              <button className="student-btn student-btn-primary" onClick={onDone}>
+                Back to Tests
+              </button>
+            </div>
+          </div>
+        </div>
+      )
+    }
     const passed = result.percentage >= 50
     return (
       <div className="student-root">
@@ -3263,31 +3939,16 @@ export function StudentFeeDetails() {
 
   const fmt = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`
 
-const downloadBill = async (feeId) => {
-  const toastId = toast.loading('Downloading bill...')
+const viewBillPdf = async (feeId) => {
+  const toastId = toast.loading('Opening bill PDF...')
 
   try {
-    const response = await api.get(`/fees/${feeId}/bill/`, {
-      responseType: 'blob'
-    })
-
-    const blob = new Blob([response.data], { type: 'application/pdf' })
-    const url = window.URL.createObjectURL(blob)
-    const link = document.createElement('a')
-
-    link.href = url
-    link.download = `Fee_Receipt.pdf`
-
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-
-    window.URL.revokeObjectURL(url)
-
-    toast.success('Bill downloaded!', { id: toastId })
+    const response = await api.get(`/fees/${feeId}/bill-link/`)
+    window.open(response.data.url, '_blank', 'noopener,noreferrer')
+    toast.success('Bill PDF opened!', { id: toastId })
   } catch (err) {
-    console.error('Download error:', err)
-    toast.error('Failed to download bill', { id: toastId })
+    console.error('Bill open error:', err)
+    toast.error(err.response?.data?.error || 'Bill PDF is available only after admin approval', { id: toastId })
   }
 }
   if (loading) return <div className="student-root"><StudentStyles /><StudentSpin /></div>
@@ -3390,6 +4051,12 @@ const downloadBill = async (feeId) => {
                   You have a pending balance of <strong>{fmt(fee.balance)}</strong>. Please contact your counselor to make the payment.
                 </div>
               )}
+              {fee.bill_available && (
+                <div className="student-alert-info" style={{ marginTop: 16 }}>
+                  <i className="fas fa-file-pdf" style={{ marginRight: 8 }} />
+                  Your approved bill PDF is ready. A secure bill link is also sent to your registered email.
+                </div>
+              )}
             </div>
           </div>
 
@@ -3430,9 +4097,9 @@ const downloadBill = async (feeId) => {
                         <td>
                           <button
                             className="student-btn student-btn-sm student-btn-success"
-                            onClick={() => downloadBill(fee.id)}
+                            onClick={() => viewBillPdf(fee.id)}
                           >
-                            <i className="fas fa-download" /> Bill
+                            <i className="fas fa-file-pdf" /> View PDF
                           </button>
                         </td>
                       </tr>
@@ -3446,10 +4113,10 @@ const downloadBill = async (feeId) => {
                 <div style={{ padding: '16px 22px', borderTop: `1px solid ${T.border}` }}>
                   <button
                     className="student-btn student-btn-success"
-                    onClick={() => downloadBill(fee.id)}
+                    onClick={() => viewBillPdf(fee.id)}
                     style={{ width: '100%' }}
                   >
-                    <i className="fas fa-file-invoice" /> Download Fee Receipt
+                    <i className="fas fa-file-pdf" /> View Fee Bill PDF
                   </button>
                 </div>
               )}

@@ -14,8 +14,11 @@ import {
   View,
 } from "react-native";
 import {
-  getTodayChallenge,
+  getChallengeSessions,
+  getStudentChallenges,
+  startSessionChallenge,
   StudentChallengeDay,
+  StudentChallengeSession,
   StudentChallengeSummary,
   StudentChallengeToday,
   submitChallengeDay,
@@ -33,44 +36,73 @@ export default function ChallengeScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [payload, setPayload] = useState<StudentChallengeToday | null>(null);
+  const [summaryChallenge, setSummaryChallenge] = useState<StudentChallengeSummary | null>(null);
+  const [activitySessions, setActivitySessions] = useState<StudentChallengeSession[]>([]);
+  const [startingSessionId, setStartingSessionId] = useState<number | null>(null);
   const [answers, setAnswers] = useState<AnswerMap>({});
   const [currentIndex, setCurrentIndex] = useState(0);
   const [submitted, setSubmitted] = useState(false);
+  const [autoTarget, setAutoTarget] = useState<{ courseId: string; batchId: string } | null>(null);
+  const [activityStarted, setActivityStarted] = useState(false);
 
   const day = payload?.day || null;
-  const challenge = payload?.challenge || null;
+  const challenge = payload?.challenge || summaryChallenge || null;
   const questions = day?.questions || [];
   const currentQuestion = questions[currentIndex] || null;
   const answeredCount = Object.keys(answers).length;
   const isCompleted = submitted || payload?.state === "completed" || day?.status === "completed";
   const canSubmit = questions.length === 5 && answeredCount === 5 && !submitting && !isCompleted;
+  const activeCourseId = resolvedCourseId || autoTarget?.courseId;
+  const activeBatchId = resolvedBatchId || autoTarget?.batchId;
 
   const loadChallenge = useCallback(async (isRefresh = false) => {
-    if (!resolvedCourseId || !resolvedBatchId) {
-      setError("Challenge course and batch details are missing.");
-      setLoading(false);
-      setRefreshing(false);
-      return;
-    }
-
     try {
       if (isRefresh) setRefreshing(true);
       else setLoading(true);
       setError("");
-      const result = await getTodayChallenge(resolvedCourseId, resolvedBatchId);
-      if (!result.success || !result.data) {
+
+      let targetCourseId = activeCourseId;
+      let targetBatchId = activeBatchId;
+
+      if (!targetCourseId || !targetBatchId) {
+        const courses = await getStudentChallenges();
+        if (!courses.success) {
+          setError(cleanError(courses.error));
+          return;
+        }
+
+        const selected =
+          courses.data.find((item) => item.today_available && item.course && item.batch) ||
+          courses.data.find((item) => item.status === "active" && item.course && item.batch) ||
+          courses.data.find((item) => item.course && item.batch);
+
+        if (!selected) {
+          setError("No daily activity course is available yet.");
+          return;
+        }
+
+        targetCourseId = String(selected.course);
+        targetBatchId = String(selected.batch);
+        setAutoTarget({ courseId: targetCourseId, batchId: targetBatchId });
+      }
+
+      const result = await getChallengeSessions(targetCourseId, targetBatchId);
+      if (!result.success || !result.data?.challenge) {
         setError(cleanError(result.error));
         return;
       }
-      setPayload(result.data);
+      setSummaryChallenge(result.data.challenge);
+      setActivitySessions(result.data.sessions);
+      setPayload(null);
       setAnswers({});
       setCurrentIndex(0);
-      setSubmitted(result.data.day?.status === "completed" || result.data.state === "completed");
+      setActivityStarted(false);
+      setSubmitted(false);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [resolvedCourseId, resolvedBatchId]);
+  }, [activeCourseId, activeBatchId]);
 
   useEffect(() => {
     loadChallenge();
@@ -81,6 +113,26 @@ export default function ChallengeScreen() {
     setAnswers((prev) => ({ ...prev, [questionId]: key }));
   };
 
+  const startSessionActivity = async (session: StudentChallengeSession) => {
+    if (!activeCourseId || !activeBatchId) return;
+    try {
+      setStartingSessionId(session.id);
+      setError("");
+      const result = await startSessionChallenge(activeCourseId, activeBatchId, session.id);
+      if (!result.success || !result.data) {
+        setError(cleanError(result.error));
+        return;
+      }
+      setPayload(result.data);
+      setAnswers({});
+      setCurrentIndex(0);
+      setActivityStarted(false);
+      setSubmitted(result.data.day?.status === "completed" || result.data.state === "completed");
+    } finally {
+      setStartingSessionId(null);
+    }
+  };
+
   const handleSubmit = () => {
     if (!day) return;
     if (!canSubmit) {
@@ -88,7 +140,7 @@ export default function ChallengeScreen() {
       return;
     }
 
-    Alert.alert("Submit Challenge", "Submit today's 15-Day Challenge answers?", [
+    Alert.alert("Submit Daily Activity", "Submit today's Daily Activity answers?", [
       { text: "Cancel", style: "cancel" },
       { text: "Submit", onPress: submitAnswers },
     ]);
@@ -108,6 +160,7 @@ export default function ChallengeScreen() {
         return;
       }
       setPayload(result.data);
+      setSummaryChallenge(result.data.challenge);
       setSubmitted(true);
     } finally {
       setSubmitting(false);
@@ -120,8 +173,8 @@ export default function ChallengeScreen() {
       return (
         <StateCard
           icon="hourglass-outline"
-          title="Challenge Not Ready"
-          text="Your completed sessions do not have enough challenge questions yet. Please try again later."
+          title="Daily Activity Not Ready"
+          text="Your completed sessions do not have enough daily activity questions yet. Please try again later."
           challenge={challenge}
         />
       );
@@ -130,18 +183,8 @@ export default function ChallengeScreen() {
       return (
         <StateCard
           icon="calendar-outline"
-          title="Challenge Window Closed"
-          text="This 15-day challenge is outside the active window."
-          challenge={challenge}
-        />
-      );
-    }
-    if (payload.state === "completed" && !day) {
-      return (
-        <StateCard
-          icon="trophy-outline"
-          title="Challenge Completed"
-          text="You have completed the full 15-day challenge."
+          title="Daily Activity Window Closed"
+          text="This daily activity is outside the active window."
           challenge={challenge}
         />
       );
@@ -154,7 +197,7 @@ export default function ChallengeScreen() {
         <StateCard
           icon="alert-circle-outline"
           title="Questions Unavailable"
-          text="Today's challenge must contain exactly 5 questions. Please try again later."
+          text="Today's daily activity must contain exactly 5 questions. Please try again later."
           challenge={challenge}
         />
       );
@@ -168,7 +211,7 @@ export default function ChallengeScreen() {
         <StatusBar backgroundColor="#F6F3FF" barStyle="dark-content" />
         <View style={styles.center}>
           <ActivityIndicator size="large" color="#5523D2" />
-          <Text style={styles.loadingText}>Loading challenge...</Text>
+          <Text style={styles.loadingText}>Loading daily activity...</Text>
         </View>
       </SafeAreaView>
     );
@@ -188,8 +231,8 @@ export default function ChallengeScreen() {
             <Ionicons name="chevron-back" size={22} color="#5523D2" />
           </Pressable>
           <View style={styles.heroText}>
-            <Text style={styles.kicker}>15-Day Challenge</Text>
-            <Text style={styles.title}>{challenge?.course_name || "Daily Practice"}</Text>
+            <Text style={styles.kicker}>Daily Activity</Text>
+            <Text style={styles.title}>{challenge?.course_name || "Daily Skillset"}</Text>
             <Text style={styles.subtitle}>{challenge?.batch_code || challenge?.batch_number || "Assigned batch"}</Text>
           </View>
         </View>
@@ -204,11 +247,25 @@ export default function ChallengeScreen() {
           />
         ) : statusView ? (
           statusView
+        ) : !payload ? (
+          <SessionActivityList
+            sessions={activitySessions}
+            challenge={challenge}
+            startingSessionId={startingSessionId}
+            onStart={startSessionActivity}
+          />
+        ) : day && currentQuestion && !activityStarted ? (
+          <StartActivityCard
+            challenge={challenge}
+            day={day}
+            questionsCount={questions.length}
+            onStart={() => setActivityStarted(true)}
+          />
         ) : day && currentQuestion ? (
           <>
             <View style={styles.progressCard}>
               <View>
-                <Text style={styles.progressLabel}>Day {day.day_number}/15</Text>
+                <Text style={styles.progressLabel}>Session {day.source_session_number || currentQuestion.source_session_number || "-"}</Text>
                 <Text style={styles.progressTitle}>Question {currentIndex + 1} of 5</Text>
               </View>
               <View style={styles.streakPill}>
@@ -218,9 +275,7 @@ export default function ChallengeScreen() {
             </View>
 
             <View style={styles.questionCard}>
-              <Text style={styles.sessionTag}>
-                Session {currentQuestion.source_session_number || "-"} · {currentQuestion.source_session_title || "Completed topic"}
-              </Text>
+              <Text style={styles.sessionTag}>Question</Text>
               <Text style={styles.questionText}>{currentQuestion.question_text}</Text>
               <View style={styles.optionList}>
                 {currentQuestion.options.map((option) => {
@@ -267,8 +322,8 @@ export default function ChallengeScreen() {
         ) : (
           <StateCard
             icon="help-circle-outline"
-            title="No Challenge Today"
-            text="There is no active challenge available for this course and batch."
+            title="No Daily Activity Today"
+            text="Complete a session first to unlock Daily Activity."
           />
         )}
       </ScrollView>
@@ -285,7 +340,7 @@ function ResultCard({
   day: StudentChallengeDay;
   onContinue: () => void;
 }) {
-  const isFinal = challenge.status === "completed" || day.day_number >= 15;
+  const isFinal = challenge.status === "completed";
   const scorePercent = Number(challenge.final_score_percentage || 0);
   const completedAt = challenge.completion_date || challenge.achievement?.completed_at || day.completed_at;
   const completionDate = completedAt ? formatDisplayDate(completedAt) : "Today";
@@ -297,15 +352,15 @@ function ResultCard({
         <Ionicons name={isFinal ? "trophy-outline" : "checkmark-done"} size={34} color="#FFFFFF" />
       </View>
       <Text style={styles.resultTitle}>
-        {isFinal ? "Challenge Completed!" : `Day ${day.day_number} Complete`}
+        {isFinal ? "Daily Activity Completed!" : `Session ${day.source_session_number || day.day_number} Activity Complete`}
       </Text>
       <Text style={styles.resultScore}>Score {day.score}/{day.total_questions || 5}</Text>
       {isFinal ? (
         <>
           <Text style={styles.achievementText}>
             {challenge.quick_completion
-              ? `You completed the challenges quickly${daysTaken ? ` in ${daysTaken} days` : ""}! Keep up the great work.`
-              : "Congratulations! You completed the 15-Day Challenge."}
+              ? `You completed your daily activities quickly${daysTaken ? ` in ${daysTaken} days` : ""}! Keep up the great work.`
+              : "Congratulations! You completed the Daily Activity."}
           </Text>
           <View style={styles.badgePill}>
             <Ionicons name="ribbon-outline" size={18} color="#92400E" />
@@ -314,9 +369,9 @@ function ResultCard({
         </>
       ) : null}
       <View style={styles.resultStats}>
-        <MiniStat label="Day" value={`${day.day_number}/15`} />
+        <MiniStat label="Attempt" value={String(day.attempt_number || 1)} />
         <MiniStat label="Streak" value={String(challenge.current_streak || 0)} />
-        <MiniStat label="Progress" value={`${challenge.completed_days || 0}/15`} />
+        <MiniStat label="Activities" value={`${challenge.completed_days || 0} done`} />
       </View>
       {isFinal ? (
         <View style={styles.resultStats}>
@@ -326,8 +381,109 @@ function ResultCard({
         </View>
       ) : null}
       <Pressable style={styles.fullButton} onPress={isFinal ? () => router.replace("/home" as any) : onContinue}>
-        <Text style={styles.fullButtonText}>{isFinal ? "Back to Dashboard" : "Continue to Next Challenge"}</Text>
+        <Text style={styles.fullButtonText}>{isFinal ? "Back to Dashboard" : "Continue Daily Activity"}</Text>
       </Pressable>
+    </View>
+  );
+}
+
+function StartActivityCard({
+  challenge,
+  day,
+  questionsCount,
+  onStart,
+}: {
+  challenge: StudentChallengeSummary | null;
+  day: StudentChallengeDay;
+  questionsCount: number;
+  onStart: () => void;
+}) {
+  return (
+    <View style={styles.startCard}>
+      <View style={styles.startIcon}>
+        <Ionicons name="sparkles-outline" size={34} color="#FFFFFF" />
+      </View>
+      <Text style={styles.startKicker}>Ready for today</Text>
+      <Text style={styles.startTitle}>Session {day.source_session_number || "-"} Activity</Text>
+      <Text style={styles.startText}>
+        Attend 5 MCQ questions from this completed session. Each attempt gives you fresh practice.
+      </Text>
+
+      <View style={styles.startStats}>
+        <MiniStat label="Session" value={String(day.source_session_number || "-")} />
+        <MiniStat label="Questions" value={String(questionsCount)} />
+        <MiniStat label="Streak" value={String(challenge?.current_streak || 0)} />
+      </View>
+
+      <Pressable style={styles.fullButton} onPress={onStart}>
+        <Text style={styles.fullButtonText}>Start Daily Activity</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function SessionActivityList({
+  sessions,
+  challenge,
+  startingSessionId,
+  onStart,
+}: {
+  sessions: StudentChallengeSession[];
+  challenge: StudentChallengeSummary | null;
+  startingSessionId: number | null;
+  onStart: (session: StudentChallengeSession) => void;
+}) {
+  if (!sessions.length) {
+    return (
+      <StateCard
+        icon="reader-outline"
+        title="No Completed Sessions Yet"
+        text="Complete a session in your logsheet to unlock session-wise Daily Activity."
+        challenge={challenge || undefined}
+      />
+    );
+  }
+
+  return (
+    <View style={styles.sessionListWrap}>
+      <View style={styles.streakBanner}>
+        <View style={styles.streakIconBig}>
+          <Ionicons name="flame-outline" size={24} color="#F97316" />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.streakBannerLabel}>Current Streak</Text>
+          <Text style={styles.streakBannerValue}>{challenge?.current_streak || 0} activities</Text>
+        </View>
+      </View>
+
+      {sessions.map((session) => (
+        <View key={session.id} style={styles.activitySessionCard}>
+          <View style={styles.activitySessionTop}>
+            <View style={styles.activitySessionIcon}>
+              <Ionicons name="book-outline" size={20} color="#5523D2" />
+            </View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={styles.activitySessionLabel}>Daily Activity</Text>
+              <Text style={styles.activitySessionTitle}>Session {session.session_number}</Text>
+            </View>
+          </View>
+          <View style={styles.activityMetaRow}>
+            <MiniStat label="Done" value={String(session.completed_attempts || 0)} />
+            <MiniStat label="Next" value={`#${session.next_attempt || 1}`} />
+          </View>
+          <Pressable
+            style={styles.fullButton}
+            onPress={() => onStart(session)}
+            disabled={startingSessionId === session.id}
+          >
+            {startingSessionId === session.id ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Text style={styles.fullButtonText}>Start Session {session.session_number}</Text>
+            )}
+          </Pressable>
+        </View>
+      ))}
     </View>
   );
 }
@@ -357,7 +513,7 @@ function StateCard({
       {challenge ? (
         <View style={styles.resultStats}>
           <MiniStat label="Streak" value={String(challenge.current_streak || 0)} />
-          <MiniStat label="Completed" value={`${challenge.completed_days || 0}/15`} />
+          <MiniStat label="Activities" value={`${challenge.completed_days || 0} done`} />
         </View>
       ) : null}
       <Pressable style={styles.fullButton} onPress={onAction || (() => router.replace("/home" as any))}>
@@ -379,10 +535,10 @@ function MiniStat({ label, value }: { label: string; value: string }) {
 function cleanError(message: string) {
   if (!message) return "Something went wrong. Please try again.";
   if (message.toLowerCase().includes("not enough eligible")) {
-    return "Your completed sessions do not have enough challenge questions yet.";
+    return "Your completed sessions do not have enough daily activity questions yet.";
   }
   if (message.toLowerCase().includes("not enrolled")) {
-    return "This challenge is not available for your assigned course and batch.";
+    return "This daily activity is not available for your assigned course and batch.";
   }
   return message;
 }
@@ -493,6 +649,165 @@ const styles = StyleSheet.create({
     color: "#92400E",
     fontSize: 12,
     fontWeight: "900",
+  },
+  sessionListWrap: {
+    gap: 14,
+  },
+  streakBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 22,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#FED7AA",
+    marginBottom: 2,
+  },
+  streakIconBig: {
+    width: 48,
+    height: 48,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FFF7ED",
+  },
+  streakBannerLabel: {
+    color: "#9A3412",
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  streakBannerValue: {
+    color: "#2E1065",
+    fontSize: 21,
+    fontWeight: "900",
+    marginTop: 2,
+  },
+  activitySessionCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 24,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#EEE7FF",
+  },
+  activitySessionTop: {
+    flexDirection: "row",
+    gap: 12,
+    alignItems: "flex-start",
+  },
+  activitySessionIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#F5F3FF",
+  },
+  activitySessionLabel: {
+    color: "#7C3AED",
+    fontSize: 11,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  activitySessionTitle: {
+    color: "#2E1065",
+    fontSize: 17,
+    lineHeight: 23,
+    fontWeight: "900",
+    marginTop: 2,
+  },
+  activitySessionTopics: {
+    color: "#6B5A80",
+    fontSize: 13,
+    lineHeight: 20,
+    fontWeight: "700",
+    marginTop: 12,
+  },
+  activityMetaRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 14,
+  },
+  startCard: {
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 26,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: "#EEE7FF",
+  },
+  startIcon: {
+    width: 72,
+    height: 72,
+    borderRadius: 24,
+    backgroundColor: "#5523D2",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12,
+  },
+  startKicker: {
+    color: "#7C3AED",
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  startTitle: {
+    color: "#2E1065",
+    fontSize: 24,
+    fontWeight: "900",
+    textAlign: "center",
+    marginTop: 4,
+  },
+  startText: {
+    color: "#5B526E",
+    fontSize: 14,
+    lineHeight: 21,
+    textAlign: "center",
+    marginTop: 10,
+  },
+  startStats: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 16,
+    alignSelf: "stretch",
+  },
+  sourceCard: {
+    flexDirection: "row",
+    gap: 12,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 20,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#EEE7FF",
+    marginBottom: 14,
+  },
+  sourceIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#F5F3FF",
+  },
+  sourceLabel: {
+    color: "#7C3AED",
+    fontSize: 11,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  sourceTitle: {
+    color: "#2E1065",
+    fontSize: 16,
+    fontWeight: "900",
+    marginTop: 2,
+  },
+  sourceText: {
+    color: "#6B5A80",
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 3,
+    fontWeight: "700",
   },
   questionCard: {
     backgroundColor: "#FFFFFF",

@@ -5,6 +5,7 @@ import {
   ActivityIndicator,
   Alert,
   Dimensions,
+  Linking,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -39,6 +40,15 @@ type AssignedTestItem = {
   test_id: number;
   test_title: string;
   test_description?: string;
+  test_type?: string;
+  creation_method?: string;
+  instructions?: string;
+  course_name?: string;
+  batch_code?: string;
+  batch_number?: string;
+  trainer?: string;
+  status?: string;
+  question_paper_url?: string | null;
   total_questions: number;
   assigned_date?: string;
 };
@@ -51,6 +61,10 @@ type TestResultItem = {
   total_questions?: number;
   percentage: number;
   submitted_at?: string;
+  creation_method?: string;
+  submission_file_url?: string | null;
+  manual_mark?: number | null;
+  max_marks?: number | null;
 };
 
 type Section = "upcoming" | "excel" | "done";
@@ -125,10 +139,24 @@ export default function QuizHome() {
       Alert.alert("Already completed", "You have already attended this test.");
       return;
     }
+    if (!Number(test.total_questions || 0) && !test.question_paper_url) {
+      Alert.alert("No questions", "This test does not have questions yet.");
+      return;
+    }
 
     router.push({
       pathname: "/(tabs)/app",
       params: { quizId: String(test.test_id), mode: "assigned-test" },
+    });
+  };
+
+  const viewTestPaper = (test: AssignedTestItem) => {
+    if (!test.question_paper_url) {
+      Alert.alert("No paper", "Question paper is not available for this test.");
+      return;
+    }
+    Linking.openURL(test.question_paper_url).catch(() => {
+      Alert.alert("Unable to open", "Could not open the question paper.");
     });
   };
 
@@ -138,7 +166,7 @@ export default function QuizHome() {
         <StatusBar backgroundColor="#F6F3FF" barStyle="dark-content" />
         <View style={styles.loaderWrap}>
           <ActivityIndicator size="large" color="#5523D2" />
-          <Text style={styles.loaderText}>Loading quiz modules...</Text>
+          <Text style={styles.loaderText}>Loading tests...</Text>
         </View>
       </SafeAreaView>
     );
@@ -155,8 +183,8 @@ export default function QuizHome() {
               <Ionicons name="school-outline" size={28} color="#FFFFFF" />
             </View>
             <View style={styles.heroCopy}>
-              <Text style={styles.kicker}>Student Quizzes</Text>
-              <Text style={styles.heading}>Quizzes</Text>
+              <Text style={styles.kicker}>Mentor Assessments</Text>
+              <Text style={styles.heading}>Tests</Text>
             </View>
             <Pressable style={styles.refreshBtn} onPress={loadData}>
               <Ionicons name="refresh" size={20} color="#5523D2" />
@@ -166,11 +194,11 @@ export default function QuizHome() {
           <View style={styles.statRow}>
             <View style={styles.statPill}>
               <Text style={styles.statValue}>{availableAssignedTests.length}</Text>
-              <Text style={styles.statLabel}>Test</Text>
+              <Text style={styles.statLabel}>Tests</Text>
             </View>
             <View style={styles.statPill}>
               <Text style={styles.statValue}>{availableExcelQuizzes.length}</Text>
-              <Text style={styles.statLabel}>Quiz</Text>
+              <Text style={styles.statLabel}>Quizzes</Text>
             </View>
             <Pressable style={styles.statPill} onPress={() => setSection("done")}>
               <Text style={styles.statValue}>{testResults.length + completedExcelQuizzes.length}</Text>
@@ -190,7 +218,7 @@ export default function QuizHome() {
               color={section === "upcoming" ? "#FFFFFF" : "#5523D2"}
             />
             <Text style={[styles.segmentText, section === "upcoming" && styles.segmentTextActive]}>
-              Test
+              Tests
             </Text>
           </Pressable>
           <Pressable
@@ -203,7 +231,7 @@ export default function QuizHome() {
               color={section === "excel" ? "#FFFFFF" : "#5523D2"}
             />
             <Text style={[styles.segmentText, section === "excel" && styles.segmentTextActive]}>
-              Quiz
+              Quizzes
             </Text>
           </Pressable>
           <Pressable
@@ -224,8 +252,8 @@ export default function QuizHome() {
         {section === "upcoming" ? (
           <View style={styles.sectionWrap}>
             <SectionHeader
-              title="Test"
-              subtitle="Tests created and assigned by your mentor"
+              title="Technical Tests"
+              subtitle="Tests uploaded and assigned by your mentor"
             />
             {availableAssignedTests.length ? (
               availableAssignedTests.map((test) => {
@@ -238,7 +266,7 @@ export default function QuizHome() {
                       <View style={styles.cardTitleCopy}>
                         <Text style={styles.cardTitle}>{test.test_title}</Text>
                         <Text style={[styles.statusPill, styles.statusReady]}>
-                          Ready to attend
+                          {(test.status || "available") === "available" ? "Ready to attend" : test.status}
                         </Text>
                       </View>
                     </View>
@@ -246,6 +274,18 @@ export default function QuizHome() {
                       <Text style={styles.description}>{test.test_description}</Text>
                     )}
                     <View style={styles.metaWrap}>
+                      {!!test.course_name && (
+                        <View style={styles.metaChip}>
+                          <Ionicons name="book-outline" size={15} color="#5523D2" />
+                          <Text style={styles.metaText}>{test.course_name}</Text>
+                        </View>
+                      )}
+                      {!!test.trainer && (
+                        <View style={styles.metaChip}>
+                          <Ionicons name="person-outline" size={15} color="#5523D2" />
+                          <Text style={styles.metaText}>{test.trainer}</Text>
+                        </View>
+                      )}
                       <View style={styles.metaChip}>
                         <Ionicons name="help-circle-outline" size={15} color="#5523D2" />
                         <Text style={styles.metaText}>{test.total_questions} Questions</Text>
@@ -255,13 +295,26 @@ export default function QuizHome() {
                         <Text style={styles.metaText}>{test.assigned_date || "Assigned Test"}</Text>
                       </View>
                     </View>
-                    <Pressable
-                      style={styles.startBtn}
-                      onPress={() => startAssignedTest(test)}
-                    >
-                      <MaterialIcons name="play-arrow" size={22} color="#fff" />
-                      <Text style={styles.startBtnText}>Start Test</Text>
-                    </Pressable>
+                    <View style={styles.actionRow}>
+                      {!!test.question_paper_url && (
+                        <Pressable
+                          style={[styles.startBtn, styles.secondaryBtn]}
+                          onPress={() => viewTestPaper(test)}
+                        >
+                          <Ionicons name="document-attach-outline" size={19} color="#5523D2" />
+                          <Text style={styles.secondaryBtnText}>View File</Text>
+                        </Pressable>
+                      )}
+                      <Pressable
+                        style={styles.startBtn}
+                        onPress={() => startAssignedTest(test)}
+                      >
+                        <MaterialIcons name={Number(test.total_questions || 0) ? "play-arrow" : "upload-file"} size={22} color="#fff" />
+                        <Text style={styles.startBtnText}>
+                          {Number(test.total_questions || 0) ? "Start Test" : "Answer File"}
+                        </Text>
+                      </Pressable>
+                    </View>
                   </View>
                 );
               })
@@ -272,7 +325,7 @@ export default function QuizHome() {
         ) : section === "excel" ? (
           <View style={styles.sectionWrap}>
             <SectionHeader
-              title="Quiz"
+              title="Quizzes"
               subtitle="Published quizzes uploaded by your mentor"
             />
             {availableExcelQuizzes.length ? (
@@ -286,8 +339,8 @@ export default function QuizHome() {
         ) : (
           <View style={styles.sectionWrap}>
             <SectionHeader
-              title="Done"
-              subtitle="Quizzes and tests you already attended"
+              title="Completed"
+              subtitle="Tests and quizzes you already attended"
             />
             {testResults.length || completedExcelQuizzes.length ? (
               <View style={styles.historyCard}>
@@ -298,7 +351,11 @@ export default function QuizHome() {
                     </Text>
                     <Text style={styles.historyText}>Type: TEST</Text>
                     <Text style={styles.historyText}>
-                      Score: {result.score ?? "-"} / {result.total_questions ?? "-"} ({result.percentage}%)
+                      {result.creation_method === "upload"
+                        ? result.manual_mark != null
+                          ? `Mark: ${result.manual_mark}/${result.max_marks || 100} (${result.percentage}%)`
+                          : "Submitted: Waiting for mentor mark"
+                        : `Score: ${result.score ?? "-"} / ${result.total_questions ?? "-"} (${result.percentage}%)`}
                     </Text>
                     {!!result.submitted_at && (
                       <Text style={styles.historyText}>Attended: {new Date(result.submitted_at).toLocaleDateString()}</Text>
@@ -317,7 +374,7 @@ export default function QuizHome() {
                 ))}
               </View>
             ) : (
-              <EmptyCard text="No attended quizzes or tests yet." />
+              <EmptyCard text="No attended tests or quizzes yet." />
             )}
           </View>
         )}
@@ -711,6 +768,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     borderRadius: 16,
     gap: 6,
+  },
+  actionRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 16,
+  },
+  secondaryBtn: {
+    flex: 1,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#DDD6FE",
+  },
+  secondaryBtnText: {
+    color: "#5523D2",
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  startBtnDisabled: {
+    backgroundColor: "#8B7CB8",
   },
   disabledBtn: {
     backgroundColor: "#98A2B3",

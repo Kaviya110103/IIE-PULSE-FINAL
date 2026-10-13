@@ -19,7 +19,7 @@ import {
   AdminMentorSupportRequest, AdminMentorSupportHistory,
   AdminCounselorSupportRequest, AdminCounselorSupportHistory,
   AdminStudentSupportRequest, AdminStudentSupportHistory, AdminAnnouncements, AdminFeeManagement,
-  AdminCalendar, AdminGallery, AdminNews, AdminReferrals, AdminVlogs,
+  AdminCalendar, AdminGallery, AdminAwards, AdminNews, AdminReferrals, AdminVlogs,
   AdminEmployeeMonitoring, AdminStudentMonitoring, AdminEmployeeTracking, AdminPublicUsers,
 } from './pages/admin/AdminPages'
 
@@ -33,6 +33,7 @@ import {
   CreateTest, ViewTests, TestResults, AddQuestions,
   UploadQuiz, ManageQuizzes, StaffQuizResults, MentorStudentMonitoring, ReassignedStudents
 } from './pages/employee/EmployeePages'
+import StaffDailyActivityResults from './pages/employee/StaffDailyActivityResults'
 
 // ── Counselor ──────────────────────────────────────────────────────────────
 import {
@@ -47,6 +48,8 @@ import {
   StudentQuizList, StudentTests, StudentLeave, StudentMaterials, StudentSupport, StudentFeeDetails,
   StudentChallenge, StudentLoginRatingHistory,
 } from './pages/student/StudentPages'
+import StudentDesk from './pages/student/StudentDesk'
+import StudentProfile from './pages/student/StudentProfile'
 
 function ProtectedRoute({ children, allowedRoles }) {
   const { user } = useAuth()
@@ -197,6 +200,7 @@ function AppRoutes() {
         <Route path="batches" element={<BatchesList />} />
         <Route path="announcements" element={<AdminAnnouncements />} />
         <Route path="gallery" element={<AdminGallery />} />
+        <Route path="awards" element={<AdminAwards />} />
         <Route path="vlogs" element={<AdminVlogs />} />
         <Route path="news" element={<AdminNews />} />
         <Route path="calendar" element={<AdminCalendar />} />
@@ -247,6 +251,7 @@ function AppRoutes() {
         <Route path="trainer-announcements" element={<TrainerAnnouncements />} />
         <Route path="branch-announcements" element={<BranchAnnouncements />} />
         <Route path="monitoring/students" element={<MentorStudentMonitoring />} />
+        <Route path="daily-activity-results" element={<StaffDailyActivityResults />} />
 
         {/* Leave Management Routes */}
         <Route path="student-leave/pending" element={<StaffStudentLeaveRequests />} />
@@ -255,8 +260,8 @@ function AppRoutes() {
         <Route path="leave" element={<StaffLeaveApply />} />
         <Route path="leave/apply" element={<StaffLeaveApply />} />
 
-        <Route path="materials" element={<StudyMaterials />} />
-        <Route path="materials/upload" element={<StudyMaterials />} />
+        <Route path="materials" element={<MaterialLibrary />} />
+        <Route path="materials/upload" element={<MaterialLibrary />} />
         <Route path="material-library" element={<MaterialLibrary />} />
 
         {/* Test Routes */}
@@ -290,6 +295,8 @@ function AppRoutes() {
         <Route path="batches" element={<BatchesList staffView />} />
         <Route path="announcements" element={<CounselorAnnouncements />} />
         <Route path="admin-announcements" element={<StaffAnnouncements />} />
+        <Route path="awards" element={<AdminAwards />} />
+        <Route path="public-users" element={<AdminPublicUsers />} />
         <Route path="fees" element={<CounselorFeeManagement />} />
         <Route path="leave" element={<CounselorLeaveApply />} />
         <Route path="leave/apply" element={<CounselorLeaveApply />} />
@@ -304,9 +311,11 @@ function AppRoutes() {
       {/* ── STUDENT ───────────────────────────────────────────────── */}
       <Route path="/student" element={<ProtectedRoute allowedRoles={['student']}><AppLayout role="student" /></ProtectedRoute>}>
         <Route index element={<StudentDashboard />} />
+        <Route path="profile" element={<StudentProfile />} />
         <Route path="announcements" element={<StudentAnnouncements />} />
         <Route path="branch-announcements" element={<BranchAnnouncements />} />
         <Route path="attendance" element={<StudentAttendance />} />
+        <Route path="desk" element={<StudentDesk />} />
         <Route path="batches" element={<StudentBatches />} />
         <Route path="sessions" element={<StudentSessions />} />
         <Route path="challenge" element={<StudentChallenge />} />

@@ -56,7 +56,6 @@ const bottomNavItems: PublicBottomNavItem[] = [
   { key: "news", label: "News", icon: "newspaper-outline", route: { pathname: "/welcome", params: { module: "news" } } as Href },
   { key: "home", label: "Home", icon: "home", route: "/welcome" },
   { key: "gallery", label: "Gallery", icon: "image-outline", route: { pathname: "/welcome", params: { module: "gallery" } } as Href },
-  { key: "vlogs", label: "Vlogs", icon: "videocam-outline", route: { pathname: "/welcome", params: { module: "vlogs" } } as Href },
   { key: "contact", label: "Contact Us", icon: "business-outline", route: { pathname: "/welcome", params: { module: "contact" } } as Href },
 ];
 
@@ -103,7 +102,7 @@ export default function PublicOverview() {
         setQuizzes(response.data?.results || []);
       } catch (error: any) {
         setQuizzes([]);
-        setErrorMsg(error?.response?.data?.error || "Practice tests not loaded.");
+        setErrorMsg(error?.response?.data?.error || "Skillset quizzes not loaded.");
       }
       setLastLoadedAt(Date.now());
     } catch (error: any) {
@@ -143,7 +142,7 @@ export default function PublicOverview() {
   };
 
   const showRegisterPrompt = () => {
-    Alert.alert("Access restricted", "kindly register here to access this page", [
+    Alert.alert("Access restricted", "This feature is available for enrolled students. Kindly contact our counsellor at 9159779111 to join with IIE Pulse.", [
       { text: "Cancel", style: "cancel" },
       { text: "Register", onPress: () => Linking.openURL(googleFormUrl) },
     ]);
@@ -230,13 +229,13 @@ export default function PublicOverview() {
             </View>
           </View>
           <Text style={styles.heroText}>
-            Track your practice test journey and keep improving with every attempt.
+            Track your skillset journey and keep improving with every attempt.
           </Text>
           <TouchableOpacity
             style={styles.heroButton}
             onPress={() => router.push({ pathname: "/welcome", params: { module: "practice" } } as any)}
           >
-            <Text style={styles.heroButtonText}>Start Practice Test</Text>
+            <Text style={styles.heroButtonText}>Start Skillset</Text>
             <Ionicons name="arrow-forward" size={18} color="#5523D2" />
           </TouchableOpacity>
         </View>
@@ -261,8 +260,8 @@ export default function PublicOverview() {
           </View>
           <Text style={styles.progressHint}>
             {stats.totalTests
-              ? `${stats.totalTests - stats.completed} practice test${stats.totalTests - stats.completed === 1 ? "" : "s"} pending.`
-              : "Practice tests will appear once published."}
+              ? `${stats.totalTests - stats.completed} skillset quiz${stats.totalTests - stats.completed === 1 ? "" : "zes"} pending.`
+              : "Skillset quizzes will appear once published."}
           </Text>
         </View>
 
@@ -304,7 +303,7 @@ export default function PublicOverview() {
             <View style={styles.emptyBox}>
               <Ionicons name="sparkles-outline" size={28} color="#A78BFA" />
               <Text style={styles.emptyTitle}>No attempts yet</Text>
-              <Text style={styles.emptyText}>Attend a practice test to see progress here.</Text>
+              <Text style={styles.emptyText}>Attend a skillset quiz to see progress here.</Text>
             </View>
           )}
         </View>

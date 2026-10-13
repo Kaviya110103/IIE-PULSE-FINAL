@@ -4,6 +4,9 @@ import json
 import re
 import calendar
 import mimetypes
+import zipfile
+import uuid
+import base64
 from pathlib import Path
 from html import escape
 from django.contrib.auth import authenticate
@@ -42,6 +45,7 @@ import PyPDF2
 from django.db import transaction  # Add this at the top of your views.py
 from django.core.cache import cache
 from django.conf import settings
+from django.core.files.base import ContentFile
 from django.http import FileResponse, HttpResponse
 from django.core.mail import EmailMultiAlternatives
 import os
@@ -64,10 +68,10 @@ def get_portal_url(request=None):
     return ''
 
 # -- BREVO EMAIL HELPER -------------------------------------------------------
-def send_brevo_email(to_email, subject, html_content, text_content=""):
+def send_brevo_email(to_email, subject, html_content, text_content="", attachments=None):
     api_key = os.getenv('BREVO_API_KEY', getattr(settings, 'BREVO_API_KEY', ''))
     from_email = os.getenv('DEFAULT_FROM_EMAIL', getattr(settings, 'DEFAULT_FROM_EMAIL', ''))
-    from_name = os.getenv('DEFAULT_FROM_NAME', getattr(settings, 'DEFAULT_FROM_NAME', 'IIE Pulse'))
+    from_name = 'IIE Pulse'
 
     if not api_key:
         raise RuntimeError('BREVO_API_KEY is not configured')
@@ -83,6 +87,15 @@ def send_brevo_email(to_email, subject, html_content, text_content=""):
     }
     if text_content:
         payload['textContent'] = text_content
+    if attachments:
+        payload['attachment'] = [
+            {
+                'name': item['filename'],
+                'content': base64.b64encode(item['content']).decode('ascii'),
+            }
+            for item in attachments
+            if item.get('filename') and item.get('content')
+        ]
 
     response = requests.post(
         'https://api.brevo.com/v3/smtp/email',
@@ -108,7 +121,7 @@ def send_brevo_email(to_email, subject, html_content, text_content=""):
     return response.json() if response.content else {}
 
 
-def send_smtp_email(to_email, subject, html_content, text_content=""):
+def send_smtp_email(to_email, subject, html_content, text_content="", attachments=None):
     from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', '')
     host_user = getattr(settings, 'EMAIL_HOST_USER', '')
     host_password = getattr(settings, 'EMAIL_HOST_PASSWORD', '')
@@ -128,19 +141,22 @@ def send_smtp_email(to_email, subject, html_content, text_content=""):
     msg = EmailMultiAlternatives(subject, text_content or '', from_email, recipients)
     if html_content:
         msg.attach_alternative(html_content, 'text/html')
+    for item in attachments or []:
+        if item.get('filename') and item.get('content'):
+            msg.attach(item['filename'], item['content'], item.get('mimetype', 'application/octet-stream'))
     sent_count = msg.send(fail_silently=False)
     logger.info('SMTP email sent to %s subject=%s count=%s', recipients, subject, sent_count)
     return {'sent': sent_count}
 
 
-def send_configured_email(to_email, subject, html_content, text_content=""):
+def send_configured_email(to_email, subject, html_content, text_content="", attachments=None):
     api_key = os.getenv('BREVO_API_KEY', getattr(settings, 'BREVO_API_KEY', ''))
     if api_key:
-        return send_brevo_email(to_email, subject, html_content, text_content)
-    return send_smtp_email(to_email, subject, html_content, text_content)
+        return send_brevo_email(to_email, subject, html_content, text_content, attachments=attachments)
+    return send_smtp_email(to_email, subject, html_content, text_content, attachments=attachments)
 
 
-def send_email_async(subject, message, recipient_list):
+def send_email_async(subject, message, recipient_list, attachments=None, html_content=None):
     """
     Send email asynchronously through the configured email provider. Errors are
     logged but do not fail the caller.
@@ -154,8 +170,9 @@ def send_email_async(subject, message, recipient_list):
             send_configured_email(
                 to_email=recipient_list,
                 subject=subject,
-                html_content=f"<pre style=\"font-family: Arial, sans-serif; white-space: pre-wrap;\">{escape(message)}</pre>",
+                html_content=html_content or f"<pre style=\"font-family: Arial, sans-serif; white-space: pre-wrap;\">{escape(message)}</pre>",
                 text_content=message,
+                attachments=attachments,
             )
         except Exception as e:
             print(f"Email error: {e}")
@@ -174,7 +191,7 @@ from .models import (
     Announcement, CounselorAnnouncement, CounselorLeaveRequest, CounselorSupportRequest,
     Quiz, QuizQuestion, QuizAttempt, QuizAnswer,
     CompletedStudent, ReassignedStudentRecord, SessionCompletionRequest, TestResult,FeePaymentRequest,
-    GalleryItem, VlogItem, NewsItem, CalendarEvent, Referral,
+    GalleryItem, AwardItem, VlogItem, NewsItem, CalendarEvent, Referral,
     PublicUser, PublicUserActivity, PublicPracticeResult,
     StudentChallenge, StudentChallengeDay,
 )
@@ -189,15 +206,17 @@ from .serializers import (
     CounselorSupportRequestSerializer, QuizSerializer, QuizQuestionSerializer,
     QuizAttemptSerializer, CompletedStudentSerializer,
     SessionCompletionRequestSerializer, LoginSerializer,
-    GalleryItemSerializer, VlogItemSerializer, NewsItemSerializer,
+    GalleryItemSerializer, AwardItemSerializer, VlogItemSerializer, NewsItemSerializer,
     CalendarEventSerializer, ReferralSerializer, CounselorAnnouncementSerializer, strip_unsupported_mysql_chars,
     StudentChallengeSummarySerializer, StudentChallengeDaySerializer,
     StudentChallengeHistorySerializer, StudentChallengeSubmitSerializer,
 )
 from .services.challenge_service import (
     ChallengeValidationError,
+    get_or_create_session_challenge_day,
     get_or_create_today_challenge_day,
     get_or_create_student_challenge,
+    get_student_challenge_sessions,
     get_student_course_batch_pairs,
     submit_challenge_day,
 )
@@ -371,6 +390,9 @@ def extract_msg91_verified_mobile(data):
 
 
 ACTIVITY_TIMEOUT = timedelta(minutes=5)
+SINGLE_DEVICE_LOGIN_MESSAGE = (
+    'You are already logged in on another device. Please logout from that device and login again.'
+)
 
 
 def close_stale_activity_sessions(qs=None):
@@ -390,14 +412,34 @@ def close_stale_activity_sessions(qs=None):
         )
 
 
+def has_active_user_session(user):
+    try:
+        close_stale_activity_sessions(UserActivity.objects.filter(user=user))
+        return UserActivity.objects.filter(
+            user=user,
+            logout_time__isnull=True,
+        ).exists()
+    except Exception:
+        logger.exception("Failed to check active user session for user_id=%s", getattr(user, 'id', None))
+        return False
+
+
+def single_device_login_conflict_response(user):
+    if has_active_user_session(user):
+        return Response({'error': SINGLE_DEVICE_LOGIN_MESSAGE}, status=409)
+    return None
+
+
 def record_user_login(user, user_type, employee=None, student=None):
     now = timezone.now()
     try:
         close_stale_activity_sessions(UserActivity.objects.filter(user=user))
-        UserActivity.objects.filter(
+        if UserActivity.objects.filter(
             user=user,
             logout_time__isnull=True,
-        ).update(logout_time=now, last_seen=now)
+        ).exists():
+            logger.warning("Blocked duplicate active login activity for user_id=%s", getattr(user, 'id', None))
+            return
         UserActivity.objects.create(
             user=user,
             user_type=user_type,
@@ -520,19 +562,23 @@ def build_student_weekly_login_rating(student, week_start=None):
                 activity_counts[login_day] += 1
 
     days = []
-    stars = 0
+    today = timezone.localdate()
+    deducted_stars = 0
     for day in rating_days:
         activity_count = activity_counts.get(day, 0)
-        earned = activity_count >= 2
-        if earned:
-            stars += 1
+        is_applicable_day = day <= today
+        deducted = bool(is_applicable_day and activity_count < 2)
+        if deducted:
+            deducted_stars += 1
         days.append({
             'date': day.isoformat(),
             'day': day.strftime('%a'),
             'login_count': activity_count,
             'activity_count': activity_count,
-            'earned': earned,
+            'earned': bool(is_applicable_day and not deducted),
+            'deducted': deducted,
         })
+    stars = max(0, 5 - deducted_stars)
 
     return {
         'week_start': start_date.isoformat(),
@@ -939,6 +985,9 @@ class LoginView(APIView):
                 employee = Employee.objects.get(user=user)
             except Employee.DoesNotExist:
                 return Response({'error': 'Employee account not found.'}, status=403)
+            conflict = single_device_login_conflict_response(user)
+            if conflict is not None:
+                return conflict
             record_user_login(user, 'employee', employee=employee)
             return Response({
                 **get_tokens_for_user(user),
@@ -954,6 +1003,9 @@ class LoginView(APIView):
                 student = Students.objects.get(user=user)
             except Students.DoesNotExist:
                 return Response({'error': 'Student account not found.'}, status=403)
+            conflict = single_device_login_conflict_response(user)
+            if conflict is not None:
+                return conflict
             return Response(build_student_login_payload(user, student))
 
         return Response({'error': 'Invalid user type.'}, status=400)
@@ -1156,6 +1208,10 @@ class StudentOtpVerifyView(APIView):
         if student.id != request_state.get('student_id'):
             return Response({'error': 'Student account mismatch. Please request a new OTP.'}, status=400)
 
+        conflict = single_device_login_conflict_response(student.user)
+        if conflict is not None:
+            return conflict
+
         cache.delete(f'otp:req:{req_id}')
         return Response(build_student_login_payload(student.user, student))
 
@@ -1343,6 +1399,21 @@ class EmployeeDashboardView(APIView):
         })
 
 
+def build_student_birthday_wish(student):
+    dob = getattr(student, 'date_of_birth', None)
+    today = timezone.localdate()
+    full_name = f"{student.first_name or ''} {student.last_name or ''}".strip()
+    display_name = full_name or getattr(student, 'student_id', '') or 'Student'
+    is_birthday = bool(dob and dob.month == today.month and dob.day == today.day)
+
+    return {
+        'is_birthday': is_birthday,
+        'student_name': display_name,
+        'message': f'Happy Birthday, {display_name}!',
+        'date': today.isoformat(),
+    }
+
+
 class StudentDashboardView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -1458,6 +1529,7 @@ class StudentDashboardView(APIView):
 
         return Response({
             'student': StudentSerializer(student).data,
+            'birthday_wish': build_student_birthday_wish(student),
             'attendance_percentage': round((present_att / total_att * 100) if total_att else 0, 1),
             'total_classes': total_att,
             'present_classes': present_att,
@@ -1486,6 +1558,7 @@ def student_weekly_login_rating(request):
             'minimum_logins_per_day': 2,
             'rating_days': 5,
             'reset': 'weekly',
+            'mode': 'starts_at_5_and_decreases',
         },
     })
 
@@ -1549,16 +1622,47 @@ def student_challenge_today(request):
     except (Courses.DoesNotExist, Batches.DoesNotExist, TypeError, ValueError):
         return Response({'error': 'Valid course_id and batch_id are required.'}, status=400)
 
+    session_id = request.query_params.get('session_id')
     try:
-        result = get_or_create_today_challenge_day(student, course, batch)
+        if session_id:
+            source_session = CourseSession.objects.get(id=session_id)
+            result = get_or_create_session_challenge_day(student, course, batch, source_session)
+        else:
+            result = get_or_create_today_challenge_day(student, course, batch)
     except ChallengeValidationError as exc:
         return Response({'error': str(exc)}, status=403)
+    except CourseSession.DoesNotExist:
+        return Response({'error': 'Session not found'}, status=404)
 
     return Response({
         'state': result['state'],
         'message': result['message'],
         'challenge': StudentChallengeSummarySerializer(result['challenge']).data,
         'day': StudentChallengeDaySerializer(result['day']).data if result['day'] else None,
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def student_challenge_sessions(request):
+    student = get_current_student_for_request(request)
+    if not student:
+        return Response({'error': 'Student not found'}, status=404)
+
+    try:
+        course = Courses.objects.get(id=request.query_params.get('course_id'))
+        batch = Batches.objects.get(id=request.query_params.get('batch_id'))
+    except (Courses.DoesNotExist, Batches.DoesNotExist, TypeError, ValueError):
+        return Response({'error': 'Valid course_id and batch_id are required.'}, status=400)
+
+    try:
+        challenge, sessions = get_student_challenge_sessions(student, course, batch)
+    except ChallengeValidationError as exc:
+        return Response({'error': str(exc)}, status=403)
+
+    return Response({
+        'challenge': StudentChallengeSummarySerializer(challenge).data,
+        'sessions': sessions,
     })
 
 
@@ -1617,6 +1721,43 @@ def student_challenge_history(request):
         days = StudentChallengeDay.objects.filter(challenge=challenge).order_by('day_number')
         results.append({
             'challenge': StudentChallengeSummarySerializer(challenge).data,
+            'days': StudentChallengeHistorySerializer(days, many=True).data,
+        })
+
+    return Response({'results': results})
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def staff_daily_activity_results(request):
+    staff = Employee.objects.filter(user=request.user).first()
+    if not staff and not is_admin_user(request.user):
+        return Response({'error': 'Staff not found'}, status=404)
+
+    qs = StudentChallenge.objects.select_related('student', 'course', 'batch').prefetch_related('days')
+    if staff and not is_admin_user(request.user):
+        qs = qs.filter(
+            Q(student__assigned_staff=staff)
+            | Q(batch__faculty=staff)
+            | Q(batch__trainer_assignments__trainer=staff)
+        ).distinct()
+
+    student_id = request.query_params.get('student_id')
+    if student_id:
+        qs = qs.filter(student_id=student_id)
+
+    results = []
+    for challenge in qs.order_by('student__first_name', 'course__course_name', 'batch__batch_number'):
+        serialized = StudentChallengeSummarySerializer(challenge).data
+        days = StudentChallengeDay.objects.filter(challenge=challenge).order_by('day_number')
+        results.append({
+            'student_id': challenge.student_id,
+            'student_code': challenge.student.student_id,
+            'student_name': f"{challenge.student.first_name} {challenge.student.last_name or ''}".strip(),
+            'course_name': challenge.course.course_name if challenge.course else '',
+            'batch_number': challenge.batch.batch_number if challenge.batch else '',
+            'batch_code': challenge.batch.batch_code if challenge.batch else '',
+            'summary': serialized,
             'days': StudentChallengeHistorySerializer(days, many=True).data,
         })
 
@@ -1791,6 +1932,55 @@ class GalleryItemDetailView(generics.RetrieveUpdateDestroyAPIView):
         if self.request.method == 'GET':
             return [AllowAny()]
         return [IsAdminUser()]
+
+
+def _user_can_manage_awards(user):
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_staff or user.is_superuser:
+        return True
+    employee = Employee.objects.filter(user=user, designation__iexact='counselor').first()
+    return bool(employee)
+
+
+class AwardItemListCreateView(generics.ListCreateAPIView):
+    queryset = AwardItem.objects.all().order_by('-created_at')
+    serializer_class = AwardItemSerializer
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+    def create(self, request, *args, **kwargs):
+        if not _user_can_manage_awards(request.user):
+            return Response({'error': 'Admin or counselor access required.'}, status=status.HTTP_403_FORBIDDEN)
+        return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        serializer.save(uploaded_by=self.request.user)
+
+
+class AwardItemDetailView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = AwardItem.objects.all()
+    serializer_class = AwardItemSerializer
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+    def update(self, request, *args, **kwargs):
+        if not _user_can_manage_awards(request.user):
+            return Response({'error': 'Admin or counselor access required.'}, status=status.HTTP_403_FORBIDDEN)
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        if not _user_can_manage_awards(request.user):
+            return Response({'error': 'Admin or counselor access required.'}, status=status.HTTP_403_FORBIDDEN)
+        return super().destroy(request, *args, **kwargs)
 
 
 class VlogItemListCreateView(generics.ListCreateAPIView):
@@ -3148,13 +3338,41 @@ class StudentDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 class StudentProfileView(APIView):
     permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get(self, request):
         try:
             student = Students.objects.get(user=request.user)
-            return Response(StudentSerializer(student).data)
+            return Response(StudentSerializer(student, context={'request': request}).data)
         except Students.DoesNotExist:
             return Response({'error': 'Not found'}, status=404)
+
+    def put(self, request):
+        try:
+            student = Students.objects.get(user=request.user)
+        except Students.DoesNotExist:
+            return Response({'error': 'Not found'}, status=404)
+
+        editable_fields = ['first_name', 'last_name', 'date_of_birth', 'email', 'mobile_no', 'photo']
+        update_data = {
+            field: request.data[field]
+            for field in editable_fields
+            if field in request.data and request.data[field] not in (None, '')
+        }
+
+        new_email = str(update_data.get('email', '')).strip().lower()
+        if new_email and new_email != student.email:
+            if User.objects.filter(username=new_email).exclude(pk=student.user_id).exists():
+                return Response({'error': 'This email is already registered!'}, status=400)
+            student.user.username = new_email
+            student.user.email = new_email
+            student.user.save(update_fields=['username', 'email'])
+            update_data['email'] = new_email
+
+        serializer = StudentSerializer(student, data=update_data, partial=True, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
 
 
 from .models import FeePayment, FeeTransaction
@@ -4171,10 +4389,11 @@ class StudyMaterialListView(generics.ListAPIView):
             try:
                 student = Students.objects.get(user=user)
                 student_batches_list = _student_accessible_batches(student)
-                if student_batches_list:
+                student_batch_ids = [batch.id for batch in student_batches_list if batch]
+                if student_batch_ids:
                     return qs.filter(
-                        Q(batch__in=student_batches_list) |
-                        Q(assignments__batch__in=student_batches_list)
+                        Q(batch_id__in=student_batch_ids, is_library=False) |
+                        Q(assignments__batch_id__in=student_batch_ids)
                     ).distinct()
                 return qs.none()
             except Students.DoesNotExist:
@@ -4230,7 +4449,15 @@ def material_library_list(request):
     batch = request.query_params.get('batch')
 
     if search:
-        qs = qs.filter(title__icontains=search)
+        qs = qs.filter(
+            Q(title__icontains=search) |
+            Q(description__icontains=search) |
+            Q(file__icontains=search) |
+            Q(assignments__batch__batch_number__icontains=search) |
+            Q(assignments__batch__batch_code__icontains=search) |
+            Q(assignments__batch__branch__icontains=search) |
+            Q(assignments__batch__course_name__course_name__icontains=search)
+        )
     if branch:
         qs = qs.filter(assignments__batch__branch=branch)
     if batch:
@@ -4263,48 +4490,64 @@ def material_library_assign(request):
         return Response({'error': 'Only employees can assign library materials.'}, status=status.HTTP_403_FORBIDDEN)
 
     material_id = request.data.get('material') or request.data.get('material_id')
-    batch_id = request.data.get('batch') or request.data.get('batch_id')
+    batch_ids = []
+    if hasattr(request.data, 'getlist'):
+        batch_ids.extend(request.data.getlist('batches'))
+        batch_ids.extend(request.data.getlist('batch_ids'))
+    raw_batch_ids = request.data.get('batches') or request.data.get('batch_ids')
+    if isinstance(raw_batch_ids, list):
+        batch_ids.extend(raw_batch_ids)
+    elif raw_batch_ids:
+        batch_ids.extend(str(raw_batch_ids).split(','))
+    single_batch_id = request.data.get('batch') or request.data.get('batch_id')
+    if single_batch_id:
+        batch_ids.append(single_batch_id)
+    batch_ids = [str(batch_id).strip() for batch_id in batch_ids if str(batch_id).strip()]
 
     if not material_id:
         return Response({'material': ['Library material is required.']}, status=status.HTTP_400_BAD_REQUEST)
-    if not batch_id:
-        return Response({'batch': ['Target batch is required.']}, status=status.HTTP_400_BAD_REQUEST)
+    if not batch_ids:
+        return Response({'batch': ['At least one target batch is required.']}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
         material = StudyMaterial.objects.get(id=material_id, is_library=True, uploaded_by=emp)
     except StudyMaterial.DoesNotExist:
         return Response({'error': 'Library material not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-    if not material.file:
-        return Response({'error': 'Material file is missing.'}, status=status.HTTP_404_NOT_FOUND)
+    batches = []
+    invalid_batches = []
+    unauthorized_batches = []
+    for batch_id in dict.fromkeys(batch_ids):
+        try:
+            batch = Batches.objects.get(id=batch_id)
+        except (Batches.DoesNotExist, ValueError, TypeError):
+            invalid_batches.append(batch_id)
+            continue
+        if not (_is_batch_trainer(batch, emp) or _is_previous_trainer_for_batch(batch, emp)):
+            unauthorized_batches.append(batch.batch_number)
+            continue
+        batches.append(batch)
 
-    try:
-        file_path = material.file.path
-    except (NotImplementedError, ValueError):
-        file_path = None
+    if invalid_batches:
+        return Response({'error': 'One or more selected batches are invalid.'}, status=status.HTTP_400_BAD_REQUEST)
+    if unauthorized_batches:
+        return Response({'error': f"You are not allowed to assign materials for: {', '.join(unauthorized_batches)}"}, status=status.HTTP_403_FORBIDDEN)
 
-    if file_path and not os.path.exists(file_path):
-        return Response({'error': 'Material file is missing on server.'}, status=status.HTTP_404_NOT_FOUND)
-
-    try:
-        batch = Batches.objects.get(id=batch_id)
-    except Batches.DoesNotExist:
-        return Response({'error': 'Selected batch is invalid.'}, status=status.HTTP_400_BAD_REQUEST)
-    except (ValueError, TypeError):
-        return Response({'error': 'Selected batch is invalid.'}, status=status.HTTP_400_BAD_REQUEST)
-
-    if not (_is_batch_trainer(batch, emp) or _is_previous_trainer_for_batch(batch, emp)):
-        return Response({'error': 'You are not allowed to assign materials for this batch.'}, status=status.HTTP_403_FORBIDDEN)
-
-    try:
-        assignment, created = _assign_material_to_batch(material, batch.id, emp)
-    except ValueError as exc:
-        return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    created_count = 0
+    assignment_ids = []
+    for batch in batches:
+        try:
+            assignment, created = _assign_material_to_batch(material, batch.id, emp)
+            created_count += 1 if created else 0
+            assignment_ids.append(assignment.id)
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
     return Response({
-        'message': 'Material assigned.' if created else 'Material was already assigned to this batch.',
-        'created': created,
-        'assignment_id': assignment.id,
+        'message': f'Material assigned to {len(batches)} batch(es).',
+        'created': created_count > 0,
+        'created_count': created_count,
+        'assignment_ids': assignment_ids,
         'material': StudyMaterialSerializer(material, context={'request': request}).data,
     })
 
@@ -4366,9 +4609,26 @@ def update_material(request, pk):
 @permission_classes([IsAuthenticated])
 def download_material(request, pk):
     try:
-        material = StudyMaterial.objects.get(id=pk)
+        material = StudyMaterial.objects.prefetch_related('assignments__batch').get(id=pk)
     except StudyMaterial.DoesNotExist:
         return Response({'error': 'Material not found.'}, status=404)
+
+    student = Students.objects.filter(user=request.user).first()
+    if student:
+        student_batch_ids = {
+            batch.id
+            for batch in _student_accessible_batches(student)
+            if batch
+        }
+        material_batch_ids = set()
+        if material.batch_id:
+            material_batch_ids.add(material.batch_id)
+        material_batch_ids.update(material.assignments.values_list('batch_id', flat=True))
+        if not student_batch_ids.intersection(material_batch_ids):
+            return Response(
+                {'error': 'You are not allowed to download this material.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
     # Use persistent storage if uploaded files must survive deploys, restarts,
     # or rebuilds.
@@ -4402,6 +4662,178 @@ def download_material(request, pk):
         content_type=content_type,
     )
     response['Content-Length'] = str(os.path.getsize(file_path))
+    return response
+
+
+READABLE_ZIP_EXTENSIONS = {
+    '.pdf', '.png', '.jpg', '.jpeg', '.webp', '.gif',
+    '.txt', '.csv', '.md', '.json', '.html', '.css', '.js',
+    '.py', '.java', '.sql',
+}
+SKIPPED_ZIP_PARTS = {
+    '__macosx', '.git', 'node_modules', 'android', 'ios', 'build', 'dist', '.expo',
+}
+MAX_ZIP_VIEW_FILES = 250
+MAX_ZIP_VIEW_FILE_SIZE = 25 * 1024 * 1024
+
+
+def _material_file_path_or_response(material):
+    if not material.file:
+        return None, Response(
+            {'error': 'File missing on server. Re-upload required or persistent storage required.'},
+            status=404,
+        )
+
+    try:
+        file_path = material.file.path
+    except (NotImplementedError, ValueError):
+        return None, Response(
+            {'error': 'File missing on server. Re-upload required or persistent storage required.'},
+            status=404,
+        )
+
+    if not os.path.exists(file_path):
+        return None, Response(
+            {'error': 'File missing on server. Re-upload required or persistent storage required.'},
+            status=404,
+        )
+
+    return file_path, None
+
+
+def _material_access_error(request, material):
+    student = Students.objects.filter(user=request.user).first()
+    if not student:
+        return None
+
+    student_batch_ids = {
+        batch.id
+        for batch in _student_accessible_batches(student)
+        if batch
+    }
+    material_batch_ids = set()
+    if material.batch_id:
+        material_batch_ids.add(material.batch_id)
+    material_batch_ids.update(material.assignments.values_list('batch_id', flat=True))
+    if not student_batch_ids.intersection(material_batch_ids):
+        return Response(
+            {'error': 'You are not allowed to view this material.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return None
+
+
+def _zip_entry_is_readable(info):
+    name = (info.filename or '').replace('\\', '/')
+    if not name or name.endswith('/'):
+        return False
+    parts = {part.lower() for part in name.split('/') if part}
+    if parts.intersection(SKIPPED_ZIP_PARTS):
+        return False
+    if info.file_size <= 0 or info.file_size > MAX_ZIP_VIEW_FILE_SIZE:
+        return False
+    return Path(name).suffix.lower() in READABLE_ZIP_EXTENSIONS
+
+
+def _zip_entry_payload(info):
+    name = (info.filename or '').replace('\\', '/')
+    suffix = Path(name).suffix.lower()
+    if suffix == '.pdf':
+        file_type = 'pdf'
+    elif suffix in {'.png', '.jpg', '.jpeg', '.webp', '.gif'}:
+        file_type = 'image'
+    elif suffix in {'.txt', '.csv', '.md', '.json', '.html', '.css', '.js', '.py', '.java', '.sql'}:
+        file_type = 'text'
+    else:
+        file_type = 'other'
+    return {
+        'name': os.path.basename(name),
+        'path': name,
+        'file_type': file_type,
+        'size': info.file_size,
+    }
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def material_zip_entries(request, pk):
+    try:
+        material = StudyMaterial.objects.prefetch_related('assignments__batch').get(id=pk)
+    except StudyMaterial.DoesNotExist:
+        return Response({'error': 'Material not found.'}, status=404)
+
+    access_error = _material_access_error(request, material)
+    if access_error:
+        return access_error
+
+    file_path, file_error = _material_file_path_or_response(material)
+    if file_error:
+        return file_error
+
+    if not zipfile.is_zipfile(file_path):
+        return Response({'error': 'This material is not a valid ZIP file.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    entries = []
+    try:
+        with zipfile.ZipFile(file_path) as archive:
+            for info in archive.infolist():
+                if not _zip_entry_is_readable(info):
+                    continue
+                entries.append(_zip_entry_payload(info))
+                if len(entries) >= MAX_ZIP_VIEW_FILES:
+                    break
+    except zipfile.BadZipFile:
+        return Response({'error': 'This ZIP file could not be opened.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response({
+        'material': {
+            'id': material.id,
+            'title': material.title,
+            'file_name': os.path.basename(material.file.name),
+        },
+        'entries': entries,
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def material_zip_entry_file(request, pk):
+    entry_path = request.query_params.get('path', '')
+    if not entry_path:
+        return Response({'error': 'ZIP file path is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        material = StudyMaterial.objects.prefetch_related('assignments__batch').get(id=pk)
+    except StudyMaterial.DoesNotExist:
+        return Response({'error': 'Material not found.'}, status=404)
+
+    access_error = _material_access_error(request, material)
+    if access_error:
+        return access_error
+
+    file_path, file_error = _material_file_path_or_response(material)
+    if file_error:
+        return file_error
+
+    if not zipfile.is_zipfile(file_path):
+        return Response({'error': 'This material is not a valid ZIP file.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        with zipfile.ZipFile(file_path) as archive:
+            info = archive.getinfo(entry_path)
+            if not _zip_entry_is_readable(info):
+                return Response({'error': 'This file cannot be viewed inside the app.'}, status=status.HTTP_400_BAD_REQUEST)
+            content = archive.read(info)
+    except KeyError:
+        return Response({'error': 'ZIP file entry not found.'}, status=status.HTTP_404_NOT_FOUND)
+    except zipfile.BadZipFile:
+        return Response({'error': 'This ZIP file could not be opened.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    filename = os.path.basename(entry_path)
+    content_type = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
+    response = HttpResponse(content, content_type=content_type)
+    response['Content-Disposition'] = f'inline; filename="{filename}"'
+    response['Content-Length'] = str(len(content))
     return response
 
 
@@ -5302,7 +5734,6 @@ def assign_quiz_to_batches(request, quiz_id):
 
     assigned_quizzes = []
     with transaction.atomic():
-        reusable_quiz = quiz if quiz.batch_id is None else None
         for batch in batches:
             existing = Quiz.objects.filter(
                 title=quiz.title,
@@ -5316,52 +5747,44 @@ def assign_quiz_to_batches(request, quiz_id):
                 assigned_quizzes.append(existing)
                 continue
 
-            if reusable_quiz is not None:
-                target_quiz = reusable_quiz
-                target_quiz.batch = batch
-                target_quiz.is_published = True
-                target_quiz.publish_date = timezone.now()
-                target_quiz.save(update_fields=['batch', 'is_published', 'publish_date', 'updated_at'])
-                reusable_quiz = None
-            else:
-                target_quiz = Quiz.objects.create(
-                    title=quiz.title,
-                    description=quiz.description,
-                    batch=batch,
-                    created_by=quiz.created_by,
-                    source_file=quiz.source_file,
-                    total_questions=quiz.total_questions,
-                    total_marks=quiz.total_marks,
-                    passing_marks=quiz.passing_marks,
-                    duration_minutes=quiz.duration_minutes,
-                    difficulty=quiz.difficulty,
-                    category=quiz.category,
-                    start_date=quiz.start_date,
-                    end_date=quiz.end_date,
-                    shuffle_questions=quiz.shuffle_questions,
-                    shuffle_options=quiz.shuffle_options,
-                    number_of_questions=quiz.number_of_questions,
-                    is_published=True,
-                    publish_date=timezone.now(),
-                    deadline=quiz.deadline,
-                    allow_retake=quiz.allow_retake,
-                    max_attempts=quiz.max_attempts,
+            target_quiz = Quiz.objects.create(
+                title=quiz.title,
+                description=quiz.description,
+                batch=batch,
+                created_by=quiz.created_by,
+                source_file=quiz.source_file,
+                total_questions=quiz.total_questions,
+                total_marks=quiz.total_marks,
+                passing_marks=quiz.passing_marks,
+                duration_minutes=quiz.duration_minutes,
+                difficulty=quiz.difficulty,
+                category=quiz.category,
+                start_date=quiz.start_date,
+                end_date=quiz.end_date,
+                shuffle_questions=quiz.shuffle_questions,
+                shuffle_options=quiz.shuffle_options,
+                number_of_questions=quiz.number_of_questions,
+                is_published=True,
+                publish_date=timezone.now(),
+                deadline=quiz.deadline,
+                allow_retake=quiz.allow_retake,
+                max_attempts=quiz.max_attempts,
+            )
+            QuizQuestion.objects.bulk_create([
+                QuizQuestion(
+                    quiz=target_quiz,
+                    question_number=question.question_number,
+                    question_text=question.question_text,
+                    option_a=question.option_a,
+                    option_b=question.option_b,
+                    option_c=question.option_c,
+                    option_d=question.option_d,
+                    correct_answer=question.correct_answer,
+                    explanation=question.explanation,
+                    marks=question.marks,
                 )
-                QuizQuestion.objects.bulk_create([
-                    QuizQuestion(
-                        quiz=target_quiz,
-                        question_number=question.question_number,
-                        question_text=question.question_text,
-                        option_a=question.option_a,
-                        option_b=question.option_b,
-                        option_c=question.option_c,
-                        option_d=question.option_d,
-                        correct_answer=question.correct_answer,
-                        explanation=question.explanation,
-                        marks=question.marks,
-                    )
-                    for question in questions
-                ])
+                for question in questions
+            ])
             assigned_quizzes.append(target_quiz)
 
     return Response({
@@ -5515,8 +5938,24 @@ def close_public_user_activity(public_user):
         activity.save(update_fields=['logout_time', 'last_seen'])
 
 
+def public_user_student_match(user):
+    email = (user.email or '').strip()
+    mobile = normalize_indian_mobile(user.mobile)
+    lookup = Q()
+    if email:
+        lookup |= Q(email__iexact=email)
+    if mobile:
+        lookup |= Q(mobile_no__icontains=display_mobile(mobile)) | Q(mobile_no__icontains=mobile)
+    if not lookup:
+        return None
+    return Students.objects.select_related('assigned_batch', 'assigned_staff').filter(lookup).order_by('-id').first()
+
+
 def serialize_public_user(user):
-    return {
+    enrolled_student = public_user_student_match(user)
+    batch = enrolled_student.assigned_batch if enrolled_student else None
+    status_value = 'enrolled' if enrolled_student else (getattr(user, 'status', None) or 'new')
+    data = {
         'id': user.id,
         'name': user.name,
         'email': user.email,
@@ -5526,8 +5965,36 @@ def serialize_public_user(user):
         'city': user.city,
         'state': user.state,
         'username': user.username,
+        'status': status_value,
+        'raw_status': getattr(user, 'status', 'new'),
+        'status_updated_at': getattr(user, 'status_updated_at', None),
+        'remark': getattr(user, 'remark', '') or '',
         'created_at': user.created_at,
     }
+    if enrolled_student:
+        assigned_staff = enrolled_student.assigned_staff
+        data.update({
+            'student_id': enrolled_student.id,
+            'student_code': enrolled_student.student_id,
+            'student_name': f"{enrolled_student.first_name} {enrolled_student.last_name or ''}".strip(),
+            'branch': enrolled_student.branch,
+            'batch_id': batch.id if batch else None,
+            'batch_number': batch.batch_number if batch else '',
+            'batch_code': getattr(batch, 'batch_code', '') if batch else '',
+            'course': enrolled_student.course,
+            'trainer_name': f"{assigned_staff.first_name} {assigned_staff.last_name or ''}".strip() if assigned_staff else '',
+        })
+    return data
+
+
+def can_view_public_users(user):
+    if is_admin_user(user):
+        return True
+    try:
+        employee = Employee.objects.get(user=user)
+        return str(employee.designation or '').lower() == 'counselor'
+    except Employee.DoesNotExist:
+        return False
 
 
 @api_view(['POST'])
@@ -5673,10 +6140,16 @@ def submit_practice_quiz(request, quiz_id):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def admin_public_users(request):
-    if not is_admin_user(request.user):
-        return Response({'error': 'Admin access required.'}, status=status.HTTP_403_FORBIDDEN)
+    if not can_view_public_users(request.user):
+        return Response({'error': 'Admin or counselor access required.'}, status=status.HTTP_403_FORBIDDEN)
 
     tab = request.query_params.get('tab', 'users')
+    public_user_id = request.query_params.get('public_user_id')
+    if public_user_id:
+        public_user = PublicUser.objects.filter(id=public_user_id).first()
+        if not public_user:
+            return Response({'error': 'Public user not found.'}, status=404)
+        return Response({'data': serialize_public_user(public_user)})
 
     if tab == 'results':
         results = PublicPracticeResult.objects.select_related('public_user').order_by('-completed_at')
@@ -5710,7 +6183,88 @@ def admin_public_users(request):
         } for activity in activities]})
 
     users = PublicUser.objects.all().order_by('-created_at')
-    return Response({'results': [serialize_public_user(user) for user in users]})
+    serialized = [serialize_public_user(user) for user in users]
+    branch_filter = str(request.query_params.get('branch', '')).strip()
+    if tab == 'enrolled':
+        serialized = [item for item in serialized if item.get('status') == 'enrolled']
+        if branch_filter:
+            serialized = [
+                item for item in serialized
+                if str(item.get('branch') or '').strip().lower() == branch_filter.lower()
+            ]
+    elif tab in ('walked_in', 'walked'):
+        serialized = [item for item in serialized if item.get('status') == 'walked_in']
+    else:
+        serialized = [item for item in serialized if item.get('status') == 'new']
+
+    counts = {
+        'users': 0,
+        'enrolled': 0,
+        'walked_in': 0,
+    }
+    branch_map = {}
+    for item in [serialize_public_user(user) for user in users]:
+        item_status = item.get('status')
+        if item_status == 'enrolled':
+            counts['enrolled'] += 1
+            branch = str(item.get('branch') or '').strip()
+            if branch:
+                branch_map[branch.lower()] = branch
+        elif item_status == 'walked_in':
+            counts['walked_in'] += 1
+        else:
+            counts['users'] += 1
+
+    branches = [
+        {'id': branch, 'label': branch}
+        for branch in sorted(branch_map.values(), key=lambda value: value.lower())
+    ]
+
+    batches = []
+    if tab == 'enrolled':
+        seen_batches = set()
+        for item in [serialize_public_user(user) for user in users]:
+            if item.get('status') != 'enrolled' or not item.get('batch_id'):
+                continue
+            if item['batch_id'] in seen_batches:
+                continue
+            seen_batches.add(item['batch_id'])
+            batches.append({
+                'id': item['batch_id'],
+                'label': item.get('batch_code') or item.get('batch_number') or f"Batch {item['batch_id']}",
+            })
+
+    return Response({'results': serialized, 'batches': batches, 'branches': branches, 'counts': counts})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def admin_public_user_status(request, pk):
+    if not can_view_public_users(request.user):
+        return Response({'error': 'Admin or counselor access required.'}, status=status.HTTP_403_FORBIDDEN)
+
+    public_user = PublicUser.objects.filter(pk=pk).first()
+    if not public_user:
+        return Response({'error': 'Public user not found.'}, status=404)
+
+    has_status = 'status' in request.data
+    next_status = str(request.data.get('status', '')).strip() if has_status else ''
+    if has_status and next_status not in {'new', 'walked_in'}:
+        return Response({'error': 'Invalid public user status.'}, status=400)
+
+    update_fields = ['updated_at']
+    if has_status:
+        public_user.status = next_status
+        public_user.status_updated_at = timezone.now()
+        update_fields.extend(['status', 'status_updated_at'])
+    if 'remark' in request.data:
+        public_user.remark = str(request.data.get('remark', '')).strip()
+        update_fields.append('remark')
+    if update_fields == ['updated_at']:
+        return Response({'error': 'No public user changes provided.'}, status=400)
+
+    public_user.save(update_fields=update_fields)
+    return Response({'success': True, 'data': serialize_public_user(public_user)})
 
 
 @api_view(['GET'])
@@ -5836,7 +6390,7 @@ def staff_quiz_results(request):
                 'is_passed': result.is_passed,
                 'submitted_at': result.completed_at,
                 'batch_id': None,
-                'batch_number': 'Practice Test',
+                'batch_number': 'Skillset',
             })
 
         oldest_date = timezone.make_aware(datetime.min)
@@ -11151,7 +11705,7 @@ def student_assigned_tests(request):
         ).exclude(id__in=assigned_test_ids).order_by('-created_at')
         for test in mentor_tests:
             questions = Question.objects.filter(test=test)
-            if not questions.exists():
+            if not questions.exists() and not test.question_paper:
                 continue
             data.append({
                 'id': -test.id,
@@ -11189,10 +11743,19 @@ def student_test_results(request):
 
     data = []
     for r in results:
+        submission_file_url = request.build_absolute_uri(r.submission_file.url) if r.submission_file else None
+        question_paper_url = request.build_absolute_uri(r.test.question_paper.url) if r.test.question_paper else None
         data.append({
             'id': r.id,
             'test_id': r.test.id,
             'test_title': r.test.title,
+            'test_type': r.test.test_type,
+            'creation_method': r.test.creation_method,
+            'question_paper_url': question_paper_url,
+            'submission_file_url': submission_file_url,
+            'manual_mark': r.manual_mark,
+            'max_marks': r.max_marks,
+            'evaluated_at': r.evaluated_at,
             'score': r.score,
             'total_questions': r.total_questions,
             'percentage': float(r.percentage),
@@ -11205,6 +11768,7 @@ def student_test_results(request):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
 def student_take_test(request, test_id):
     """Student submits test answers - ONE TIME ONLY"""
     try:
@@ -11230,6 +11794,47 @@ def student_take_test(request, test_id):
             return Response({'error': 'You have already taken this test. Only one attempt allowed.'}, status=400)
         
         questions = Question.objects.filter(test=test)
+        submitted_files = request.FILES.getlist('submission_files')
+        submission_file = request.FILES.get('submission_file') or request.FILES.get('answer_file')
+
+        if submitted_files:
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as answer_zip:
+                for uploaded in submitted_files:
+                    safe_name = str(uploaded.name or 'answer-file').replace('\\', '/').lstrip('/')
+                    answer_zip.writestr(safe_name, uploaded.read())
+            zip_buffer.seek(0)
+            submission_file = ContentFile(
+                zip_buffer.getvalue(),
+                name=f"{student.student_id}_{test.id}_answers.zip"
+            )
+
+        if test.creation_method == 'upload' or test.question_paper:
+            if not submission_file:
+                return Response({'error': 'Please upload your answer file before submitting the test.'}, status=400)
+
+            result = TestResult.objects.create(
+                student=student,
+                test=test,
+                score=0,
+                total_questions=0,
+                percentage=0,
+                submission_file=submission_file,
+            )
+
+            return Response({
+                'id': result.id,
+                'score': 0,
+                'total_questions': 0,
+                'total_marks': 0,
+                'percentage': 0,
+                'is_passed': False,
+                'submission_file_url': request.build_absolute_uri(result.submission_file.url) if result.submission_file else None,
+                'manual_mark': result.manual_mark,
+                'max_marks': result.max_marks,
+                'message': 'Test submitted successfully. Your mentor will update the mark after review.',
+            }, status=201)
+
         answers_data = request.data.get('answers', {})
         
         # Calculate score
@@ -11383,6 +11988,12 @@ def get_test_questions(request, test_id):
         return Response({
             'test_id': test.id,
             'test_title': test.title,
+            'test_description': test.description,
+            'test_type': test.test_type,
+            'creation_method': test.creation_method,
+            'instructions': test.instructions,
+            'question_paper_url': request.build_absolute_uri(test.question_paper.url) if test.question_paper else None,
+            'duration_minutes': test.duration_minutes,
             'total_questions': questions.count(),
             'questions': questions_data
         })
@@ -11402,16 +12013,25 @@ def test_results(request):
 
     # -- Only show results for students assigned to THIS staff --
     results = TestResult.objects.select_related(
-        'student', 'test', 'student__assigned_batch'
+        'student', 'test', 'student__assigned_batch', 'test__created_by'
     ).filter(
-        student__assigned_staff=employee  # only THIS staff's students
+        Q(student__assigned_staff=employee) | Q(test__created_by=employee)
     ).order_by('-submitted_at')
 
     if batch_id:
-        results = results.filter(student__assigned_batch_id=batch_id)
+        batch_test_ids = AssignedTest.objects.filter(batch_id=batch_id).values_list('test_id', flat=True)
+        results = results.filter(
+            Q(student__assigned_batch_id=batch_id) |
+            Q(student__batch_enrollments__batch_id=batch_id, student__batch_enrollments__is_active=True) |
+            Q(test_id__in=batch_test_ids)
+        )
+
+    results = results.distinct()
 
     data = []
     for r in results:
+        submission_file_url = request.build_absolute_uri(r.submission_file.url) if r.submission_file else None
+        question_paper_url = request.build_absolute_uri(r.test.question_paper.url) if r.test.question_paper else None
         data.append({
             'id': r.id,
             'student_name': f"{r.student.first_name} {r.student.last_name}",
@@ -11420,6 +12040,13 @@ def test_results(request):
             'batch_id': r.student.assigned_batch.id if r.student.assigned_batch else None,
             'test_title': r.test.title,
             'test_id': r.test.id,
+            'test_type': r.test.test_type,
+            'creation_method': r.test.creation_method,
+            'question_paper_url': question_paper_url,
+            'submission_file_url': submission_file_url,
+            'manual_mark': r.manual_mark,
+            'max_marks': r.max_marks,
+            'evaluated_at': r.evaluated_at,
             'score': r.score,
             'total_questions': r.total_questions,
             'percentage': float(r.percentage),
@@ -11427,6 +12054,63 @@ def test_results(request):
         })
 
     return Response(data)
+
+
+@api_view(['PATCH', 'PUT'])
+@permission_classes([IsAuthenticated])
+def staff_update_test_result_mark(request, result_id):
+    try:
+        employee = Employee.objects.get(user=request.user)
+    except Employee.DoesNotExist:
+        return Response({'error': 'Employee not found'}, status=404)
+
+    try:
+        result = TestResult.objects.select_related('student', 'test', 'test__created_by').get(id=result_id)
+    except TestResult.DoesNotExist:
+        return Response({'error': 'Test result not found'}, status=404)
+
+    can_mark = (
+        result.student.assigned_staff_id == employee.id
+        or result.test.created_by_id == employee.id
+        or is_admin_user(request.user)
+    )
+    if not can_mark:
+        return Response({'error': 'Access denied'}, status=403)
+
+    raw_mark = request.data.get('mark', request.data.get('manual_mark', request.data.get('score')))
+    if raw_mark in [None, '']:
+        return Response({'error': 'Mark is required'}, status=400)
+
+    try:
+        mark = float(raw_mark)
+        max_marks = float(request.data.get('max_marks') or result.max_marks or 100)
+    except (TypeError, ValueError):
+        return Response({'error': 'Enter a valid mark'}, status=400)
+
+    if mark < 0 or max_marks <= 0:
+        return Response({'error': 'Mark and max marks must be valid positive values'}, status=400)
+
+    result.manual_mark = mark
+    result.max_marks = max_marks
+    result.score = int(round(mark))
+    result.total_questions = int(round(max_marks))
+    result.percentage = round((mark / max_marks) * 100, 1)
+    result.evaluated_by = employee
+    result.evaluated_at = timezone.now()
+    result.save(update_fields=[
+        'manual_mark', 'max_marks', 'score', 'total_questions',
+        'percentage', 'evaluated_by', 'evaluated_at'
+    ])
+
+    return Response({
+        'id': result.id,
+        'manual_mark': result.manual_mark,
+        'max_marks': result.max_marks,
+        'score': result.score,
+        'total_questions': result.total_questions,
+        'percentage': result.percentage,
+        'evaluated_at': result.evaluated_at,
+    })
 
 
 @api_view(['GET'])
@@ -11931,13 +12615,37 @@ def student_fee_details(request):
         if not fee:
             return Response({'fee': None})
         transactions = FeeTransaction.objects.filter(fee_payment=fee).order_by('-paid_at')
+        trainer_names = []
+        batch = fee.batch
+        if getattr(batch, 'staff_assignments', None):
+            trainer_names = [
+                assignment.staff.first_name
+                for assignment in batch.staff_assignments.select_related('staff').filter(is_active=True)
+                if assignment.staff and assignment.staff.first_name
+            ]
+        if not trainer_names and getattr(batch, 'trainer_assignments', None):
+            trainer_names = [
+                assignment.trainer.first_name
+                for assignment in batch.trainer_assignments.select_related('trainer').all()
+                if assignment.trainer and assignment.trainer.first_name
+            ]
+        if not trainer_names and getattr(batch, 'faculty_id', None):
+            trainer_names = [batch.faculty.first_name]
+        if not trainer_names and getattr(student, 'assigned_staff_id', None):
+            trainer_names = [student.assigned_staff.first_name]
+
         return Response({
             'fee': {
                 'id': fee.id,
+                'student_name': f"{student.first_name} {student.last_name or ''}".strip(),
+                'student_id': student.student_id,
+                'branch': student.branch,
+                'trainer_name': ', '.join(dict.fromkeys(trainer_names)) or '—',
                 'total_fee': float(fee.total_fee),
                 'amount_paid': float(fee.amount_paid),
                 'balance': float(fee.balance),
                 'is_fully_paid': fee.is_fully_paid,
+                'bill_available': transactions.exists(),
                 'batch_number': fee.batch.batch_number,
                 'course_name': fee.batch.course_name.course_name if fee.batch.course_name else '—',
             },
@@ -11952,6 +12660,51 @@ def student_fee_details(request):
         })
     except Students.DoesNotExist:
         return Response({'error': 'Student not found'}, status=404)
+
+
+def _create_fee_bill_url(request, fee, user, timeout_seconds=5 * 60):
+    token = uuid.uuid4().hex
+    cache.set(
+        f'fee_bill_token_{token}',
+        {'fee_id': fee.id, 'user_id': user.id},
+        timeout=timeout_seconds,
+    )
+    bill_path = f'/api/fees/{fee.id}/bill/?bill_token={token}'
+    return request.build_absolute_uri(bill_path)
+
+
+def _student_current_email(student):
+    user_email = ''
+    if getattr(student, 'user_id', None):
+        user_email = (getattr(student.user, 'email', '') or getattr(student.user, 'username', '') or '').strip().lower()
+    student_email = (getattr(student, 'email', '') or '').strip().lower()
+    return user_email or student_email
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def create_fee_bill_link(request, fee_id):
+    try:
+        user = request.user
+        if user.is_superuser or user.is_staff:
+            fee = FeePayment.objects.select_related('student', 'batch').get(id=fee_id)
+        else:
+            employee = Employee.objects.filter(user=user).first()
+            if employee and employee.designation.lower() == 'counselor':
+                fee = FeePayment.objects.select_related('student', 'batch').get(
+                    id=fee_id,
+                    student__branch=employee.branch,
+                )
+            else:
+                student = Students.objects.get(user=user)
+                fee = FeePayment.objects.select_related('student', 'batch').get(id=fee_id, student=student)
+
+        if not FeeTransaction.objects.filter(fee_payment=fee).exists():
+            return Response({'error': 'Bill is available only after payment approval.'}, status=403)
+
+        return Response({'url': _create_fee_bill_url(request, fee, user), 'expires_in_seconds': 300})
+    except (FeePayment.DoesNotExist, Students.DoesNotExist):
+        return Response({'error': 'Fee record not found'}, status=404)
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
@@ -12111,8 +12864,18 @@ else:
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([AllowAny])
 def generate_bill(request, fee_id):
+    original_user = request.user
+    if not getattr(original_user, 'is_authenticated', False):
+        bill_token = request.query_params.get('bill_token')
+        token_data = cache.get(f'fee_bill_token_{bill_token}') if bill_token else None
+        if not token_data or int(token_data.get('fee_id', 0)) != int(fee_id):
+            return Response({'error': 'Invalid or expired bill link'}, status=status.HTTP_401_UNAUTHORIZED)
+        linked_user = User.objects.filter(id=token_data.get('user_id')).first()
+        if not linked_user:
+            return Response({'error': 'Invalid bill link'}, status=status.HTTP_401_UNAUTHORIZED)
+        request.user = linked_user
     """Generate PDF bill in IIE format"""
     try:
         from reportlab.lib.pagesizes import A4
@@ -12127,6 +12890,15 @@ def generate_bill(request, fee_id):
         # -- Access control ----------------------------------------
         # -- Access control ----------------------------------------
         user = request.user
+        if not getattr(user, 'is_authenticated', False):
+            bill_token = request.query_params.get('bill_token')
+            token_data = cache.get(f'fee_bill_token_{bill_token}') if bill_token else None
+            if not token_data or int(token_data.get('fee_id', 0)) != int(fee_id):
+                return Response({'error': 'Invalid or expired bill link'}, status=401)
+            user = User.objects.filter(id=token_data.get('user_id')).first()
+            if not user:
+                return Response({'error': 'Invalid bill link'}, status=401)
+
         if user.is_superuser or user.is_staff:
             fee = FeePayment.objects.select_related('student', 'batch').get(id=fee_id)
         else:
@@ -12371,6 +13143,103 @@ def _payment_amount_from_request(value):
     return amount
 
 
+def _fee_bill_pdf_attachment(fee):
+    from io import BytesIO
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+
+    transactions = FeeTransaction.objects.filter(fee_payment=fee).order_by('paid_at')
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=15 * mm, rightMargin=15 * mm, topMargin=12 * mm, bottomMargin=12 * mm)
+    width = A4[0] - 30 * mm
+    navy = colors.HexColor('#1a237e')
+    gold = colors.HexColor('#b38b4d')
+    gray = colors.HexColor('#555555')
+    border = colors.HexColor('#cccccc')
+    light = colors.HexColor('#f8fafc')
+
+    title_style = ParagraphStyle('FeeBillTitle', fontName=BOLD_FONT, fontSize=18, textColor=navy, alignment=TA_CENTER, spaceAfter=6)
+    sub_style = ParagraphStyle('FeeBillSub', fontName=MAIN_FONT, fontSize=9, textColor=gray, alignment=TA_CENTER, leading=13)
+    heading_style = ParagraphStyle('FeeBillHeading', fontName=BOLD_FONT, fontSize=13, textColor=navy, spaceAfter=8)
+    label_style = ParagraphStyle('FeeBillLabel', fontName=BOLD_FONT, fontSize=9.5, textColor=colors.black)
+    value_style = ParagraphStyle('FeeBillValue', fontName=MAIN_FONT, fontSize=9.5, textColor=colors.black)
+    right_style = ParagraphStyle('FeeBillRight', fontName=MAIN_FONT, fontSize=9, textColor=gray, alignment=TA_RIGHT)
+    note_style = ParagraphStyle('FeeBillNote', fontName=MAIN_FONT, fontSize=8.5, textColor=gray)
+
+    def para(value, style=value_style):
+        return Paragraph(str(value) if value not in (None, '') else '—', style)
+
+    student_name = f"{fee.student.first_name} {fee.student.last_name or ''}".strip()
+    course_name = fee.batch.course_name.course_name if fee.batch.course_name else 'Course'
+    receipt_no = f"IIE{str(fee.student.branch or 'STU').upper()[:3]}{fee.id:04d}"
+
+    story = [
+        Paragraph('INDRA INSTITUTE OF EDUCATION', title_style),
+        Paragraph('IIE Pulse - Fee Payment Bill', sub_style),
+        Paragraph('65/1, Tatabad, 7th Street, Dr Rajendra Prasad Rd, Gandhipuram, Coimbatore - 641012', sub_style),
+        Paragraph('Phone: +91-9159779111', sub_style),
+        Spacer(1, 14),
+    ]
+
+    rows = [
+        [para('Receipt No', label_style), para(receipt_no), para('Date', label_style), para(timezone.localtime(timezone.now()).strftime('%d-%m-%Y'))],
+        [para('Student Name', label_style), para(student_name), para('Student ID', label_style), para(fee.student.student_id)],
+        [para('Email', label_style), para(fee.student.email), para('Mobile', label_style), para(fee.student.mobile_no)],
+        [para('Course', label_style), para(course_name), para('Batch', label_style), para(fee.batch.batch_number)],
+        [para('Total Fee', label_style), para(f"Rs. {float(fee.total_fee):,.0f}"), para('Paid Amount', label_style), para(f"Rs. {float(fee.amount_paid):,.0f}")],
+        [para('Balance', label_style), para('Completely Paid' if fee.is_fully_paid else f"Rs. {float(fee.balance):,.0f}"), para('Status', label_style), para('Fully Paid' if fee.is_fully_paid else 'Partial Payment')],
+    ]
+    summary = Table(rows, colWidths=[width * .18, width * .32, width * .18, width * .32])
+    summary.setStyle(TableStyle([
+        ('BOX', (0, 0), (-1, -1), 1, border),
+        ('INNERGRID', (0, 0), (-1, -1), .3, border),
+        ('ROWBACKGROUNDS', (0, 0), (-1, -1), [colors.white, light]),
+        ('TOPPADDING', (0, 0), (-1, -1), 9),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 9),
+        ('LEFTPADDING', (0, 0), (-1, -1), 9),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 9),
+    ]))
+    story += [Paragraph('Payment Summary', heading_style), summary, Spacer(1, 14)]
+
+    tx_rows = [[para('Date', label_style), para('Amount', label_style), para('Mode', label_style), para('Notes', label_style)]]
+    for tx in transactions:
+        tx_rows.append([
+            para(timezone.localtime(tx.paid_at).strftime('%d-%m-%Y')),
+            para(f"Rs. {float(tx.amount):,.0f}"),
+            para(tx.get_payment_mode_display()),
+            para(tx.notes or 'Payment recorded'),
+        ])
+    tx_table = Table(tx_rows, colWidths=[width * .20, width * .20, width * .20, width * .40])
+    tx_table.setStyle(TableStyle([
+        ('BOX', (0, 0), (-1, -1), 1, border),
+        ('INNERGRID', (0, 0), (-1, -1), .3, border),
+        ('BACKGROUND', (0, 0), (-1, 0), gold),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('TOPPADDING', (0, 0), (-1, -1), 8),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ('LEFTPADDING', (0, 0), (-1, -1), 9),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 9),
+    ]))
+    story += [Paragraph('Payment History', heading_style), tx_table, Spacer(1, 18)]
+    story.append(HRFlowable(width=width, thickness=0.5, color=border, spaceAfter=5))
+    story.append(Table([[
+        Paragraph('* Fees once paid cannot be refunded.', note_style),
+        Paragraph('This is a computer generated bill from IIE Pulse.', right_style),
+    ]], colWidths=[width * .52, width * .48]))
+
+    doc.build(story)
+    buffer.seek(0)
+    safe_student = re.sub(r'[^A-Za-z0-9_-]+', '_', f"{fee.student.student_id}_{fee.student.first_name}".strip('_'))
+    safe_course = re.sub(r'[^A-Za-z0-9_-]+', '_', course_name)
+    return {
+        'filename': f'{safe_student}_{safe_course}_Fee_Bill.pdf',
+        'content': buffer.read(),
+        'mimetype': 'application/pdf',
+    }
 
 
 @api_view(['POST'])
@@ -12561,19 +13430,73 @@ def process_fee_payment_request(request, request_id):
             # -- Notify student ------------------------------------
             # -- Notify student (async) --------------------------------
             try:
-                send_email_async(
-                    subject='Fee Payment Verified ?',
-                    message=f"""Dear {pay_req.student.first_name},
+                bill_url = ''
+                attachments = []
+                recipient_email = _student_current_email(pay_req.student)
+                if recipient_email and pay_req.student.user_id:
+                    bill_url = _create_fee_bill_url(
+                        request,
+                        fee,
+                        pay_req.student.user,
+                        timeout_seconds=7 * 24 * 60 * 60,
+                    )
+                    attachments = [_fee_bill_pdf_attachment(fee)]
+                student_name = pay_req.student.first_name or 'Student'
+                course_name = fee.batch.course_name.course_name if fee.batch.course_name else 'Course'
+                message = f"""Dear {student_name},
 
-Your payment of Rs. {pay_req.amount} has been verified and recorded.
+Greetings from IIE Pulse.
 
-Remaining Balance: Rs. {fee.balance}
-Status: {'Fully Paid' if fee.is_fully_paid else 'Partial Payment'}
+Your fee payment has been verified and approved by the admin.
+
+Payment Details:
+Student Name      : {pay_req.student.first_name} {pay_req.student.last_name or ''}
+Student ID        : {pay_req.student.student_id}
+Course            : {course_name}
+Batch             : {fee.batch.batch_number}
+Approved Amount   : Rs. {pay_req.amount}
+Total Fee         : Rs. {fee.total_fee}
+Total Paid        : Rs. {fee.amount_paid}
+Remaining Balance : Rs. {fee.balance}
+Payment Status    : {'Fully Paid' if fee.is_fully_paid else 'Partial Payment'}
+
+Your fee bill PDF is attached with this email.
+You can also view it from IIE Pulse > Fee Details / Student Desk > Fee.
+{f'Secure bill link: {bill_url}' if bill_url else ''}
+
+Thank you for choosing IIE.
 
 Best regards,
 IIE Pulse Team
-""",
-                    recipient_list=[pay_req.student.email],
+"""
+                html_message = f"""
+<div style="font-family:Arial,sans-serif;color:#1f2937;line-height:1.55">
+  <h2 style="color:#5523d2;margin-bottom:8px">Fee Payment Verified</h2>
+  <p>Dear <strong>{escape(student_name)}</strong>,</p>
+  <p>Greetings from <strong>IIE Pulse</strong>. Your fee payment has been verified and approved by the admin.</p>
+  <table style="border-collapse:collapse;width:100%;max-width:620px;margin:14px 0">
+    <tr><td style="padding:8px;border:1px solid #e5e7eb"><strong>Student Name</strong></td><td style="padding:8px;border:1px solid #e5e7eb">{escape(pay_req.student.first_name)} {escape(pay_req.student.last_name or '')}</td></tr>
+    <tr><td style="padding:8px;border:1px solid #e5e7eb"><strong>Student ID</strong></td><td style="padding:8px;border:1px solid #e5e7eb">{escape(pay_req.student.student_id or '')}</td></tr>
+    <tr><td style="padding:8px;border:1px solid #e5e7eb"><strong>Course</strong></td><td style="padding:8px;border:1px solid #e5e7eb">{escape(course_name)}</td></tr>
+    <tr><td style="padding:8px;border:1px solid #e5e7eb"><strong>Batch</strong></td><td style="padding:8px;border:1px solid #e5e7eb">{escape(fee.batch.batch_number or '')}</td></tr>
+    <tr><td style="padding:8px;border:1px solid #e5e7eb"><strong>Approved Amount</strong></td><td style="padding:8px;border:1px solid #e5e7eb">Rs. {pay_req.amount}</td></tr>
+    <tr><td style="padding:8px;border:1px solid #e5e7eb"><strong>Total Paid</strong></td><td style="padding:8px;border:1px solid #e5e7eb">Rs. {fee.amount_paid}</td></tr>
+    <tr><td style="padding:8px;border:1px solid #e5e7eb"><strong>Remaining Balance</strong></td><td style="padding:8px;border:1px solid #e5e7eb">Rs. {fee.balance}</td></tr>
+    <tr><td style="padding:8px;border:1px solid #e5e7eb"><strong>Status</strong></td><td style="padding:8px;border:1px solid #e5e7eb">{'Fully Paid' if fee.is_fully_paid else 'Partial Payment'}</td></tr>
+  </table>
+  <p>Your fee bill PDF is attached with this email.</p>
+  <p>You can also view it from <strong>IIE Pulse &gt; Fee Details</strong> or <strong>Student Desk &gt; Fee</strong>.</p>
+  {f'<p><a href="{escape(bill_url)}" style="display:inline-block;background:#5523d2;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;font-weight:700">View Bill PDF</a></p>' if bill_url else ''}
+  <p>Thank you for choosing IIE.</p>
+  <p style="margin-top:18px">Best regards,<br><strong>IIE Pulse Team</strong></p>
+</div>
+"""
+                send_email_async(
+                    subject='IIE Pulse - Fee Payment Verified & Bill PDF',
+                    message=message,
+                    recipient_list=[recipient_email],
+                    attachments=attachments,
+                    html_content=html_message,
                 )
             except Exception as e:
                 print(f"Email queueing error: {e}")

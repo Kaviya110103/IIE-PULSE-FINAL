@@ -1,6 +1,6 @@
 import { Tabs, useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, AppState, BackHandler, Image, Modal, PanResponder, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, AppState, BackHandler, Modal, PanResponder, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as WebBrowser from "expo-web-browser";
@@ -9,11 +9,12 @@ import api from "@/services/api";
 
 const HOME_PATH = "/welcome";
 const NO_SWIPE_PATHS = new Set(["/", HOME_PATH, "/dashboard", "/loginform", "/register", "/public-overview"]);
+const DETAIL_BACK_PATHS = new Set(["/material-viewer", "/zip-viewer"]);
+const MATERIAL_READING_PATHS = new Set(["/materials", "/material-viewer", "/zip-viewer", "/library"]);
 const INACTIVITY_LIMIT = 5 * 60 * 1000;
 const STUDENT_FEEDBACK_FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScO29CvpRNB0057OxNROPr0IVPH6dAZZpueHFRRespT0g1E_A/viewform";
 const STUDENT_FEEDBACK_INTERVAL_MS = 20 * 24 * 60 * 60 * 1000;
 const STUDENT_FEEDBACK_LAST_PROMPT_KEY = "iie_student_feedback_last_prompt_at";
-const appLogo = require("../../assets/images/icon.png");
 
 const drawerItems: Array<{
   key: string;
@@ -25,15 +26,20 @@ const drawerItems: Array<{
   { key: "overview", label: "Overview", icon: "grid-outline", route: "/home" },
   { key: "attendance", label: "Attendance", icon: "time-outline", route: "/attendance" },
   { key: "logsheet", label: "Logsheet", icon: "document-text-outline", route: "/logsheet" },
-  { key: "quizzes", label: "Quizzes", icon: "school-outline", route: "/quizzes" },
-  { key: "practice", label: "Practice Test", icon: "clipboard-outline", module: "practice" },
+  { key: "student-desk", label: "Student Desk", icon: "desktop-outline", route: "/studentdesk" },
+  { key: "daily-activity", label: "Daily Activity", icon: "flash-outline", route: "/challenge" },
+  { key: "tests", label: "Tests", icon: "school-outline", route: "/quizzes" },
+  { key: "practice", label: "Practice Your Skillset", icon: "clipboard-outline", module: "practice" },
   { key: "calendar", label: "Calendar", icon: "calendar-outline", module: "calendar" },
-  { key: "materials", label: "Materials", icon: "book-outline", route: "/materials" },
+  { key: "materials", label: "Materials", icon: "book-outline", route: "/(tabs)/materials" },
+  { key: "library", label: "Library", icon: "library-outline", route: "/(tabs)/library" },
+  { key: "fee-status", label: "Fee Status", icon: "cash-outline", route: "/feestatus" },
   { key: "leave", label: "Leave", icon: "calendar-outline", route: "/leaveapply" },
   { key: "support", label: "Support", icon: "help-buoy-outline", route: "/support" },
   { key: "gallery", label: "Gallery", icon: "image-outline", module: "gallery" },
-  { key: "vlogs", label: "Vlogs", icon: "videocam-outline", module: "vlogs" },
+  { key: "awards", label: "Awards", icon: "trophy-outline", module: "awards" },
   { key: "news", label: "News", icon: "newspaper-outline", module: "news" },
+  { key: "referral", label: "Referral", icon: "person-add-outline", module: "referral" },
   { key: "contact", label: "Contact Us", icon: "business-outline", module: "contact" },
 ];
 
@@ -47,10 +53,12 @@ export default function TabsLayout() {
   const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const backgroundedAtRef = useRef<number | null>(null);
   const loggingOutRef = useRef(false);
-  const { mode } = useGlobalSearchParams<{ mode?: string }>();
+  const { mode, returnTo } = useGlobalSearchParams<{ mode?: string; returnTo?: string }>();
   const routeMode = Array.isArray(mode) ? mode[0] : mode;
+  const returnRoute = Array.isArray(returnTo) ? returnTo[0] : returnTo;
   const canGoHome = !NO_SWIPE_PATHS.has(pathname);
   const showAppHeader = canGoHome && authReady;
+  const showEdgeSwipeZone = canGoHome && authReady && !MATERIAL_READING_PATHS.has(pathname);
 
   const clearFeedbackTimer = useCallback(() => {
     if (feedbackTimerRef.current) {
@@ -107,6 +115,14 @@ export default function TabsLayout() {
   }, [router]);
 
   const resetInactivityTimer = useCallback(async () => {
+    if (MATERIAL_READING_PATHS.has(pathname)) {
+      if (inactivityTimerRef.current) {
+        clearTimeout(inactivityTimerRef.current);
+        inactivityTimerRef.current = null;
+      }
+      return;
+    }
+
     const access = await AsyncStorage.getItem("access_token");
     if (!access) return;
 
@@ -114,7 +130,7 @@ export default function TabsLayout() {
     inactivityTimerRef.current = setTimeout(() => {
       logoutForInactivity();
     }, INACTIVITY_LIMIT);
-  }, [logoutForInactivity]);
+  }, [logoutForInactivity, pathname]);
 
   const openDrawerItem = (item: (typeof drawerItems)[number]) => {
     setDrawerOpen(false);
@@ -128,6 +144,11 @@ export default function TabsLayout() {
   };
 
   const goBackTarget = () => {
+    if (DETAIL_BACK_PATHS.has(pathname)) {
+      router.replace((returnRoute || "/materials") as any);
+      return;
+    }
+
     if (pathname === "/app") {
       if (routeMode === "practice") {
         router.replace({ pathname: "/welcome", params: { module: "practice" } } as any);
@@ -176,13 +197,21 @@ export default function TabsLayout() {
     });
 
     return () => subscription.remove();
-  }, [canGoHome, pathname, routeMode]);
+  }, [canGoHome, pathname, returnRoute, routeMode]);
 
   useEffect(() => {
     if (!authReady) return;
     resetInactivityTimer();
 
     const subscription = AppState.addEventListener("change", (state) => {
+      if (MATERIAL_READING_PATHS.has(pathname)) {
+        if (inactivityTimerRef.current) {
+          clearTimeout(inactivityTimerRef.current);
+          inactivityTimerRef.current = null;
+        }
+        return;
+      }
+
       if (state === "background" || state === "inactive") {
         backgroundedAtRef.current = Date.now();
         if (inactivityTimerRef.current) {
@@ -214,7 +243,7 @@ export default function TabsLayout() {
         inactivityTimerRef.current = null;
       }
     };
-  }, [authReady, logoutForInactivity, resetInactivityTimer]);
+  }, [authReady, logoutForInactivity, pathname, resetInactivityTimer]);
 
   const edgeSwipeResponder = useMemo(
     () =>
@@ -239,7 +268,7 @@ export default function TabsLayout() {
           }
         },
       }),
-    [canGoHome, pathname, routeMode]
+    [canGoHome, pathname, returnRoute, routeMode]
   );
 
   return (
@@ -288,7 +317,12 @@ export default function TabsLayout() {
             <Tabs.Screen name="leaveapply" />
             <Tabs.Screen name="leavehistory" />
             <Tabs.Screen name="logsheet" />
+            <Tabs.Screen name="studentdesk" />
             <Tabs.Screen name="materials" />
+            <Tabs.Screen name="material-viewer" />
+            <Tabs.Screen name="zip-viewer" />
+            <Tabs.Screen name="library" />
+            <Tabs.Screen name="feestatus" />
             <Tabs.Screen name="profile" />
             <Tabs.Screen name="quizzes" />
             <Tabs.Screen name="app" />
@@ -304,9 +338,15 @@ export default function TabsLayout() {
           <View style={styles.drawer}>
             <View style={styles.drawerHeader}>
               <View style={styles.drawerBrand}>
-                <View style={styles.drawerLogoMark}>
-                  <Image source={appLogo} style={styles.drawerLogoImage} resizeMode="contain" />
-                </View>
+                <Pressable
+                  style={styles.drawerLogoMark}
+                  onPress={() => {
+                    setDrawerOpen(false);
+                    router.push("/profile" as any);
+                  }}
+                >
+                  <Ionicons name="person-circle-outline" size={48} color="#5523D2" />
+                </Pressable>
                 <View>
                 <Text style={styles.drawerTitle}>IIE Pulse</Text>
                 <Text style={styles.drawerSubtitle}>Student Portal</Text>
@@ -335,7 +375,7 @@ export default function TabsLayout() {
         </View>
       ) : null}
 
-      {canGoHome && authReady ? (
+      {showEdgeSwipeZone ? (
         <View
           {...edgeSwipeResponder.panHandlers}
           pointerEvents="box-only"
@@ -513,10 +553,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
-  },
-  drawerLogoImage: {
-    width: 68,
-    height: 68,
   },
   drawerTitle: {
     color: "#FFFFFF",
