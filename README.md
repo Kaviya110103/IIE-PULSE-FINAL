@@ -142,6 +142,27 @@ question,option_a,option_b,option_c,option_d,correct_answer,marks
 
 ## Production Deployment
 
+## QA Testing
+
+Use the QA runner before local testing, before pushing to GitHub, before cPanel/VPS deployment, and before Play Store AAB builds.
+
+Local code/build checks:
+```powershell
+python qa\run_qa.py --mode local
+```
+
+Local code/build checks plus running route checks:
+```powershell
+python qa\run_qa.py --mode local --live
+```
+
+Production domain smoke checks after deployment:
+```powershell
+python qa\run_qa.py --mode production --live
+```
+
+QA reports are saved under `qa/reports/`. The release checklist is in `qa/RELEASE_CHECKLIST.md`.
+
 ### Backend
 1. Set `DEBUG = False` in settings.py
 2. Set `ALLOWED_HOSTS = ['yourdomain.com']`

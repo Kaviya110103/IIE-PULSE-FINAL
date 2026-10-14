@@ -38,6 +38,7 @@ export type DownloadableMaterial = {
   batch_number?: string;
   batch_code?: string;
   display_name?: string;
+  apiBaseUrl?: string;
 };
 
 export type DownloadProgress = {
@@ -127,8 +128,9 @@ function uint8ArrayToBase64(bytes: Uint8Array) {
   return Buffer.from(bytes).toString("base64");
 }
 
-function materialDownloadUrl(materialId: number) {
-  return `${API_BASE_URL.replace(/\/$/, "")}/materials/${materialId}/download/`;
+function materialDownloadUrl(material: DownloadableMaterial) {
+  const baseUrl = material.apiBaseUrl || API_BASE_URL;
+  return `${baseUrl.replace(/\/$/, "")}/materials/${material.id}/download/`;
 }
 
 export async function getLibraryMaterials(): Promise<LibraryMaterial[]> {
@@ -224,7 +226,7 @@ export async function downloadMaterialToLibrary(
   const token = await AsyncStorage.getItem("access_token");
   const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
   const download = FileSystem.createDownloadResumable(
-    materialDownloadUrl(material.id),
+    materialDownloadUrl(material),
     localUri,
     { headers },
     ({ totalBytesWritten, totalBytesExpectedToWrite }) => {
@@ -245,9 +247,9 @@ export async function downloadMaterialToLibrary(
   if (result.status < 200 || result.status >= 300) {
     await FileSystem.deleteAsync(result.uri, { idempotent: true });
     if (result.status === 401 || result.status === 403) {
-      throw new Error("Please login again to open this ZIP material.");
+      throw new Error("Please login again to open this material.");
     }
-    throw new Error("Unable to download this ZIP material from the server.");
+    throw new Error("Unable to download this material from the server.");
   }
 
   const item: LibraryMaterial = {

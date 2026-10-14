@@ -6278,8 +6278,15 @@ def staff_quiz_results(request):
     else:
         try:
             emp = Employee.objects.get(user=request.user)
-            batches = Batches.objects.filter(faculty=emp)
-            attempts = attempts.filter(quiz__batch__in=batches)
+            active_batch_ids = Batches.objects.filter(
+                Q(faculty=emp) | Q(trainer_assignments__trainer=emp)
+            ).values_list('id', flat=True)
+            history_batch_ids = _reassignment_history_batches_for_trainer(emp).values_list('id', flat=True)
+            visible_batch_ids = set(list(active_batch_ids) + list(history_batch_ids))
+            attempts = attempts.filter(
+                Q(quiz__created_by=emp) |
+                Q(quiz__batch_id__in=visible_batch_ids)
+            ).distinct()
         except Employee.DoesNotExist:
             return Response({'results': []})
 

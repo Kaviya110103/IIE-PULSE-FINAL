@@ -37,9 +37,11 @@ async function ensureDirectory(uri: string) {
 
 export default function ZipViewerScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ id?: string; title?: string }>();
+  const params = useLocalSearchParams<{ id?: string; title?: string; apiBaseUrl?: string }>();
   const materialId = Array.isArray(params.id) ? params.id[0] : params.id || "";
   const title = Array.isArray(params.title) ? params.title[0] : params.title || "ZIP Material";
+  const routeApiBaseUrl = Array.isArray(params.apiBaseUrl) ? params.apiBaseUrl[0] : params.apiBaseUrl || "";
+  const materialApiBaseUrl = routeApiBaseUrl || API_BASE_URL;
   const [loading, setLoading] = useState(true);
   const [entries, setEntries] = useState<ZipEntry[]>([]);
   const [errorMsg, setErrorMsg] = useState("");
@@ -56,7 +58,9 @@ export default function ZipViewerScreen() {
     const loadEntries = async () => {
       try {
         setErrorMsg("");
-        const response = await api.get(`materials/${materialId}/zip-entries/`);
+        const response = routeApiBaseUrl
+          ? await api.get(`${routeApiBaseUrl.replace(/\/$/, "")}/materials/${materialId}/zip-entries/`)
+          : await api.get(`materials/${materialId}/zip-entries/`);
         if (!alive) return;
         const nextEntries = response.data?.entries || [];
         setEntries(nextEntries);
@@ -95,7 +99,7 @@ export default function ZipViewerScreen() {
   }, [materialId]);
 
   const entryUrl = (entry: ZipEntry) =>
-    `${API_BASE_URL.replace(/\/$/, "")}/materials/${materialId}/zip-file/?path=${encodeURIComponent(entry.path)}`;
+    `${materialApiBaseUrl.replace(/\/$/, "")}/materials/${materialId}/zip-file/?path=${encodeURIComponent(entry.path)}`;
 
   const loadImagePreview = async (entry: ZipEntry) => {
     setImageLoading(true);
@@ -153,7 +157,10 @@ export default function ZipViewerScreen() {
       setPreviewLoading(true);
       setActiveText({ name: entry.name, content: "" });
       try {
-        const response = await api.get(`materials/${materialId}/zip-file/`, {
+        const zipFileEndpoint = routeApiBaseUrl
+          ? `${routeApiBaseUrl.replace(/\/$/, "")}/materials/${materialId}/zip-file/`
+          : `materials/${materialId}/zip-file/`;
+        const response = await api.get(zipFileEndpoint, {
           params: { path: entry.path },
           responseType: "text",
         });

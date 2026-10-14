@@ -18,3 +18,4 @@ build/
 
 backend/media/
 frontend/.env.production
+qa/reports/

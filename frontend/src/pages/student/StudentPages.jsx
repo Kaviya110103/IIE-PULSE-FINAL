@@ -3,6 +3,11 @@ import api from '../../api/client'
 import toast from 'react-hot-toast'
 import { useNavigate } from 'react-router-dom'  // ← ADD THIS
 import heroStudentsImage from '../../assets/hero-students.png'
+import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf'
+import pdfWorker from 'pdfjs-dist/legacy/build/pdf.worker.min.js?url'
+import * as XLSX from 'xlsx'
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker
 
 // ── Design tokens ─────────────────────────────────────────────────────────
 const T = {
@@ -2690,50 +2695,406 @@ function StudentLeaveForm({ onClose, onSaved }) {
 }
 
 // ── StudentMaterials ────────────────────────────────────────────────────────
+const getMaterialFileName = (material, response) => {
+  const disposition = response?.headers?.['content-disposition'] || ''
+  const match = disposition.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i)
+  if (match?.[1]) return decodeURIComponent(match[1].replace(/"/g, ''))
+  return decodeURIComponent(String(material?.file || material?.title || 'material').split('?')[0].split('/').pop() || 'material')
+}
+
+const getMaterialType = (name, contentType = '') => {
+  const lowerName = String(name || '').toLowerCase()
+  const lowerType = String(contentType || '').toLowerCase()
+  if (lowerType.includes('pdf') || lowerName.endsWith('.pdf')) return 'pdf'
+  if (lowerType.includes('zip') || lowerName.endsWith('.zip')) return 'zip'
+  if (lowerType.includes('spreadsheet') || lowerType.includes('excel') || /\.(xlsx?|csv)$/.test(lowerName)) return 'sheet'
+  if (lowerType.startsWith('text/') || /\.(txt|csv|md|json|html|css|js|py|java|sql)$/.test(lowerName)) return 'text'
+  if (lowerType.startsWith('image/') || /\.(png|jpe?g|webp|gif)$/.test(lowerName)) return 'image'
+  return 'unknown'
+}
+
+const parseSheetRows = (data) => {
+  const workbook = XLSX.read(data, { type: 'array' })
+  const sheetName = workbook.SheetNames[0]
+  const rows = sheetName ? XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, blankrows: false }) : []
+  return { sheetName, rows: rows.slice(0, 120).map(row => row.slice(0, 12)) }
+}
+
+function PdfCanvasViewer({ pdfData }) {
+  const pagesRef = useRef(null)
+  const [rendering, setRendering] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    const canvases = []
+
+    const renderPdf = async () => {
+      if (!pdfData || !pagesRef.current) return
+
+      setRendering(true)
+      setError('')
+      pagesRef.current.innerHTML = ''
+
+      try {
+        const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(pdfData.slice(0)) })
+        const pdf = await loadingTask.promise
+
+        for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+          if (cancelled) break
+          const page = await pdf.getPage(pageNumber)
+          const viewport = page.getViewport({ scale: 1.35 })
+          const canvas = document.createElement('canvas')
+          const context = canvas.getContext('2d')
+
+          canvas.width = viewport.width
+          canvas.height = viewport.height
+          canvas.style.width = '100%'
+          canvas.style.height = 'auto'
+          canvas.style.display = 'block'
+          canvas.style.margin = '0 auto 18px'
+          canvas.style.borderRadius = '10px'
+          canvas.style.background = '#fff'
+          canvas.style.boxShadow = '0 10px 30px rgba(15,27,45,.16)'
+          canvases.push(canvas)
+          pagesRef.current?.appendChild(canvas)
+
+          await page.render({ canvasContext: context, viewport }).promise
+        }
+      } catch {
+        if (!cancelled) setError('This PDF cannot be opened inside the app right now.')
+      } finally {
+        if (!cancelled) setRendering(false)
+      }
+    }
+
+    renderPdf()
+
+    return () => {
+      cancelled = true
+      canvases.forEach(canvas => canvas.remove())
+    }
+  }, [pdfData])
+
+  return (
+    <div>
+      {rendering && (
+        <div style={{ display: 'grid', placeItems: 'center', minHeight: 240 }}>
+          <StudentSpin />
+          <div style={{ color: T.slate, fontWeight: 800, marginTop: 10 }}>Opening PDF inside app...</div>
+        </div>
+      )}
+      {error && (
+        <div style={{ textAlign: 'center', padding: 36, color: T.rose, fontWeight: 800 }}>
+          <i className="fas fa-circle-exclamation" style={{ marginRight: 8 }} />
+          {error}
+        </div>
+      )}
+      <div ref={pagesRef} style={{ display: rendering || error ? 'none' : 'block' }} />
+    </div>
+  )
+}
+
+function SheetPreview({ sheet }) {
+  if (!sheet?.rows?.length) {
+    return <StudentEmpty msg="No spreadsheet rows available to preview" icon="fa-table" />
+  }
+
+  return (
+    <div style={{ overflow: 'auto', maxHeight: 'calc(100vh - 230px)' }}>
+      {sheet.sheetName && <div style={{ fontWeight: 900, color: T.navy, marginBottom: 10 }}>Sheet: {sheet.sheetName}</div>}
+      <table className="student-table" style={{ minWidth: 720 }}>
+        <tbody>
+          {sheet.rows.map((row, rowIndex) => (
+            <tr key={rowIndex}>
+              {row.map((cell, cellIndex) => (
+                <td key={cellIndex} style={{ fontWeight: rowIndex === 0 ? 900 : 600, background: rowIndex === 0 ? '#f5f3ff' : undefined }}>
+                  {cell == null || cell === '' ? '-' : String(cell)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function StudentMaterialViewer({ viewer, onClose, onOpenZipEntry, onBackToZip }) {
+  const shellRef = useRef(null)
+  const [fullscreen, setFullscreen] = useState(false)
+
+  useEffect(() => {
+    const onFullscreenChange = () => setFullscreen(document.fullscreenElement === shellRef.current)
+    document.addEventListener('fullscreenchange', onFullscreenChange)
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange)
+  }, [])
+
+  const toggleFullscreen = async () => {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen()
+      } else {
+        await shellRef.current?.requestFullscreen()
+      }
+    } catch {
+      toast.error('Fullscreen is not available in this browser.')
+    }
+  }
+
+  const handleBackToZip = (event) => {
+    event?.preventDefault()
+    event?.stopPropagation()
+    onBackToZip?.()
+    requestAnimationFrame(() => {
+      shellRef.current?.querySelector?.('[data-material-viewer-body]')?.scrollTo?.({ top: 0 })
+    })
+  }
+
+  const title = viewer?.entry?.name || viewer?.material?.title || 'Study Material'
+  const icon = viewer?.type === 'zip' ? 'fa-file-zipper' : viewer?.type === 'sheet' ? 'fa-table' : viewer?.type === 'text' ? 'fa-file-lines' : viewer?.type === 'image' ? 'fa-image' : 'fa-file-pdf'
+  const canBackToZip = Boolean(viewer?.entry && viewer?.zipEntries?.length)
+
+  return (
+    <StudentModal open onClose={onClose} title={title} size="xl">
+      <div
+        ref={shellRef}
+        onContextMenu={e => e.preventDefault()}
+        style={{
+          display: 'grid',
+          gap: 14,
+          background: fullscreen ? '#f7f4ff' : 'transparent',
+          padding: fullscreen ? 18 : 0,
+          height: fullscreen ? '100vh' : 'auto',
+          overflow: fullscreen ? 'hidden' : 'visible',
+        }}
+      >
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          padding: '12px 14px',
+          borderRadius: 14,
+          background: 'linear-gradient(135deg, rgba(85,35,210,.10), rgba(244,169,64,.12))',
+          border: `1px solid ${T.border}`,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+            {canBackToZip && (
+              <button
+                type="button"
+                className="student-btn student-btn-sm student-btn-ghost"
+                onMouseDown={e => e.stopPropagation()}
+                onClick={handleBackToZip}
+                title="Back to ZIP files"
+                style={{ flex: '0 0 auto', minWidth: 38, width: 38, height: 38, padding: 0 }}
+              >
+                <i className="fas fa-arrow-left" />
+              </button>
+            )}
+            <div style={{
+              width: 42,
+              height: 42,
+              borderRadius: 12,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: T.navy,
+              color: '#fff',
+              flex: '0 0 auto',
+            }}>
+              <i className={`fas ${icon}`} />
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontWeight: 900, color: T.navy, overflowWrap: 'anywhere' }}>{title}</div>
+              <div style={{ fontSize: 12, color: T.slate, marginTop: 3 }}>
+                {canBackToZip ? 'Viewing file from ZIP. Use back arrow to return to files.' : 'Internal viewer only. Download option is disabled.'}
+              </div>
+            </div>
+          </div>
+          <button type="button" className="student-btn student-btn-sm student-btn-ghost" onClick={toggleFullscreen} title="Maximize">
+            <i className={`fas ${fullscreen ? 'fa-compress' : 'fa-expand'}`} />
+          </button>
+        </div>
+
+        <div style={{
+          position: 'relative',
+          height: fullscreen ? 'calc(100vh - 116px)' : '70vh',
+          overflow: 'auto',
+          padding: 12,
+          borderRadius: 16,
+          background: '#f7f4ff',
+          border: `1px solid ${T.border}`,
+        }} data-material-viewer-body>
+          {canBackToZip && (
+            <div style={{
+              position: 'sticky',
+              top: 0,
+              zIndex: 6,
+              display: 'flex',
+              justifyContent: 'flex-start',
+              paddingBottom: 10,
+              background: 'linear-gradient(180deg, #f7f4ff 70%, rgba(247,244,255,0))',
+            }}>
+              <button
+                type="button"
+                className="student-btn student-btn-sm student-btn-primary"
+                onMouseDown={e => e.stopPropagation()}
+                onClick={handleBackToZip}
+              >
+                <i className="fas fa-arrow-left" /> Back to files
+              </button>
+            </div>
+          )}
+          {viewer?.type === 'pdf' && <PdfCanvasViewer pdfData={viewer.data} />}
+          {viewer?.type === 'text' && (
+            <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'Consolas, monospace', lineHeight: 1.55, color: T.navy }}>
+              {viewer.text || 'No text preview available.'}
+            </pre>
+          )}
+          {viewer?.type === 'sheet' && <SheetPreview sheet={viewer.sheet} />}
+          {viewer?.type === 'image' && (
+            <img src={viewer.url} alt="" style={{ display: 'block', maxWidth: '100%', margin: '0 auto', borderRadius: 12 }} />
+          )}
+          {viewer?.type === 'zip' && (
+            <div style={{ display: 'grid', gap: 10 }}>
+              {viewer.entries?.length ? viewer.entries.map(entry => (
+                <button
+                  type="button"
+                  key={entry.path}
+                  className="student-btn student-btn-ghost"
+                  onClick={() => onOpenZipEntry(entry)}
+                  style={{ justifyContent: 'flex-start', width: '100%', textAlign: 'left' }}
+                >
+                  <i className={`fas ${entry.file_type === 'pdf' ? 'fa-file-pdf' : entry.file_type === 'image' ? 'fa-image' : entry.file_type === 'text' ? 'fa-file-lines' : 'fa-file'}`} />
+                  <span style={{ overflowWrap: 'anywhere' }}>{entry.name || entry.path}</span>
+                </button>
+              )) : <StudentEmpty msg="No readable files found inside this ZIP" icon="fa-file-zipper" />}
+            </div>
+          )}
+          {viewer?.type === 'unknown' && <StudentEmpty msg="This file type cannot be previewed inside the web app yet." icon="fa-file-circle-question" />}
+        </div>
+      </div>
+    </StudentModal>
+  )
+}
+
 export function StudentMaterials() {
   const [materials, setMaterials] = useState([])
   const [loading, setLoading] = useState(true)
+  const [openingId, setOpeningId] = useState(null)
+  const [viewer, setViewer] = useState(null)
 
   useEffect(() => { api.get('/materials/').then(r => setMaterials(r.data.results || r.data)).finally(() => setLoading(false)) }, [])
 
   const fileIcon = url => {
     if (!url) return 'fa-file-alt'
     if (url.includes('.pdf')) return 'fa-file-pdf'
+    if (url.includes('.zip')) return 'fa-file-zipper'
+    if (url.includes('.xls')) return 'fa-file-excel'
+    if (url.includes('.txt')) return 'fa-file-lines'
     if (url.includes('.doc')) return 'fa-file-word'
     return 'fa-file-alt'
   }
 
-  const materialFileName = (material, response) => {
-    const disposition = response?.headers?.['content-disposition'] || ''
-    const match = disposition.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i)
-    if (match?.[1]) return decodeURIComponent(match[1].replace(/"/g, ''))
-    return material.file?.split('/').pop() || `${material.title || 'material'}.pdf`
+  const buildViewerFromResponse = (material, response, entry = null) => {
+    const fileName = entry?.name || getMaterialFileName(material, response)
+    const type = getMaterialType(fileName, response.headers?.['content-type'])
+    const data = response.data
+
+    if (type === 'pdf') return { type, material, entry, data }
+    if (type === 'text') return { type, material, entry, text: new TextDecoder().decode(data).slice(0, 50000) }
+    if (type === 'sheet') return { type, material, entry, sheet: parseSheetRows(data) }
+    if (type === 'image') {
+      const blob = new Blob([data], { type: response.headers?.['content-type'] || 'image/*' })
+      return { type, material, entry, url: URL.createObjectURL(blob) }
+    }
+    return { type, material, entry }
   }
 
-  const downloadMaterial = async (material) => {
+  const showViewer = (nextViewer) => {
+    setViewer(current => {
+      if (current?.url && current.url !== nextViewer?.url) {
+        URL.revokeObjectURL(current.url)
+      }
+      return nextViewer
+    })
+  }
+
+  const openMaterial = async (material) => {
     try {
-      const res = await api.get(`/materials/${material.id}/download/`, { responseType: 'blob' })
-      const blob = new Blob([res.data], { type: res.headers?.['content-type'] || 'application/octet-stream' })
-      const fileURL = window.URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = fileURL
-      link.download = materialFileName(material, res)
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      window.URL.revokeObjectURL(fileURL)
+      setOpeningId(material.id)
+      const candidateName = String(material.file || material.title || '').toLowerCase()
+      if (candidateName.endsWith('.zip')) {
+        const zipRes = await api.get(`/materials/${material.id}/zip-entries/`)
+        showViewer({
+          type: 'zip',
+          material,
+          entries: zipRes.data?.entries || [],
+        })
+        return
+      }
+
+      const res = await api.get(`/materials/${material.id}/download/`, { responseType: 'arraybuffer' })
+      const nextViewer = buildViewerFromResponse(material, res)
+      if (nextViewer.type === 'zip') {
+        const zipRes = await api.get(`/materials/${material.id}/zip-entries/`)
+        showViewer({
+          type: 'zip',
+          material,
+          entries: zipRes.data?.entries || [],
+        })
+        return
+      }
+      if (nextViewer.type === 'unknown') {
+        try {
+          const zipRes = await api.get(`/materials/${material.id}/zip-entries/`)
+          showViewer({
+            type: 'zip',
+            material,
+            entries: zipRes.data?.entries || [],
+          })
+          return
+        } catch {
+          // Not a ZIP-backed material; keep the unsupported preview.
+        }
+      }
+      showViewer(nextViewer)
     } catch (err) {
       const data = err.response?.data
-      if (data instanceof Blob) {
+      if (data instanceof ArrayBuffer) {
         try {
-          const parsed = JSON.parse(await data.text())
+          const parsed = JSON.parse(new TextDecoder().decode(data))
           toast.error(parsed.error || parsed.detail || 'Unable to download material')
           return
         } catch {
           // Fall through to the generic message below.
         }
       }
-      toast.error(err.response?.data?.error || err.response?.data?.detail || 'Unable to download material')
+      toast.error(err.response?.data?.error || err.response?.data?.detail || err.message || 'Unable to open material')
+    } finally {
+      setOpeningId(null)
+    }
+  }
+
+  const openZipEntry = async (entry) => {
+    if (!viewer?.material) return
+    try {
+      setOpeningId(viewer.material.id)
+      const response = await api.get(`/materials/${viewer.material.id}/zip-file/`, {
+        params: { path: entry.path },
+        responseType: 'arraybuffer',
+      })
+      const nextViewer = buildViewerFromResponse(viewer.material, response, entry)
+      showViewer({
+        ...nextViewer,
+        zipEntries: viewer.entries || viewer.zipEntries || [],
+        zipTitle: viewer.material?.title || 'ZIP Material',
+      })
+    } catch (err) {
+      toast.error(err.response?.data?.error || err.response?.data?.detail || 'Unable to open this ZIP file')
+    } finally {
+      setOpeningId(null)
     }
   }
 
@@ -2751,15 +3112,15 @@ export function StudentMaterials() {
                 <col style={{ width: '130px' }} />
                 <col style={{ width: '180px' }} />
               </colgroup>
-              <thead><tr><th>Title</th><th>Date</th><th style={{ textAlign: 'right' }}>Download</th></tr></thead>
+              <thead><tr><th>Title</th><th>Date</th><th style={{ textAlign: 'right' }}>View</th></tr></thead>
               <tbody>
                 {materials.map(m => (
                   <tr key={m.id}>
                     <td><div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}><div style={{ width: 36, height: 36, borderRadius: 8, background: `linear-gradient(135deg, ${T.amber}, ${T.rose})`, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto' }}><i className={`fas ${fileIcon(m.file)}`} /></div><span style={{ fontWeight: 600, overflowWrap: 'anywhere' }}>{m.title}</span></div></td>
                     <td style={{ fontSize: 12 }}>{m.uploaded_at ? new Date(m.uploaded_at).toLocaleDateString('en-IN') : '—'}</td>
                     <td style={{ textAlign: 'right' }}>
-                      <button type="button" onClick={() => downloadMaterial(m)} className="student-btn student-btn-sm student-btn-primary">
-                        <i className="fas fa-download" /> Download PDF
+                      <button type="button" onClick={() => openMaterial(m)} className="student-btn student-btn-sm student-btn-primary" disabled={openingId === m.id}>
+                        <i className={`fas ${openingId === m.id ? 'fa-spinner fa-spin' : 'fa-eye'}`} /> {openingId === m.id ? 'Opening...' : 'View'}
                       </button>
                     </td>
                   </tr>
@@ -2769,6 +3130,23 @@ export function StudentMaterials() {
           </div>
         )}
       </div>
+      {viewer && (
+        <StudentMaterialViewer
+          viewer={viewer}
+          onOpenZipEntry={openZipEntry}
+          onBackToZip={() => {
+            showViewer({
+              type: 'zip',
+              material: viewer.material,
+              entries: viewer.zipEntries || [],
+            })
+          }}
+          onClose={() => {
+            if (viewer.url) URL.revokeObjectURL(viewer.url)
+            setViewer(null)
+          }}
+        />
+      )}
     </div>
   )
 }

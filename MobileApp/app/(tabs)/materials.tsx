@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Href, useFocusEffect, useRouter } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "expo-router";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   RefreshControl,
@@ -11,13 +11,9 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import api, { resolveMediaUrl } from "@/services/api";
-import {
-  getFileType,
-  getLibraryMaterials,
-} from "@/utils/materialLibrary";
+import { getWithApiFallback, resolveMediaUrl } from "@/services/api";
+import { getFileType } from "@/utils/materialLibrary";
 
-const LIBRARY_ROUTE = "/(tabs)/library" as Href;
 const MATERIALS_CACHE_KEY = "iie_pulse_cached_materials";
 
 type MaterialItem = {
@@ -30,6 +26,7 @@ type MaterialItem = {
   batch_number?: string;
   batch_code?: string;
   display_name?: string;
+  apiBaseUrl?: string;
 };
 
 export default function MaterialsScreen() {
@@ -38,27 +35,30 @@ export default function MaterialsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [materials, setMaterials] = useState<MaterialItem[]>([]);
   const [errorMsg, setErrorMsg] = useState("");
-  const [downloadingId, setDownloadingId] = useState<number | null>(null);
-  const [downloadProgress, setDownloadProgress] = useState<Record<number, number>>({});
-  const [downloadedIds, setDownloadedIds] = useState<Set<number>>(new Set());
-
-  const loadDownloadedStatus = useCallback(async () => {
-    const libraryItems = await getLibraryMaterials();
-    setDownloadedIds(new Set(libraryItems.map((item) => item.id)));
-  }, []);
 
   const loadMaterials = async () => {
     try {
       setErrorMsg("");
-      const response = await api.get("/materials/");
+      const response = await getWithApiFallback("/materials/");
       const rawItems = response.data?.results || response.data || [];
+      const responseUrl = String(response.config?.url || "");
+      const apiBaseUrl = responseUrl.includes("/api/")
+        ? `${responseUrl.split("/api/")[0]}/api/`
+        : undefined;
       const mappedItems = rawItems.map((item: MaterialItem) => ({
         ...item,
-        file: item.file ? resolveMediaUrl(item.file) : item.file,
+        apiBaseUrl,
+        file: item.file ? resolveMediaUrl(item.file, apiBaseUrl) : item.file,
       }));
       setMaterials(mappedItems);
       await AsyncStorage.setItem(MATERIALS_CACHE_KEY, JSON.stringify(mappedItems));
     } catch (error: any) {
+      if (error?.response?.status === 401 || error?.response?.status === 403) {
+        setMaterials([]);
+        setErrorMsg("Please logout and login again to load your study materials.");
+        return;
+      }
+
       const cached = await AsyncStorage.getItem(MATERIALS_CACHE_KEY);
       let cachedItems: MaterialItem[] = [];
       try {
@@ -84,28 +84,26 @@ export default function MaterialsScreen() {
     loadMaterials();
   }, []);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadDownloadedStatus();
-    }, [loadDownloadedStatus])
-  );
-
   const onRefresh = async () => {
     setRefreshing(true);
     await loadMaterials();
   };
 
-  const openPdf = async (item: MaterialItem) => {
+  const openPdf = (item: MaterialItem) => {
     if (!item.file) {
       setErrorMsg("PDF file is not available.");
       return;
     }
     setErrorMsg("");
+    const baseUrl = item.apiBaseUrl?.replace(/\/$/, "");
+    const internalReaderUrl = baseUrl
+      ? `${baseUrl}/materials/${item.id}/download/`
+      : item.file;
     router.push({
       pathname: "/(tabs)/material-viewer",
       params: {
         title: item.title || "Material",
-        uri: item.file,
+        uri: internalReaderUrl,
         returnTo: "/materials",
       },
     } as any);
@@ -154,9 +152,6 @@ export default function MaterialsScreen() {
           const fileType = getFileType(fileName);
           const isZip = fileType === "zip";
           const isPdf = fileType === "pdf";
-          const isDownloaded = downloadedIds.has(item.id);
-          const isDownloading = downloadingId === item.id;
-          const progress = downloadProgress[item.id] || 0;
 
           return (
           <View key={item.id} style={styles.card}>
@@ -191,7 +186,7 @@ export default function MaterialsScreen() {
             </View>
 
             <TouchableOpacity
-              style={[styles.button, isDownloaded && styles.openButton]}
+              style={styles.button}
               onPress={() => {
                 if (isPdf) {
                   openPdf(item);
@@ -203,37 +198,23 @@ export default function MaterialsScreen() {
                     params: {
                       id: String(item.id),
                       title: item.title || "ZIP Material",
+                      apiBaseUrl: item.apiBaseUrl || "",
                     },
                   } as any);
                   return;
                 }
                 setErrorMsg("This file type can be viewed after converting it to PDF or uploading it as ZIP/PDF.");
               }}
-              disabled={downloadingId === item.id}
             >
-              {isDownloading ? (
-                <ActivityIndicator color="#FFFFFF" />
-              ) : isPdf ? (
+              {isPdf ? (
                 <Ionicons name="eye-outline" size={17} color="#FFFFFF" />
-              ) : isDownloaded ? (
-                <Ionicons name="checkmark-circle-outline" size={17} color="#FFFFFF" />
               ) : isZip ? (
                 <Ionicons name="archive-outline" size={17} color="#FFFFFF" />
               ) : (
                 <Ionicons name="lock-closed-outline" size={17} color="#FFFFFF" />
               )}
               <Text style={styles.buttonText}>
-                {isDownloading
-                  ? progress
-                    ? `Downloading ${progress}%`
-                    : "Downloading..."
-                  : isPdf
-                    ? "View PDF"
-                    : isDownloaded
-                      ? "Open ZIP"
-                      : isZip
-                        ? "Open ZIP"
-                        : "PDF/ZIP only"}
+                {isPdf ? "View PDF" : isZip ? "Open ZIP" : "PDF/ZIP only"}
               </Text>
             </TouchableOpacity>
           </View>
@@ -401,9 +382,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "center",
     gap: 8,
-  },
-  openButton: {
-    backgroundColor: "#16A34A",
   },
   buttonText: {
     color: "#fff",

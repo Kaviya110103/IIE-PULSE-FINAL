@@ -3,7 +3,10 @@ import axios from "axios";
 import { Platform } from "react-native";
 
 const PRODUCTION_API = "https://iiepulse.indrainstitute.com/api/";
-const LOCAL_LAN_API = "https://iiepulse.indrainstitute.com/api/";
+const DEV_LAN_API =
+  process.env.EXPO_PUBLIC_LOCAL_API_URL ||
+  (typeof __DEV__ !== "undefined" && __DEV__ ? "http://192.168.1.5:8000/api/" : "");
+const LOCAL_LAN_API = DEV_LAN_API || PRODUCTION_API;
 const DEFAULT_API = Platform.OS === "web" ? PRODUCTION_API : LOCAL_LAN_API;
 
 function normalizeApiBaseUrl(url: string) {
@@ -45,7 +48,7 @@ export const API_BASE_URL = getApiBaseUrl();
     
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/?$/, "");
 
-function getCandidateApiBaseUrls() {
+export function getCandidateApiBaseUrls() {
   const urls = new Set<string>();
   const envApiUrl = getEnvApiBaseUrl();
 
@@ -54,10 +57,47 @@ function getCandidateApiBaseUrls() {
   }
 
   urls.add(API_BASE_URL);
-  urls.add(LOCAL_LAN_API);
+  if (LOCAL_LAN_API) {
+    urls.add(LOCAL_LAN_API);
+  }
   urls.add(DEFAULT_API);
 
   return Array.from(urls).map(normalizeApiBaseUrl);
+}
+
+export async function getAuthHeaders() {
+  const token = await AsyncStorage.getItem("access_token");
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+export async function getWithApiFallback(endpoint: string, options: Record<string, any> = {}) {
+  const cleanEndpoint = endpoint.replace(/^\/+/, "");
+  let lastError: any = null;
+  let authError: any = null;
+
+  for (const baseUrl of getCandidateApiBaseUrls()) {
+    try {
+      const response = await axios.get(`${baseUrl}${cleanEndpoint}`, {
+        ...options,
+        timeout: options.timeout || 12000,
+        headers: {
+          ...(options.headers || {}),
+          ...(await getAuthHeaders()),
+        },
+      });
+
+      api.defaults.baseURL = baseUrl;
+      return response;
+    } catch (error) {
+      const status = (error as any)?.response?.status;
+      if (status === 401 || status === 403) {
+        authError = error;
+      }
+      lastError = error;
+    }
+  }
+
+  throw authError || lastError;
 }
 
 const api = axios.create({
