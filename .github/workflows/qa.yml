@@ -2,10 +2,14 @@ name: IIE Pulse QA
 
 on:
   push:
-    branches: [main]
+    branches: ["**"]
   pull_request:
     branches: [main]
   workflow_dispatch:
+
+concurrency:
+  group: iie-pulse-qa-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   qa:
@@ -59,3 +63,4 @@ jobs:
           name: qa-reports
           path: qa/reports/
           if-no-files-found: ignore
+          retention-days: 14
