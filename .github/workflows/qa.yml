@@ -48,6 +48,16 @@ jobs:
         working-directory: MobileApp
         run: npm ci
 
+      - name: Configure local QA environment
+        shell: bash
+        run: |
+          cp backend/.env.example backend/.env
+          cat > frontend/.env.local <<'EOF'
+          VITE_API_BASE_URL=/api
+          VITE_API_PROXY_TARGET=http://127.0.0.1:8000
+          VITE_ALLOWED_HOSTS=localhost,127.0.0.1
+          EOF
+
       - name: Run QA
         env:
           DJANGO_SECRET_KEY: github-actions-test-secret
