@@ -2396,7 +2396,8 @@ function MaterialUploadModal({ onClose, onSaved, material = null }) {
         </div>
         <div className="employee-fg">
           <label className="employee-label">File</label>
-          <input type="file" className="employee-input" onChange={e => setFile(e.target.files[0])} style={{ padding: 7 }} />
+          <input type="file" className="employee-input" accept="*/*" onChange={e => setFile(e.target.files[0])} style={{ padding: 7 }} />
+          <small className="employee-hint">All file types are supported, including PDF, ZIP, DOC, DOCX, PNG, JPG, XLS, and XLSX.</small>
           {isEdit && <small className="employee-hint">Leave empty to keep the existing file.</small>}
         </div>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 8 }}>
@@ -2670,7 +2671,8 @@ function LibraryUploadModal({ onClose, onSaved }) {
         </div>
         <div className="employee-fg">
           <label className="employee-label">File <span className="employee-req">*</span></label>
-          <input type="file" className="employee-input" onChange={e => setFile(e.target.files[0])} style={{ padding: 7 }} required />
+          <input type="file" className="employee-input" accept="*/*" onChange={e => setFile(e.target.files[0])} style={{ padding: 7 }} required />
+          <small className="employee-hint">All file types are supported, including PDF, ZIP, DOC, DOCX, PNG, JPG, XLS, and XLSX.</small>
         </div>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 8 }}>
           <button type="button" className="employee-btn employee-btn-ghost" onClick={onClose}>Cancel</button>
