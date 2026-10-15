@@ -52,6 +52,9 @@ jobs:
         shell: bash
         run: |
           cp backend/.env.example backend/.env
+          sed -i 's/^DEPLOYMENT_DOMAIN=.*/DEPLOYMENT_DOMAIN=127.0.0.1:8000/' backend/.env
+          sed -i 's/^DEPLOYMENT_SCHEME=.*/DEPLOYMENT_SCHEME=http/' backend/.env
+          sed -i 's/^DJANGO_ALLOWED_HOSTS=.*/DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1/' backend/.env
           cat > frontend/.env.local <<'EOF'
           VITE_API_BASE_URL=/api
           VITE_API_PROXY_TARGET=http://127.0.0.1:8000
