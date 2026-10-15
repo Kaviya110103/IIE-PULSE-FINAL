@@ -20,7 +20,7 @@ export default function CustomBottomNav() {
   const segments = useSegments();
 
   // Determine active tab based on current route segment
-  const activeTab = segments[1] ?? "home";
+  const activeTab = segments[segments.length - 1] ?? "home";
 
   return (
     <View style={styles.container}>
