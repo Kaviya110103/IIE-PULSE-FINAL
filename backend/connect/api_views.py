@@ -5532,7 +5532,8 @@ class QuizListView(generics.ListAPIView):
                 if student.assigned_batch:
                     # Students see published quizzes from their batch
                     return Quiz.objects.filter(
-                        batch=student.assigned_batch, 
+                        Q(batch=student.assigned_batch) |
+                        Q(batch__isnull=True, audience__in=['students', 'both']),
                         is_published=True
                     ).order_by('-created_at')
                 return Quiz.objects.none()
@@ -5565,7 +5566,10 @@ def upload_quiz(request):
     raw_batch_ids = [value for idx, value in enumerate(raw_batch_ids) if value and value not in raw_batch_ids[:idx]]
 
     target_batches = []
-    is_practice_quiz = any(value in ('practice', 'all', 'public', '0') for value in raw_batch_ids)
+    requested_audience = str(request.data.get('audience') or '').strip().lower()
+    if requested_audience not in ('students', 'public_users', 'both'):
+        requested_audience = 'students'
+    is_practice_quiz = requested_audience == 'public_users' or any(value in ('practice', 'all', 'public', '0') for value in raw_batch_ids)
     if is_practice_quiz:
         target_batches = [None]
     elif not raw_batch_ids:
@@ -5657,6 +5661,7 @@ def upload_quiz(request):
                 title=request.data.get('title', 'Quiz'),
                 description=request.data.get('description', ''),
                 batch=batch,
+                audience=requested_audience,
                 created_by=emp,
                 duration_minutes=int(request.data.get('duration_minutes', 30)),
                 passing_marks=int(request.data.get('passing_marks', 35)),
@@ -5664,8 +5669,8 @@ def upload_quiz(request):
                 source_file=file,
                 total_questions=len(questions),
                 total_marks=sum(item['marks'] for item in questions),
-                is_published=bool(raw_batch_ids),
-                publish_date=timezone.now() if raw_batch_ids else None,
+                is_published=bool(raw_batch_ids) or requested_audience in ('students', 'public_users', 'both'),
+                publish_date=timezone.now() if (raw_batch_ids or requested_audience in ('students', 'public_users', 'both')) else None,
             )
             QuizQuestion.objects.bulk_create([
                 QuizQuestion(quiz=quiz, **question)
@@ -5920,7 +5925,11 @@ def _serialize_quiz_with_questions(quiz, include_answers=False):
 @permission_classes([AllowAny])
 def practice_quizzes(request):
     """Public practice quizzes (batch-less, published)."""
-    quizzes = Quiz.objects.filter(batch__isnull=True, is_published=True).order_by('-created_at')
+    quizzes = Quiz.objects.filter(
+        batch__isnull=True,
+        audience__in=['public_users', 'both'],
+        is_published=True,
+    ).order_by('-created_at')
     return Response({
         'results': [_serialize_quiz_with_questions(quiz, include_answers=True) for quiz in quizzes]
     })
@@ -11349,7 +11358,8 @@ def student_quizzes(request):
             return Response({'results': []})
         
         quizzes = Quiz.objects.filter(
-            batch__in=student_batches_list,
+            Q(batch__in=student_batches_list) |
+            Q(batch__isnull=True, audience__in=['students', 'both']),
             is_published=True
         ).select_related('batch', 'batch__course_name').distinct().order_by('-created_at')
         
@@ -11414,7 +11424,7 @@ def student_take_quiz(request, quiz_id):
         assigned_batch_ids = [batch.id for batch in _student_accessible_batches(student)]
         assigned_to_batch = bool(quiz.batch_id in assigned_batch_ids)
 
-        if not assigned_to_batch:
+        if not assigned_to_batch and not (quiz.batch_id is None and quiz.audience in ('students', 'both')):
             return Response({'error': 'This quiz is not assigned to your batch'}, status=400)
         
         # Student quizzes are one-time only in the mobile app.

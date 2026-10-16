@@ -1366,6 +1366,11 @@ import uuid
 
 class Quiz ( models.Model ) :
     """Quiz created from uploaded file"""
+    AUDIENCE_CHOICES = [
+        ('students', 'All Students'),
+        ('public_users', 'Public Users'),
+        ('both', 'Students and Public Users'),
+    ]
     DIFFICULTY_CHOICES = [
             ('easy' , 'Easy') ,
             ('medium' , 'Medium') ,
@@ -1376,6 +1381,7 @@ class Quiz ( models.Model ) :
     title = models.CharField ( max_length = 200 )
     description = models.TextField ( blank = True )
     batch = models.ForeignKey ( Batches , on_delete = models.CASCADE , related_name = 'quizzes' , blank = True , null = True )
+    audience = models.CharField(max_length=20, choices=AUDIENCE_CHOICES, default='students')
     created_by = models.ForeignKey ( Employee , on_delete = models.SET_NULL , null = True )
     source_file = models.FileField ( upload_to = 'quiz_files/' , blank = True , null = True )
     total_questions = models.IntegerField ( default = 0 )

@@ -4185,7 +4185,7 @@ export function QuizResults() {
       .then(x => {
         const data = x.data || {}
         const practiceResults = data.public_results || []
-        setResults(practiceResults.filter(result => result.audience === 'student'))
+        setResults(data.student_results || practiceResults.filter(result => result.audience === 'student'))
         setPublicResults(practiceResults.filter(result => result.audience !== 'student'))
       })
       .catch(() => toast.error('Failed to load quiz results'))

@@ -5604,7 +5604,7 @@ export function AddQuestions() {
 export function UploadQuiz() {
   const navigate = useNavigate()
   const location = useLocation()
-  const [form, setForm] = useState({ title: '', description: '', duration_minutes: 30, passing_marks: 35, difficulty: 'medium' })
+  const [form, setForm] = useState({ title: '', description: '', duration_minutes: 30, passing_marks: 35, difficulty: 'medium', audience: 'students' })
   const [file, setFile] = useState(null)
   const [saving, setSaving] = useState(false)
 
@@ -5616,10 +5616,11 @@ export function UploadQuiz() {
       const fd = new FormData()
       fd.append('title', form.title); fd.append('description', form.description)
       fd.append('duration_minutes', form.duration_minutes); fd.append('passing_marks', form.passing_marks); fd.append('difficulty', form.difficulty)
+      fd.append('audience', form.audience)
       fd.append('source_file', file)
       const res = await api.post('/quiz/upload/', fd)
       toast.success(res.data?.message || 'Quiz uploaded successfully!')
-      setForm({ title: '', description: '', duration_minutes: 30, passing_marks: 35, difficulty: 'medium' })
+      setForm({ title: '', description: '', duration_minutes: 30, passing_marks: 35, difficulty: 'medium', audience: 'students' })
       setFile(null)
       navigate(location.pathname.startsWith('/admin') ? '/admin/quiz' : '/employee/quiz')
     } catch (err) { toast.error(err.response?.data?.error || 'Upload failed') }
@@ -5635,6 +5636,16 @@ export function UploadQuiz() {
           <form onSubmit={handleSubmit}>
             <div className="employee-fg"><label className="employee-label">Quiz Title *</label><input className="employee-input" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} required /></div>
             <div className="employee-fg"><label className="employee-label">Description</label><textarea className="employee-input" rows={2} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></div>
+            <div className="employee-fg"><label className="employee-label">Quiz Audience *</label>
+              <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', marginTop: 8 }}>
+                {[['students', 'All Students'], ['public_users', 'Public Users'], ['both', 'Students and Public Users']].map(([value, label]) => (
+                  <label key={value} style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                    <input type="radio" name="quiz-audience" checked={form.audience === value} onChange={() => setForm({ ...form, audience: value })} />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </div>
             <div className="employee-row-grid-2">
               <div className="employee-fg"><label className="employee-label">Duration (minutes)</label><input type="number" className="employee-input" value={form.duration_minutes} onChange={e => setForm({ ...form, duration_minutes: parseInt(e.target.value) })} /></div>
               <div className="employee-fg"><label className="employee-label">Passing Marks (%)</label><input type="number" className="employee-input" value={form.passing_marks} onChange={e => setForm({ ...form, passing_marks: parseInt(e.target.value) })} /></div>
