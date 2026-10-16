@@ -327,6 +327,44 @@ export async function readLibraryText(uri: string) {
   return FileSystem.readAsStringAsync(uri);
 }
 
+function decodeXml(value: string) {
+  return value
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+export async function readLibraryDocument(uri: string, fileName: string) {
+  const lower = fileName.toLowerCase();
+  if (!lower.endsWith(".docx")) {
+    throw new Error("This document format cannot be previewed inside the app yet.");
+  }
+
+  const base64 = await FileSystem.readAsStringAsync(uri, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+  const zipBytes = base64ToUint8Array(base64);
+  const files = unzipSync(zipBytes);
+  const documentXml = files["word/document.xml"];
+  if (!documentXml) throw new Error("The DOCX document content could not be read.");
+
+  const xml = strFromU8(documentXml);
+  const paragraphs = xml
+    .split(/<w:p(?:\s[^>]*)?>/i)
+    .slice(1)
+    .map((paragraph) => {
+      const text = [...paragraph.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/gi)]
+        .map((match) => decodeXml(match[1]))
+        .join("");
+      return text.trim();
+    })
+    .filter(Boolean);
+
+  return paragraphs.join("\n\n").slice(0, 30000) || "No readable text found in this document.";
+}
+
 export function readZipTextPreview(bytes: Uint8Array) {
   return strFromU8(bytes).slice(0, 12000);
 }

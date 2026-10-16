@@ -19,6 +19,7 @@ import {
   LibraryChildFile,
   LibraryFileType,
   LibraryMaterial,
+  readLibraryDocument,
   readLibraryText,
   removeLibraryMaterial,
 } from "@/utils/materialLibrary";
@@ -61,13 +62,15 @@ export default function LibraryScreen() {
     setActiveFile({ ...file, fileType: actualFileType });
     setTextPreview("");
 
-    if (actualFileType === "text") {
+    if (actualFileType === "text" || actualFileType === "document") {
       setPreviewLoading(true);
       try {
-        const content = await readLibraryText(file.localUri);
+        const content = actualFileType === "document"
+          ? await readLibraryDocument(file.localUri, file.fileName)
+          : await readLibraryText(file.localUri);
         setTextPreview(content.slice(0, 12000));
-      } catch {
-        setTextPreview("Unable to read this file inside the app.");
+      } catch (error: any) {
+        setTextPreview(error?.message || "Unable to read this file inside the app.");
       } finally {
         setPreviewLoading(false);
       }
@@ -167,7 +170,9 @@ export default function LibraryScreen() {
                       ? "Open image in app"
                       : actualFileType === "text"
                         ? "Open text in app"
-                        : "Saved in app"}
+                        : actualFileType === "document"
+                          ? "Open document in app"
+                          : "Saved in app"}
               </Text>
             </View>
             <TouchableOpacity style={styles.trashButton} onPress={() => deleteItem(item.id)}>
@@ -239,7 +244,7 @@ export default function LibraryScreen() {
             </View>
           ) : activeFile?.fileType === "image" ? (
             <Image source={{ uri: activeFile.localUri }} style={styles.fullImage} resizeMode="contain" />
-          ) : activeFile?.fileType === "text" ? (
+          ) : activeFile?.fileType === "text" || activeFile?.fileType === "document" ? (
             <ScrollView style={styles.textReader} contentContainerStyle={{ padding: 16 }}>
               {previewLoading ? (
                 <ActivityIndicator color="#5523D2" />
