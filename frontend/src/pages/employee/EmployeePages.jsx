@@ -5778,9 +5778,6 @@ export function ManageQuizzes() {
               <thead>
                 <tr>
                   <th>Title</th>
-                  <th>Batch</th>
-                  <th>Uploaded By</th>
-                  <th>Type</th>
                   <th>Questions / Paper</th>
                   <th>Duration</th>
                   <th>Status</th>
@@ -5791,8 +5788,6 @@ export function ManageQuizzes() {
                 {filteredQuizzes.map(quiz => (
                   <tr key={quiz.id}>
                     <td style={{ fontWeight: 600 }}>{quiz.title}</td>
-                    <td>{quiz.batch_number || <Badge text="Not assigned" variant="warning" />}</td>
-                    <td>{quiz.created_by_name || '-'}<div style={{ marginTop: 4 }}><Badge text={quiz.created_by_trainer_status || 'Current Trainer'} variant={quiz.created_by_trainer_status === 'Previous Trainer' ? 'warning' : 'success'} /></div></td>
                     <td style={{ textAlign: 'center' }}>{quiz.total_questions || 0}</td>
                     <td>{quiz.duration_minutes} min</td>
                     <td>
