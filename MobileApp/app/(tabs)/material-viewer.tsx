@@ -10,7 +10,6 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import Pdf from "react-native-pdf";
 
 const PDF_CACHE_DIR = `${FileSystem.cacheDirectory || FileSystem.documentDirectory || ""}iie-pulse-pdf-cache/`;
 
@@ -45,6 +44,15 @@ export default function MaterialViewerScreen() {
   const [authToken, setAuthToken] = useState("");
   const [authReady, setAuthReady] = useState(false);
   const [readerUri, setReaderUri] = useState("");
+  const Pdf = useMemo(() => {
+    try {
+      // Keep the native PDF module out of the login/startup bundle. Expo Go does
+      // not include it, while the dev/production native builds do.
+      return require("react-native-pdf").default;
+    } catch {
+      return null;
+    }
+  }, []);
   const title = Array.isArray(params.title) ? params.title[0] : params.title || "Material";
   const uri = Array.isArray(params.uri) ? params.uri[0] : params.uri || "";
   const localUri = Array.isArray(params.localUri) ? params.localUri[0] : params.localUri || "";
@@ -142,12 +150,14 @@ export default function MaterialViewerScreen() {
         </View>
       </View>
 
-      {!pdfSource || failed ? (
+      {!Pdf || !pdfSource || failed ? (
         <View style={styles.errorPanel}>
           <Ionicons name="document-lock-outline" size={52} color="#A78BFA" />
           <Text style={styles.errorTitle}>Unable to preview this PDF</Text>
           <Text style={styles.errorText}>
-            This PDF cannot be opened right now. Please try again after reconnecting or reloading the material.
+            {!Pdf
+              ? "The in-app PDF reader is available in the rebuilt IIE Pulse app."
+              : "This PDF cannot be opened right now. Please try again after reconnecting or reloading the material."}
           </Text>
         </View>
       ) : (
