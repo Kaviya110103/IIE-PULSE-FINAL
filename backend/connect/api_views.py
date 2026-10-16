@@ -5948,11 +5948,18 @@ def _serialize_quiz_with_questions(quiz, include_answers=False):
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def practice_quizzes(request):
-    """Public practice quizzes (batch-less, published)."""
+    """Skillset quizzes for public users and authenticated students."""
     _publish_due_quizzes()
+    audiences = ['public_users', 'both']
+    if request.user.is_authenticated:
+        try:
+            Students.objects.get(user=request.user)
+            audiences = ['students', 'both']
+        except Students.DoesNotExist:
+            pass
     quizzes = Quiz.objects.filter(
         batch__isnull=True,
-        audience__in=['public_users', 'both'],
+        audience__in=audiences,
         is_published=True,
     ).order_by('-created_at')
     return Response({
