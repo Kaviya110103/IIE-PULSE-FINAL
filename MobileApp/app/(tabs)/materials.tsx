@@ -12,7 +12,7 @@ import {
   View,
 } from "react-native";
 import { getWithApiFallback, resolveMediaUrl } from "@/services/api";
-import { getFileType } from "@/utils/materialLibrary";
+import { downloadMaterialToLibrary, getFileType } from "@/utils/materialLibrary";
 
 const MATERIALS_CACHE_KEY = "iie_pulse_cached_materials";
 
@@ -35,6 +35,7 @@ export default function MaterialsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [materials, setMaterials] = useState<MaterialItem[]>([]);
   const [errorMsg, setErrorMsg] = useState("");
+  const [savingId, setSavingId] = useState<number | null>(null);
 
   const loadMaterials = async () => {
     try {
@@ -152,6 +153,7 @@ export default function MaterialsScreen() {
           const fileType = getFileType(fileName);
           const isZip = fileType === "zip";
           const isPdf = fileType === "pdf";
+          const isDirectPreview = fileType === "image" || fileType === "text";
 
           return (
           <View key={item.id} style={styles.card}>
@@ -187,7 +189,7 @@ export default function MaterialsScreen() {
 
             <TouchableOpacity
               style={styles.button}
-              onPress={() => {
+              onPress={async () => {
                 if (isPdf) {
                   openPdf(item);
                   return;
@@ -203,18 +205,39 @@ export default function MaterialsScreen() {
                   } as any);
                   return;
                 }
-                setErrorMsg("This file type can be viewed after converting it to PDF or uploading it as ZIP/PDF.");
+                if (!item.file || savingId === item.id) return;
+                setSavingId(item.id);
+                setErrorMsg("");
+                try {
+                  await downloadMaterialToLibrary(item);
+                  router.push("/(tabs)/library" as any);
+                } catch (error: any) {
+                  setErrorMsg(error?.message || "Unable to open this material inside the app.");
+                } finally {
+                  setSavingId(null);
+                }
               }}
+              disabled={savingId === item.id}
             >
-              {isPdf ? (
+              {savingId === item.id ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : isPdf ? (
                 <Ionicons name="eye-outline" size={17} color="#FFFFFF" />
               ) : isZip ? (
                 <Ionicons name="archive-outline" size={17} color="#FFFFFF" />
               ) : (
-                <Ionicons name="lock-closed-outline" size={17} color="#FFFFFF" />
+                <Ionicons name={isDirectPreview ? "eye-outline" : "download-outline"} size={17} color="#FFFFFF" />
               )}
               <Text style={styles.buttonText}>
-                {isPdf ? "View PDF" : isZip ? "Open ZIP" : "PDF/ZIP only"}
+                {savingId === item.id
+                  ? "Saving in Library..."
+                  : isPdf
+                    ? "View PDF"
+                    : isZip
+                      ? "Open ZIP"
+                      : isDirectPreview
+                        ? "Open in App"
+                        : "Save & Open in App"}
               </Text>
             </TouchableOpacity>
           </View>
