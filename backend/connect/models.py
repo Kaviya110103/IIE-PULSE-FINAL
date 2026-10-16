@@ -1398,6 +1398,7 @@ class Quiz ( models.Model ) :
     
     is_published = models.BooleanField ( default = False )
     publish_date = models.DateTimeField ( null = True , blank = True )
+    scheduled_publish_at = models.DateTimeField(null=True, blank=True)
     deadline = models.DateTimeField ( null = True , blank = True )
     allow_retake = models.BooleanField ( default = False )
     max_attempts = models.IntegerField ( default = 1 )

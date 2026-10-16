@@ -5673,14 +5673,12 @@ export function UploadQuiz() {
 export function ManageQuizzes() {
   const [quizzes, setQuizzes] = useState([])
   const [loading, setLoading] = useState(true)
-  const [batches, setBatches] = useState([])
-  const [selectedQuiz, setSelectedQuiz] = useState(null)
+  const [publishQuiz, setPublishQuiz] = useState(null)
   const [detailQuiz, setDetailQuiz] = useState(null)
-  const [selectedBatchIds, setSelectedBatchIds] = useState([])
-  const [assigning, setAssigning] = useState(false)
+  const [scheduleAt, setScheduleAt] = useState('')
   const [quizSearch, setQuizSearch] = useState('')
 
-  useEffect(() => { loadQuizzes(); loadBatches() }, [])
+  useEffect(() => { loadQuizzes() }, [])
 
   const loadQuizzes = async () => {
     try {
@@ -5698,62 +5696,26 @@ export function ManageQuizzes() {
     }
   }
 
-  const loadBatches = async () => {
+  const publishNow = async (quizId, action = 'now', scheduled_at = null) => {
     try {
-      const [activeRes, previousRes] = await Promise.all([
-        api.get('/batches/'),
-        api.get('/batches/?access=previous').catch(() => ({ data: { results: [] } })),
-      ])
-      const active = activeRes.data.results || activeRes.data || []
-      const previous = (previousRes.data.results || previousRes.data || []).map(batch => ({ ...batch, accessStatus: 'previous' }))
-      setBatches([...active, ...previous])
-    } catch (err) {
-      console.error('Failed to load batches:', err)
-      toast.error('Failed to load batches')
-    }
-  }
-
-  const openAssignModal = (quiz) => {
-    setSelectedQuiz(quiz)
-    setSelectedBatchIds([])
-  }
-
-  const toggleBatchSelection = (batchId) => {
-    const id = String(batchId)
-    setSelectedBatchIds(prev => (
-      prev.includes(id)
-        ? prev.filter(item => item !== id)
-        : [...prev, id]
-    ))
-  }
-
-  const assignQuiz = async () => {
-    if (!selectedQuiz || selectedBatchIds.length === 0) {
-      toast.error('Please select at least one batch')
-      return
-    }
-    setAssigning(true)
-    try {
-      await api.post(`/quiz/${selectedQuiz.id}/assign/`, { batch_ids: selectedBatchIds })
-      toast.success(`Quiz "${selectedQuiz.title}" assigned successfully!`)
-      setSelectedQuiz(null)
-      setSelectedBatchIds([])
+      await api.patch(`/quiz/${quizId}/toggle-publish/`, { action, scheduled_at })
+      toast.success(action === 'schedule' ? 'Quiz scheduled successfully!' : 'Quiz published successfully!')
+      setPublishQuiz(null); setScheduleAt('')
       loadQuizzes()
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Failed to assign quiz')
-    } finally {
-      setAssigning(false)
+      toast.error(err.response?.data?.error || 'Failed to update quiz status')
     }
   }
 
-  const togglePublish = async (quizId, isPublished) => {
-    try {
-      await api.patch(`/quiz/${quizId}/toggle-publish/`)
-      toast.success(`Quiz ${isPublished ? 'unpublished' : 'published'} successfully!`)
-      loadQuizzes()
-    } catch (err) {
-      toast.error('Failed to update quiz status')
-    }
+  const togglePublish = async (quiz) => {
+    if (quiz.is_published) return publishNow(quiz.id)
+    setPublishQuiz(quiz)
+    setScheduleAt('')
+  }
+
+  const submitSchedule = () => {
+    if (!scheduleAt) return toast.error('Choose a date and time')
+    publishNow(publishQuiz.id, 'schedule', new Date(scheduleAt).toISOString())
   }
 
   const deleteQuiz = async (quizId) => {
@@ -5849,18 +5811,9 @@ export function ManageQuizzes() {
                           <i className="fas fa-eye" /> View
                         </button>
                         <button
-                          className="employee-btn employee-btn-sm employee-btn-primary"
-                          onClick={() => openAssignModal(quiz)}
-                          title="Assign quiz to batches"
-                        >
-                          <i className="fas fa-plus" /> Assign
-                        </button>
-                        <button
                           className={`employee-btn employee-btn-sm ${quiz.is_published ? 'employee-btn-warning' : 'employee-btn-teal'}`}
                           style={{ background: quiz.is_published ? T.amber : T.teal, color: '#fff' }}
-                          onClick={() => togglePublish(quiz.id, quiz.is_published)}
-                          disabled={!quiz.batch_number && !quiz.is_published}
-                          title={!quiz.batch_number && !quiz.is_published ? 'Assign this quiz to a batch first' : ''}
+                          onClick={() => togglePublish(quiz)}
                         >
                           <i className={`fas ${quiz.is_published ? 'fa-eye-slash' : 'fa-eye'}`} />
                           {quiz.is_published ? 'Unpublish' : 'Publish'}
@@ -5881,38 +5834,18 @@ export function ManageQuizzes() {
         )}
       </div>
 
-      {selectedQuiz && (
-        <Modal open onClose={() => setSelectedQuiz(null)} title="Assign Quiz to Batches" size="md">
-          <div className="employee-fg">
-            <label className="employee-label">Quiz: <strong>{selectedQuiz.title}</strong></label>
-            <div className="employee-hint" style={{ marginTop: 6 }}>
-              Select one or more batches. Each selected batch will get this quiz in student web and mobile.
-            </div>
+      {publishQuiz && (
+        <Modal open onClose={() => setPublishQuiz(null)} title="Publish Quiz" size="sm">
+          <div className="employee-hint" style={{ marginBottom: 16 }}>
+            Audience: <strong>{publishQuiz.audience === 'both' ? 'Students and Public Users' : publishQuiz.audience === 'public_users' ? 'Public Users' : 'All Students'}</strong>
           </div>
-          <div className="employee-fg">
-            <label className="employee-label">Select Batches <span className="employee-req">*</span></label>
-            <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, maxHeight: 260, overflowY: 'auto', padding: 8 }}>
-              {batches.length === 0 ? (
-                <div style={{ color: T.slate, fontSize: 13, padding: 10 }}>No batches found.</div>
-              ) : batches.map(batch => (
-                <label key={batch.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 8px', borderRadius: 6, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={selectedBatchIds.includes(String(batch.id))}
-                    onChange={() => toggleBatchSelection(batch.id)}
-                  />
-                  <span style={{ fontWeight: 600 }}>{getBatchDisplayName(batch)}{batch.accessStatus === 'previous' ? ' - Reassigned' : ''}</span>
-                  <span style={{ color: T.slate, fontSize: 12 }}>{batch.course_name_display || batch.course_name || ''}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 8 }}>
-            <button className="employee-btn employee-btn-ghost" onClick={() => setSelectedQuiz(null)}>Cancel</button>
-            <button className="employee-btn employee-btn-primary" onClick={assignQuiz} disabled={assigning || selectedBatchIds.length === 0}>
-              <i className={`fas ${assigning ? 'fa-spinner fa-spin' : 'fa-check'}`} />
-              {assigning ? 'Assigning...' : 'Assign Quiz'}
-            </button>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <button className="employee-btn employee-btn-primary" onClick={() => publishNow(publishQuiz.id)}><i className="fas fa-bolt" /> Publish Now</button>
+            <label className="employee-btn employee-btn-ghost" style={{ cursor: 'pointer' }}>
+              <i className="fas fa-calendar-alt" /> Schedule
+              <input type="datetime-local" value={scheduleAt} onChange={e => setScheduleAt(e.target.value)} style={{ marginLeft: 8 }} />
+            </label>
+            <button className="employee-btn employee-btn-teal" onClick={submitSchedule} disabled={!scheduleAt}>Confirm Schedule</button>
           </div>
         </Modal>
       )}

@@ -5503,11 +5503,20 @@ def process_counselor_leave(request, pk):
 
 # -- QUIZ ----------------------------------------------------------------------
 
+def _publish_due_quizzes():
+    now = timezone.now()
+    Quiz.objects.filter(
+        is_published=False,
+        scheduled_publish_at__isnull=False,
+        scheduled_publish_at__lte=now,
+    ).update(is_published=True, publish_date=now, scheduled_publish_at=None)
+
 class QuizListView(generics.ListAPIView):
     serializer_class = QuizSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
+        _publish_due_quizzes()
         user = self.request.user
         
         # Admin can see all quizzes
@@ -5852,13 +5861,28 @@ def toggle_quiz_publish(request, quiz_id):
                 return Response({'error': 'Employee not found'}, status=404)
             if quiz.created_by_id != emp.id:
                 return Response({'error': 'You can update only your uploaded quizzes.'}, status=403)
-        if not quiz.is_published and quiz.batch_id is None:
-            return Response({'error': 'Assign this quiz to a batch before publishing.'}, status=400)
-        quiz.is_published = not quiz.is_published
-        if quiz.is_published:
-            quiz.publish_date = timezone.now()
+        action = str(request.data.get('action') or '').strip().lower()
+        if action == 'schedule':
+            scheduled_at = request.data.get('scheduled_at')
+            if not scheduled_at:
+                return Response({'error': 'Schedule date and time are required.'}, status=400)
+            try:
+                scheduled_at = datetime.fromisoformat(str(scheduled_at).replace('Z', '+00:00'))
+                if timezone.is_naive(scheduled_at):
+                    scheduled_at = timezone.make_aware(scheduled_at)
+            except ValueError:
+                return Response({'error': 'Invalid schedule date and time.'}, status=400)
+            if scheduled_at <= timezone.now():
+                return Response({'error': 'Schedule time must be in the future.'}, status=400)
+            quiz.is_published = False
+            quiz.scheduled_publish_at = scheduled_at
+        else:
+            quiz.is_published = not quiz.is_published
+            quiz.scheduled_publish_at = None
+            if quiz.is_published:
+                quiz.publish_date = timezone.now()
         quiz.save()
-        return Response({'is_published': quiz.is_published})
+        return Response({'is_published': quiz.is_published, 'scheduled_publish_at': quiz.scheduled_publish_at})
     except Quiz.DoesNotExist:
         return Response({'error': 'Not found'}, status=404)
 
@@ -5925,6 +5949,7 @@ def _serialize_quiz_with_questions(quiz, include_answers=False):
 @permission_classes([AllowAny])
 def practice_quizzes(request):
     """Public practice quizzes (batch-less, published)."""
+    _publish_due_quizzes()
     quizzes = Quiz.objects.filter(
         batch__isnull=True,
         audience__in=['public_users', 'both'],
@@ -11352,6 +11377,7 @@ def staff_process_student_leave(request, pk):
 def student_quizzes(request):
     """Get quizzes available for the logged-in student with ALL options"""
     try:
+        _publish_due_quizzes()
         student = Students.objects.get(user=request.user)
         student_batches_list = _student_accessible_batches(student)
         if not student_batches_list:
