@@ -5638,9 +5638,18 @@ export function UploadQuiz() {
             <div className="employee-fg"><label className="employee-label">Description</label><textarea className="employee-input" rows={2} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></div>
             <div className="employee-fg"><label className="employee-label">Quiz Audience *</label>
               <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', marginTop: 8 }}>
-                {[['students', 'All Students'], ['public_users', 'Public Users'], ['both', 'Students and Public Users']].map(([value, label]) => (
+                {[['students', 'All Students'], ['public_users', 'Public Users']].map(([value, label]) => (
                   <label key={value} style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
-                    <input type="radio" name="quiz-audience" checked={form.audience === value} onChange={() => setForm({ ...form, audience: value })} />
+                    <input
+                      type="checkbox"
+                      checked={form.audience === value || form.audience === 'both'}
+                      onChange={e => {
+                        const checked = e.target.checked
+                        const hasStudents = value === 'students' ? checked : form.audience === 'students' || form.audience === 'both'
+                        const hasPublic = value === 'public_users' ? checked : form.audience === 'public_users' || form.audience === 'both'
+                        setForm({ ...form, audience: hasStudents && hasPublic ? 'both' : hasStudents ? 'students' : hasPublic ? 'public_users' : '' })
+                      }}
+                    />
                     {label}
                   </label>
                 ))}
