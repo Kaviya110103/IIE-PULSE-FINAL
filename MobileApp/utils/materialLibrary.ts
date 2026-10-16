@@ -133,6 +133,13 @@ function materialDownloadUrl(material: DownloadableMaterial) {
   return `${baseUrl.replace(/\/$/, "")}/materials/${material.id}/download/`;
 }
 
+function materialFileUrl(material: DownloadableMaterial) {
+  const file = material.file || "";
+  if (/^https?:\/\//i.test(file)) return file;
+  const baseUrl = material.apiBaseUrl || API_BASE_URL;
+  return `${baseUrl.replace(/\/$/, "")}/${file.replace(/^\//, "")}`;
+}
+
 export async function getLibraryMaterials(): Promise<LibraryMaterial[]> {
   const raw = await AsyncStorage.getItem(LIBRARY_KEY);
   if (!raw) return [];
@@ -225,21 +232,24 @@ export async function downloadMaterialToLibrary(
   const localUri = `${LIBRARY_DIR}${material.id}-${fileName}`;
   const token = await AsyncStorage.getItem("access_token");
   const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
-  const download = FileSystem.createDownloadResumable(
-    materialDownloadUrl(material),
-    localUri,
-    { headers },
-    ({ totalBytesWritten, totalBytesExpectedToWrite }) => {
-      const totalBytes = totalBytesExpectedToWrite || 0;
-      onProgress?.({
-        receivedBytes: totalBytesWritten,
-        totalBytes,
-        percent: totalBytes ? Math.min(100, Math.round((totalBytesWritten / totalBytes) * 100)) : 0,
-      });
-    }
-  );
+  const progress = ({ totalBytesWritten, totalBytesExpectedToWrite }: any) => {
+    const totalBytes = totalBytesExpectedToWrite || 0;
+    onProgress?.({
+      receivedBytes: totalBytesWritten,
+      totalBytes,
+      percent: totalBytes ? Math.min(100, Math.round((totalBytesWritten / totalBytes) * 100)) : 0,
+    });
+  };
+  let result = await FileSystem.createDownloadResumable(
+    materialDownloadUrl(material), localUri, { headers }, progress
+  ).downloadAsync();
 
-  const result = await download.downloadAsync();
+  if (!result?.uri || result.status < 200 || result.status >= 300) {
+    await FileSystem.deleteAsync(localUri, { idempotent: true });
+    result = await FileSystem.createDownloadResumable(
+      materialFileUrl(material), localUri, { headers }, progress
+    ).downloadAsync();
+  }
   if (!result?.uri) {
     throw new Error("Unable to save material to Library.");
   }

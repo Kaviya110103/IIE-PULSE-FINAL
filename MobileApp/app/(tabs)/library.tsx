@@ -404,7 +404,7 @@ const styles = StyleSheet.create({
   protectedPreview: { alignItems: "center", padding: 24 },
   protectedTitle: { color: "#111827", fontSize: 17, fontWeight: "900", marginTop: 12 },
   protectedText: { color: "#667085", textAlign: "center", lineHeight: 20, marginTop: 6 },
-  viewerScreen: { flex: 1, backgroundColor: "#1F1930" },
+  viewerScreen: { flex: 1, backgroundColor: "#F6F3FF" },
   viewerHeader: {
     paddingTop: 48,
     paddingHorizontal: 14,
@@ -424,9 +424,9 @@ const styles = StyleSheet.create({
   },
   viewerKicker: { color: "#DDD6FE", fontSize: 10, fontWeight: "900", textTransform: "uppercase" },
   viewerTitle: { color: "#FFFFFF", fontSize: 16, fontWeight: "900", marginTop: 2 },
-  pdf: { flex: 1, width: "100%", backgroundColor: "#1F1930" },
-  fullImage: { flex: 1, width: "100%" },
-  textReader: { flex: 1, backgroundColor: "#FFFFFF" },
+  pdf: { flex: 1, width: "100%", backgroundColor: "#F6F3FF" },
+  fullImage: { flex: 1, width: "100%", backgroundColor: "#F6F3FF" },
+  textReader: { flex: 1, backgroundColor: "#F6F3FF" },
   previewText: { color: "#111827", fontSize: 13, lineHeight: 21 },
   unsupportedPanel: {
     flex: 1,
