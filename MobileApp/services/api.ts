@@ -120,7 +120,6 @@ api.interceptors.request.use(async (config) => {
     requestUrl.includes("vlogs/") ||
     requestUrl.includes("news/") ||
     requestUrl.includes("calendar-events/") ||
-    requestUrl.includes("quiz/practice/") ||
     requestUrl.includes("referrals/")
   ) {
     delete config.headers.Authorization;
