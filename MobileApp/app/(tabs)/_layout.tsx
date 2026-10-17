@@ -32,7 +32,6 @@ const drawerItems: Array<{
   { key: "practice", label: "Practice Your Skillset", icon: "clipboard-outline", module: "practice" },
   { key: "calendar", label: "Calendar", icon: "calendar-outline", module: "calendar" },
   { key: "materials", label: "Materials", icon: "book-outline", route: "/(tabs)/materials" },
-  { key: "library", label: "Library", icon: "library-outline", route: "/(tabs)/library" },
   { key: "fee-status", label: "Fee Status", icon: "cash-outline", route: "/feestatus" },
   { key: "leave", label: "Leave", icon: "calendar-outline", route: "/leaveapply" },
   { key: "support", label: "Support", icon: "help-buoy-outline", route: "/support" },

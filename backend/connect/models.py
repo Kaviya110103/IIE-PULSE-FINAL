@@ -414,6 +414,11 @@ class StudentLoginRatingEvent ( models.Model ) :
 
 
 class PublicUser(models.Model):
+    BRANCH_CHOICES = [
+        ('100ft', '100FT'),
+        ('hopes', 'Hopes'),
+        ('kuniyamuthur', 'Kuniyamuthur'),
+    ]
     STATUS_CHOICES = [
         ('new', 'New'),
         ('walked_in', 'Walked In'),
@@ -426,6 +431,7 @@ class PublicUser(models.Model):
     location = models.CharField(max_length=160, blank=True, null=True)
     city = models.CharField(max_length=100, blank=True, null=True)
     state = models.CharField(max_length=100, blank=True, null=True)
+    branch = models.CharField(max_length=40, choices=BRANCH_CHOICES, blank=True, default='')
     username = models.CharField(max_length=120, unique=True)
     password = models.CharField(max_length=255)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='new')

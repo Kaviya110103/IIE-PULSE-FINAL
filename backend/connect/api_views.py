@@ -6005,6 +6005,7 @@ def serialize_public_user(user):
         'location': user.location,
         'city': user.city,
         'state': user.state,
+        'branch': getattr(user, 'branch', '') or '',
         'username': user.username,
         'status': status_value,
         'raw_status': getattr(user, 'status', 'new'),
@@ -6044,6 +6045,9 @@ def public_user_register(request):
     username = str(request.data.get('username', '')).strip().lower()
     password = str(request.data.get('password', '')).strip()
     email = str(request.data.get('email', '')).strip().lower()
+    branch = str(request.data.get('branch', '')).strip().lower()
+    if branch not in {'100ft', 'hopes', 'kuniyamuthur'}:
+        return Response({'error': 'Please choose a valid branch.'}, status=400)
 
     if not username or not password:
         return Response({'error': 'Username and password are required.'}, status=400)
@@ -6063,6 +6067,7 @@ def public_user_register(request):
         location=str(request.data.get('location', '')).strip(),
         city=str(request.data.get('city', '')).strip(),
         state=str(request.data.get('state', '')).strip(),
+        branch=branch,
         username=username,
         password=make_password(password),
     )
@@ -6224,8 +6229,16 @@ def admin_public_users(request):
         } for activity in activities]})
 
     users = PublicUser.objects.all().order_by('-created_at')
+    branch_filter = str(request.query_params.get('branch', '')).strip().lower()
+    if not is_admin_user(request.user):
+        try:
+            employee = Employee.objects.get(user=request.user)
+            users = users.filter(branch__iexact=str(employee.branch or '').strip())
+        except Employee.DoesNotExist:
+            users = users.none()
+    elif branch_filter:
+        users = users.filter(branch__iexact=branch_filter)
     serialized = [serialize_public_user(user) for user in users]
-    branch_filter = str(request.query_params.get('branch', '')).strip()
     if tab == 'enrolled':
         serialized = [item for item in serialized if item.get('status') == 'enrolled']
         if branch_filter:

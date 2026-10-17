@@ -239,6 +239,7 @@ export type GuestRegistrationPayload = {
   location: string;
   city?: string;
   state?: string;
+  branch: string;
   username: string;
   password: string;
 };
