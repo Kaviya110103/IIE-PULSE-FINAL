@@ -428,6 +428,7 @@ class PublicUser(models.Model):
     email = models.EmailField(blank=True, null=True)
     mobile = models.CharField(max_length=20, blank=True, null=True)
     qualification = models.CharField(max_length=120, blank=True, null=True)
+    area_of_interest = models.CharField(max_length=160, blank=True, default='')
     location = models.CharField(max_length=160, blank=True, null=True)
     city = models.CharField(max_length=100, blank=True, null=True)
     state = models.CharField(max_length=100, blank=True, null=True)

@@ -22,6 +22,7 @@ type RegisterForm = {
   email: string;
   mobile: string;
   qualification: string;
+  area_of_interest: string;
   pincode: string;
   location: string;
   city: string;
@@ -37,6 +38,7 @@ const initialForm: RegisterForm = {
   email: "",
   mobile: "",
   qualification: "",
+  area_of_interest: "",
   pincode: "",
   location: "",
   city: "",
@@ -131,6 +133,7 @@ export default function RegisterScreen() {
       email: form.email.trim().toLowerCase(),
       mobile: form.mobile.replace(/\D/g, ""),
       qualification: form.qualification.trim(),
+      area_of_interest: form.area_of_interest.trim(),
       pincode: form.pincode.replace(/\D/g, "").slice(0, 6),
       location: form.location.trim(),
       city: form.city.trim(),
@@ -146,6 +149,7 @@ export default function RegisterScreen() {
       !cleaned.email ||
       !cleaned.mobile ||
       !cleaned.qualification ||
+      !cleaned.area_of_interest ||
       !cleaned.pincode ||
       !cleaned.location ||
       !cleaned.branch ||
@@ -189,6 +193,7 @@ export default function RegisterScreen() {
       email: cleaned.email,
       mobile: cleaned.mobile,
       qualification: cleaned.qualification,
+      area_of_interest: cleaned.area_of_interest,
       pincode: cleaned.pincode,
       location: cleaned.location,
       city: cleaned.city,
@@ -253,6 +258,13 @@ export default function RegisterScreen() {
               placeholder="Qualification"
               value={form.qualification}
               onChangeText={(value) => updateField("qualification", value)}
+              editable={!loading}
+            />
+            <InputRow
+              icon="code-slash-outline"
+              placeholder="Area of Interest (e.g. Python, Java)"
+              value={form.area_of_interest}
+              onChangeText={(value) => updateField("area_of_interest", value)}
               editable={!loading}
             />
             <View style={styles.pickerWrapper}>

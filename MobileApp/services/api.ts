@@ -235,6 +235,7 @@ export type GuestRegistrationPayload = {
   email: string;
   mobile: string;
   qualification: string;
+  area_of_interest: string;
   pincode?: string;
   location: string;
   city?: string;
