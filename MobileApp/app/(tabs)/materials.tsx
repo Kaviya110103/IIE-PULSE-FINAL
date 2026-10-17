@@ -11,7 +11,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { getWithApiFallback, resolveMediaUrl } from "@/services/api";
+import { API_BASE_URL, getWithApiFallback, resolveMediaUrl } from "@/services/api";
 import { downloadMaterialToLibrary, getFileType } from "@/utils/materialLibrary";
 
 const MATERIALS_CACHE_KEY = "iie_pulse_cached_materials";
@@ -69,7 +69,14 @@ export default function MaterialsScreen() {
       }
 
       if (Array.isArray(cachedItems) && cachedItems.length) {
-        setMaterials(cachedItems);
+        // Older cached material records may contain the previous LAN IP.
+        // Keep the offline list, but route the next protected download through
+        // the current API base URL.
+        const currentApiItems = cachedItems.map((item) => ({
+          ...item,
+          apiBaseUrl: API_BASE_URL,
+        }));
+        setMaterials(currentApiItems);
         setErrorMsg("No connection. Showing saved materials.");
       } else {
         setMaterials([]);
