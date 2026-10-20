@@ -20,6 +20,12 @@ function getEnvApiBaseUrl() {
     return "";
   }
 
+  // Development builds must use the current LAN backend, even when an EAS
+  // profile still carries the production API variable.
+  if (typeof __DEV__ !== "undefined" && __DEV__) {
+    return "";
+  }
+
   if (
     Platform.OS !== "web" &&
     (envApiUrl.includes("localhost") || envApiUrl.includes("127.0.0.1"))
