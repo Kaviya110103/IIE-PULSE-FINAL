@@ -80,6 +80,10 @@ export default function MaterialViewerScreen() {
 
     const preparePdf = async () => {
       if (!authReady) return;
+      if (fileType !== "pdf") {
+        setLoading(false);
+        return;
+      }
       const sourceUri = localUri || uri;
       if (!sourceUri) {
         setFailed(true);
@@ -133,7 +137,7 @@ export default function MaterialViewerScreen() {
     return () => {
       alive = false;
     };
-  }, [authReady, authToken, localUri, title, uri]);
+  }, [authReady, authToken, fileType, localUri, title, uri]);
 
   const pdfSource = useMemo(() => {
     if (!readerUri) return null;
@@ -152,8 +156,7 @@ export default function MaterialViewerScreen() {
         </View>
       </View>
 
-      {!Pdf || !pdfSource || failed ? (
-        fileType !== "pdf" && uri ? (
+      {fileType !== "pdf" && uri && !failed ? (
           <WebView
             source={{
               uri,
@@ -163,18 +166,18 @@ export default function MaterialViewerScreen() {
             onLoadStart={() => setLoading(true)}
             onLoadEnd={() => setLoading(false)}
             onError={() => setFailed(true)}
+            onHttpError={() => setFailed(true)}
           />
-        ) : (
+      ) : !Pdf || !pdfSource || failed ? (
         <View style={styles.errorPanel}>
           <Ionicons name="document-lock-outline" size={52} color="#A78BFA" />
-          <Text style={styles.errorTitle}>Unable to preview this PDF</Text>
+          <Text style={styles.errorTitle}>Unable to preview this material</Text>
           <Text style={styles.errorText}>
             {!Pdf
-              ? "The in-app PDF reader is available in the rebuilt IIE Pulse app."
-              : "This PDF cannot be opened right now. Please try again after reconnecting or reloading the material."}
+              ? "The in-app reader is available in the rebuilt IIE Pulse app."
+              : "This material cannot be opened right now. Please reconnect and try again."}
           </Text>
         </View>
-        )
       ) : (
         <View style={styles.viewerWrap}>
           {loading ? (

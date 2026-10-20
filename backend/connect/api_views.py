@@ -5,6 +5,7 @@ import re
 import calendar
 import mimetypes
 import zipfile
+import xml.etree.ElementTree as ET
 import uuid
 import base64
 from pathlib import Path
@@ -4663,6 +4664,97 @@ def download_material(request, pk):
     )
     response['Content-Length'] = str(os.path.getsize(file_path))
     return response
+
+
+MATERIAL_TEXT_EXTENSIONS = {
+    '.txt', '.csv', '.md', '.json', '.html', '.htm', '.css', '.js',
+    '.ts', '.tsx', '.jsx', '.py', '.java', '.sql', '.xml', '.yaml', '.yml',
+}
+MATERIAL_IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'}
+
+
+def _material_preview_page(title, body):
+    return f'''<!doctype html>
+<html><head><meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+body{{font-family:Arial,sans-serif;margin:0;padding:20px;background:#f8f7ff;color:#21183a;line-height:1.55}}
+h1{{font-size:20px;margin:0 0 18px;color:#5523d2}}pre{{white-space:pre-wrap;word-break:break-word;background:#fff;padding:16px;border:1px solid #ddd6fe;border-radius:8px}}
+table{{width:100%;border-collapse:collapse;background:#fff;font-size:13px}}th,td{{border:1px solid #ddd6fe;padding:8px;text-align:left;vertical-align:top}}tr:nth-child(even){{background:#faf8ff}}
+.slide,.paragraph{{background:#fff;border:1px solid #ddd6fe;border-radius:8px;padding:14px;margin:0 0 12px}}
+</style></head><body><h1>{escape(title)}</h1>{body}</body></html>'''
+
+
+def _office_xml_text(file_path, prefix, text_tag, block_class):
+    blocks = []
+    with zipfile.ZipFile(file_path) as archive:
+        names = sorted(name for name in archive.namelist() if name.startswith(prefix) and name.endswith('.xml'))
+        for name in names:
+            try:
+                root = ET.fromstring(archive.read(name))
+            except ET.ParseError:
+                continue
+            texts = [node.text.strip() for node in root.iter() if node.tag.endswith(text_tag) and node.text and node.text.strip()]
+            if texts:
+                blocks.append(f'<div class="{block_class}">{escape(" ".join(texts))}</div>')
+    return ''.join(blocks)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def preview_material(request, pk):
+    try:
+        material = StudyMaterial.objects.prefetch_related('assignments__batch').get(id=pk)
+    except StudyMaterial.DoesNotExist:
+        return Response({'error': 'Material not found.'}, status=404)
+
+    access_error = _material_access_error(request, material)
+    if access_error:
+        return access_error
+
+    file_path, file_error = _material_file_path_or_response(material)
+    if file_error:
+        return file_error
+
+    filename = os.path.basename(material.file.name)
+    suffix = Path(filename).suffix.lower()
+    content_type = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
+
+    if suffix == '.pdf' or suffix in MATERIAL_IMAGE_EXTENSIONS:
+        response = FileResponse(open(file_path, 'rb'), content_type=content_type)
+        response['Content-Disposition'] = f'inline; filename="{filename}"'
+        response['Content-Length'] = str(os.path.getsize(file_path))
+        return response
+
+    try:
+        if suffix in MATERIAL_TEXT_EXTENSIONS:
+            with open(file_path, 'r', encoding='utf-8', errors='replace') as handle:
+                content = handle.read(2 * 1024 * 1024)
+            body = f'<pre>{escape(content)}</pre>'
+        elif suffix == '.docx':
+            body = _office_xml_text(file_path, 'word/document.xml', '}t', 'paragraph')
+        elif suffix == '.pptx':
+            body = _office_xml_text(file_path, 'ppt/slides/slide', '}t', 'slide')
+        elif suffix == '.xlsx':
+            from openpyxl import load_workbook
+            workbook = load_workbook(file_path, read_only=True, data_only=True)
+            sections = []
+            for sheet in workbook.worksheets[:10]:
+                rows = []
+                for row in sheet.iter_rows(max_row=250, max_col=40, values_only=True):
+                    cells = ''.join(f'<td>{escape(str(value)) if value is not None else ""}</td>' for value in row)
+                    rows.append(f'<tr>{cells}</tr>')
+                sections.append(f'<h2>{escape(sheet.title)}</h2><table>{"".join(rows)}</table>')
+            workbook.close()
+            body = ''.join(sections)
+        else:
+            body = '<div class="paragraph">This file format cannot be rendered inside the app. Please upload PDF, ZIP, DOCX, PPTX, XLSX, image, or text format.</div>'
+    except (OSError, ValueError, zipfile.BadZipFile, KeyError) as exc:
+        logger.warning('Material preview failed for %s: %s', material.id, exc)
+        body = '<div class="paragraph">This file could not be read. It may be corrupted or unsupported.</div>'
+
+    if not body:
+        body = '<div class="paragraph">No readable content was found in this file.</div>'
+    return HttpResponse(_material_preview_page(material.title or filename, body), content_type='text/html; charset=utf-8')
 
 
 READABLE_ZIP_EXTENSIONS = {

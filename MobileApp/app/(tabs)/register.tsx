@@ -231,6 +231,7 @@ export default function RegisterScreen() {
             </ThemedText>
 
             <InputRow
+              label="Name"
               icon="person-outline"
               placeholder="Name"
               value={form.name}
@@ -238,6 +239,7 @@ export default function RegisterScreen() {
               editable={!loading}
             />
             <InputRow
+              label="Email ID"
               icon="mail-outline"
               placeholder="Email ID"
               value={form.email}
@@ -247,6 +249,7 @@ export default function RegisterScreen() {
               editable={!loading}
             />
             <InputRow
+              label="Mobile Number"
               icon="call-outline"
               placeholder="Mobile Number"
               value={form.mobile}
@@ -255,14 +258,15 @@ export default function RegisterScreen() {
               editable={!loading}
             />
             <InputRow
+              label="Qualification"
               icon="school-outline"
               placeholder="Qualification"
               value={form.qualification}
               onChangeText={(value) => updateField("qualification", value)}
               editable={!loading}
             />
-            <Text style={styles.fieldLabel}>Area of Interest</Text>
             <InputRow
+              label="Area of Interest"
               icon="code-slash-outline"
               placeholder="Area of Interest (e.g. Python, Java)"
               value={form.area_of_interest}
@@ -285,6 +289,7 @@ export default function RegisterScreen() {
               </Picker>
             </View>
             <InputRow
+              label="Pincode"
               icon="location-outline"
               placeholder="Pincode"
               value={form.pincode}
@@ -308,6 +313,7 @@ export default function RegisterScreen() {
             ) : null}
 
             <InputRow
+              label="Area"
               icon="navigate-outline"
               placeholder="Area"
               value={form.location}
@@ -316,6 +322,7 @@ export default function RegisterScreen() {
             />
 
             <InputRow
+              label="Username"
               icon="at-outline"
               placeholder="Username"
               value={form.username}
@@ -324,6 +331,7 @@ export default function RegisterScreen() {
               editable={!loading}
             />
             <InputRow
+              label="Password"
               icon="lock-closed-outline"
               placeholder="Password"
               value={form.password}
@@ -342,6 +350,7 @@ export default function RegisterScreen() {
               }
             />
             <InputRow
+              label="Confirm Password"
               icon="shield-checkmark-outline"
               placeholder="Confirm Password"
               value={form.confirmPassword}
@@ -384,6 +393,7 @@ export default function RegisterScreen() {
 }
 
 type InputRowProps = {
+  label: string;
   icon: keyof typeof Ionicons.glyphMap;
   placeholder: string;
   value: string;
@@ -396,6 +406,7 @@ type InputRowProps = {
 };
 
 function InputRow({
+  label,
   icon,
   placeholder,
   value,
@@ -407,21 +418,24 @@ function InputRow({
   trailing,
 }: InputRowProps) {
   return (
-    <View style={styles.inputWrapper}>
-      <Ionicons name={icon} size={18} color="#5523D2" />
-      <TextInput
-        style={styles.input}
-        placeholder={placeholder}
-        placeholderTextColor="#9CA3AF"
-        value={value}
-        onChangeText={onChangeText}
-        keyboardType={keyboardType}
-        secureTextEntry={secureTextEntry}
-        autoCapitalize={autoCapitalize}
-        autoCorrect={false}
-        editable={editable}
-      />
-      {trailing}
+    <View style={styles.fieldGroup}>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <View style={styles.inputWrapper}>
+        <Ionicons name={icon} size={18} color="#5523D2" />
+        <TextInput
+          style={styles.input}
+          placeholder={placeholder}
+          placeholderTextColor="#9CA3AF"
+          value={value}
+          onChangeText={onChangeText}
+          keyboardType={keyboardType}
+          secureTextEntry={secureTextEntry}
+          autoCapitalize={autoCapitalize}
+          autoCorrect={false}
+          editable={editable}
+        />
+        {trailing}
+      </View>
     </View>
   );
 }
@@ -464,6 +478,9 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     marginTop: 8,
     marginBottom: 5,
+  },
+  fieldGroup: {
+    width: "100%",
   },
   iconCircle: {
     width: 62,
@@ -513,12 +530,14 @@ const styles = StyleSheet.create({
   picker: {
     flex: 1,
     color: "#111827",
+    fontWeight: "700",
     marginLeft: 4,
   },
   input: {
     flex: 1,
     fontSize: 14,
     color: "#111827",
+    fontWeight: "700",
     marginLeft: 8,
   },
   locationHint: {

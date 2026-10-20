@@ -871,7 +871,10 @@ export function resolveMediaUrl(url?: string, apiBaseUrl = API_BASE_URL) {
   const apiOrigin = apiBaseUrl.replace(/\/api\/?$/, "");
 
   if (url.startsWith("http://") || url.startsWith("https://")) {
-    return url.replace(/^https?:\/\/(localhost|127\.0\.0\.1):8000/i, apiOrigin);
+    return url.replace(
+      /^https?:\/\/(localhost|127\.0\.0\.1|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})(?::\d+)?/i,
+      apiOrigin
+    );
   }
 
   return `${apiOrigin}${url.startsWith("/") ? "" : "/"}${url}`;

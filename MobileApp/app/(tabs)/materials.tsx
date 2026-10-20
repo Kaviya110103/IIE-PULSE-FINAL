@@ -159,7 +159,6 @@ export default function MaterialsScreen() {
           const fileType = getFileType(fileName);
           const isZip = fileType === "zip";
           const isPdf = fileType === "pdf";
-          const isDirectPreview = fileType === "image" || fileType === "text";
 
           return (
           <View key={item.id} style={styles.card}>
@@ -211,12 +210,12 @@ export default function MaterialsScreen() {
                   } as any);
                   return;
                 }
-                if (!item.file) return;
+                const baseUrl = (item.apiBaseUrl || API_BASE_URL).replace(/\/$/, "");
                 router.push({
                   pathname: "/(tabs)/material-viewer",
                   params: {
                     title: item.title || "Material",
-                    uri: item.file,
+                    uri: `${baseUrl}/materials/${item.id}/preview/`,
                     fileType,
                     returnTo: "/materials",
                   },
