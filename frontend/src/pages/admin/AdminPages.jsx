@@ -6269,7 +6269,7 @@ export function AdminPublicUsers() {
   const [tabCounts, setTabCounts] = useState({ users: 0, enrolled: 0, walked_in: 0, follow_up: 0 })
   const [remarks, setRemarks] = useState({})
   const [followUpUser, setFollowUpUser] = useState(null)
-  const [followUpForm, setFollowUpForm] = useState({ specification: '', followUpDate: '', feedback: '' })
+  const [followUpForm, setFollowUpForm] = useState({ specification: '', followUpDate: '', feedback: '', remark: '' })
   const [followUpSaving, setFollowUpSaving] = useState(false)
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
@@ -6318,7 +6318,7 @@ export function AdminPublicUsers() {
 
   const openFollowUp = (item) => {
     setFollowUpUser(item)
-    setFollowUpForm({ specification: '', followUpDate: '', feedback: '' })
+    setFollowUpForm({ specification: '', followUpDate: '', feedback: '', remark: item.remark || '' })
   }
 
   const submitFollowUp = async (event) => {
@@ -6331,6 +6331,7 @@ export function AdminPublicUsers() {
         follow_up_specification: followUpForm.specification.trim(),
         follow_up_date: followUpForm.followUpDate || '',
         follow_up_feedback: followUpForm.feedback,
+        remark: followUpForm.remark.trim(),
       })
       toast.success('Follow-up saved')
       setFollowUpUser(null)
@@ -6365,7 +6366,7 @@ export function AdminPublicUsers() {
         'Branch',
         ...(mode !== 'enrolled' ? ['Registered'] : []),
         ...(mode === 'follow_up' ? ['Specification', 'Follow-up Date', 'Feedback'] : []),
-        ...(mode === 'users' || mode === 'walked_in' ? ['Remark'] : []),
+        ...(mode === 'users' ? ['Remark'] : []),
         ...(mode === 'enrolled' ? [] : ['Action']),
       ]}
       items={items}
@@ -6398,7 +6399,7 @@ export function AdminPublicUsers() {
               <td>{item.follow_up_feedback_display || '-'}</td>
             </>
           )}
-          {(mode === 'users' || mode === 'walked_in') && (
+          {mode === 'users' && (
             <td>
               <input
                 className="admin-input"
@@ -6526,6 +6527,16 @@ export function AdminPublicUsers() {
               <option value="not_interested">Not Interested</option>
               <option value="joined_another_institute">Joined in Another Institute</option>
             </select>
+          </div>
+          <div style={{ marginBottom: 18 }}>
+            <label style={{ display: 'block', marginBottom: 6, fontSize: 13, fontWeight: 800 }}>Remark</label>
+            <textarea
+              className="admin-input"
+              style={{ width: '100%', minHeight: 84, resize: 'vertical' }}
+              value={followUpForm.remark}
+              onChange={e => setFollowUpForm(prev => ({ ...prev, remark: e.target.value }))}
+              placeholder="Add follow-up remark..."
+            />
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
             <button type="button" className="admin-btn admin-btn-ghost" onClick={() => setFollowUpUser(null)}>Cancel</button>
