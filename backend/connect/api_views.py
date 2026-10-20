@@ -5503,11 +5503,20 @@ def process_counselor_leave(request, pk):
 
 # -- QUIZ ----------------------------------------------------------------------
 
+def _publish_due_quizzes():
+    now = timezone.now()
+    Quiz.objects.filter(
+        is_published=False,
+        scheduled_publish_at__isnull=False,
+        scheduled_publish_at__lte=now,
+    ).update(is_published=True, publish_date=now, scheduled_publish_at=None)
+
 class QuizListView(generics.ListAPIView):
     serializer_class = QuizSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
+        _publish_due_quizzes()
         user = self.request.user
         
         # Admin can see all quizzes
@@ -5532,7 +5541,8 @@ class QuizListView(generics.ListAPIView):
                 if student.assigned_batch:
                     # Students see published quizzes from their batch
                     return Quiz.objects.filter(
-                        batch=student.assigned_batch, 
+                        Q(batch=student.assigned_batch) |
+                        Q(batch__isnull=True, audience__in=['students', 'both']),
                         is_published=True
                     ).order_by('-created_at')
                 return Quiz.objects.none()
@@ -5565,7 +5575,10 @@ def upload_quiz(request):
     raw_batch_ids = [value for idx, value in enumerate(raw_batch_ids) if value and value not in raw_batch_ids[:idx]]
 
     target_batches = []
-    is_practice_quiz = any(value in ('practice', 'all', 'public', '0') for value in raw_batch_ids)
+    requested_audience = str(request.data.get('audience') or '').strip().lower()
+    if requested_audience not in ('students', 'public_users', 'both'):
+        requested_audience = 'students'
+    is_practice_quiz = requested_audience == 'public_users' or any(value in ('practice', 'all', 'public', '0') for value in raw_batch_ids)
     if is_practice_quiz:
         target_batches = [None]
     elif not raw_batch_ids:
@@ -5657,6 +5670,7 @@ def upload_quiz(request):
                 title=request.data.get('title', 'Quiz'),
                 description=request.data.get('description', ''),
                 batch=batch,
+                audience=requested_audience,
                 created_by=emp,
                 duration_minutes=int(request.data.get('duration_minutes', 30)),
                 passing_marks=int(request.data.get('passing_marks', 35)),
@@ -5664,8 +5678,8 @@ def upload_quiz(request):
                 source_file=file,
                 total_questions=len(questions),
                 total_marks=sum(item['marks'] for item in questions),
-                is_published=bool(raw_batch_ids),
-                publish_date=timezone.now() if raw_batch_ids else None,
+                is_published=bool(raw_batch_ids) or requested_audience in ('students', 'public_users', 'both'),
+                publish_date=timezone.now() if (raw_batch_ids or requested_audience in ('students', 'public_users', 'both')) else None,
             )
             QuizQuestion.objects.bulk_create([
                 QuizQuestion(quiz=quiz, **question)
@@ -5847,13 +5861,28 @@ def toggle_quiz_publish(request, quiz_id):
                 return Response({'error': 'Employee not found'}, status=404)
             if quiz.created_by_id != emp.id:
                 return Response({'error': 'You can update only your uploaded quizzes.'}, status=403)
-        if not quiz.is_published and quiz.batch_id is None:
-            return Response({'error': 'Assign this quiz to a batch before publishing.'}, status=400)
-        quiz.is_published = not quiz.is_published
-        if quiz.is_published:
-            quiz.publish_date = timezone.now()
+        action = str(request.data.get('action') or '').strip().lower()
+        if action == 'schedule':
+            scheduled_at = request.data.get('scheduled_at')
+            if not scheduled_at:
+                return Response({'error': 'Schedule date and time are required.'}, status=400)
+            try:
+                scheduled_at = datetime.fromisoformat(str(scheduled_at).replace('Z', '+00:00'))
+                if timezone.is_naive(scheduled_at):
+                    scheduled_at = timezone.make_aware(scheduled_at)
+            except ValueError:
+                return Response({'error': 'Invalid schedule date and time.'}, status=400)
+            if scheduled_at <= timezone.now():
+                return Response({'error': 'Schedule time must be in the future.'}, status=400)
+            quiz.is_published = False
+            quiz.scheduled_publish_at = scheduled_at
+        else:
+            quiz.is_published = not quiz.is_published
+            quiz.scheduled_publish_at = None
+            if quiz.is_published:
+                quiz.publish_date = timezone.now()
         quiz.save()
-        return Response({'is_published': quiz.is_published})
+        return Response({'is_published': quiz.is_published, 'scheduled_publish_at': quiz.scheduled_publish_at})
     except Quiz.DoesNotExist:
         return Response({'error': 'Not found'}, status=404)
 
@@ -5919,8 +5948,20 @@ def _serialize_quiz_with_questions(quiz, include_answers=False):
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def practice_quizzes(request):
-    """Public practice quizzes (batch-less, published)."""
-    quizzes = Quiz.objects.filter(batch__isnull=True, is_published=True).order_by('-created_at')
+    """Skillset quizzes for public users and authenticated students."""
+    _publish_due_quizzes()
+    audiences = ['public_users', 'both']
+    if request.user.is_authenticated:
+        try:
+            Students.objects.get(user=request.user)
+            audiences = ['students', 'both']
+        except Students.DoesNotExist:
+            pass
+    quizzes = Quiz.objects.filter(
+        batch__isnull=True,
+        audience__in=audiences,
+        is_published=True,
+    ).order_by('-created_at')
     return Response({
         'results': [_serialize_quiz_with_questions(quiz, include_answers=True) for quiz in quizzes]
     })
@@ -5961,9 +6002,11 @@ def serialize_public_user(user):
         'email': user.email,
         'mobile': user.mobile,
         'qualification': user.qualification,
+        'area_of_interest': getattr(user, 'area_of_interest', '') or '',
         'location': user.location,
         'city': user.city,
         'state': user.state,
+        'branch': getattr(user, 'branch', '') or '',
         'username': user.username,
         'status': status_value,
         'raw_status': getattr(user, 'status', 'new'),
@@ -6003,6 +6046,9 @@ def public_user_register(request):
     username = str(request.data.get('username', '')).strip().lower()
     password = str(request.data.get('password', '')).strip()
     email = str(request.data.get('email', '')).strip().lower()
+    branch = str(request.data.get('branch', '')).strip().lower()
+    if branch not in {'100ft', 'hopes', 'kuniyamuthur'}:
+        return Response({'error': 'Please choose a valid branch.'}, status=400)
 
     if not username or not password:
         return Response({'error': 'Username and password are required.'}, status=400)
@@ -6019,9 +6065,11 @@ def public_user_register(request):
         email=email,
         mobile=str(request.data.get('mobile', '')).strip(),
         qualification=str(request.data.get('qualification', '')).strip(),
+        area_of_interest=str(request.data.get('area_of_interest', '')).strip(),
         location=str(request.data.get('location', '')).strip(),
         city=str(request.data.get('city', '')).strip(),
         state=str(request.data.get('state', '')).strip(),
+        branch=branch,
         username=username,
         password=make_password(password),
     )
@@ -6183,8 +6231,16 @@ def admin_public_users(request):
         } for activity in activities]})
 
     users = PublicUser.objects.all().order_by('-created_at')
+    branch_filter = str(request.query_params.get('branch', '')).strip().lower()
+    if not is_admin_user(request.user):
+        try:
+            employee = Employee.objects.get(user=request.user)
+            users = users.filter(branch__iexact=str(employee.branch or '').strip())
+        except Employee.DoesNotExist:
+            users = users.none()
+    elif branch_filter:
+        users = users.filter(branch__iexact=branch_filter)
     serialized = [serialize_public_user(user) for user in users]
-    branch_filter = str(request.query_params.get('branch', '')).strip()
     if tab == 'enrolled':
         serialized = [item for item in serialized if item.get('status') == 'enrolled']
         if branch_filter:
@@ -11343,13 +11399,15 @@ def staff_process_student_leave(request, pk):
 def student_quizzes(request):
     """Get quizzes available for the logged-in student with ALL options"""
     try:
+        _publish_due_quizzes()
         student = Students.objects.get(user=request.user)
         student_batches_list = _student_accessible_batches(student)
         if not student_batches_list:
             return Response({'results': []})
         
         quizzes = Quiz.objects.filter(
-            batch__in=student_batches_list,
+            Q(batch__in=student_batches_list) |
+            Q(batch__isnull=True, audience__in=['students', 'both']),
             is_published=True
         ).select_related('batch', 'batch__course_name').distinct().order_by('-created_at')
         
@@ -11414,7 +11472,7 @@ def student_take_quiz(request, quiz_id):
         assigned_batch_ids = [batch.id for batch in _student_accessible_batches(student)]
         assigned_to_batch = bool(quiz.batch_id in assigned_batch_ids)
 
-        if not assigned_to_batch:
+        if not assigned_to_batch and not (quiz.batch_id is None and quiz.audience in ('students', 'both')):
             return Response({'error': 'This quiz is not assigned to your batch'}, status=400)
         
         # Student quizzes are one-time only in the mobile app.

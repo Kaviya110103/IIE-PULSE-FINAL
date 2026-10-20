@@ -2396,7 +2396,8 @@ function MaterialUploadModal({ onClose, onSaved, material = null }) {
         </div>
         <div className="employee-fg">
           <label className="employee-label">File</label>
-          <input type="file" className="employee-input" onChange={e => setFile(e.target.files[0])} style={{ padding: 7 }} />
+          <input type="file" className="employee-input" accept="*/*" onChange={e => setFile(e.target.files[0])} style={{ padding: 7 }} />
+          <small className="employee-hint">All file types are supported, including PDF, ZIP, DOC, DOCX, PNG, JPG, XLS, and XLSX.</small>
           {isEdit && <small className="employee-hint">Leave empty to keep the existing file.</small>}
         </div>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 8 }}>
@@ -2670,7 +2671,8 @@ function LibraryUploadModal({ onClose, onSaved }) {
         </div>
         <div className="employee-fg">
           <label className="employee-label">File <span className="employee-req">*</span></label>
-          <input type="file" className="employee-input" onChange={e => setFile(e.target.files[0])} style={{ padding: 7 }} required />
+          <input type="file" className="employee-input" accept="*/*" onChange={e => setFile(e.target.files[0])} style={{ padding: 7 }} required />
+          <small className="employee-hint">All file types are supported, including PDF, ZIP, DOC, DOCX, PNG, JPG, XLS, and XLSX.</small>
         </div>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 8 }}>
           <button type="button" className="employee-btn employee-btn-ghost" onClick={onClose}>Cancel</button>
@@ -5602,7 +5604,7 @@ export function AddQuestions() {
 export function UploadQuiz() {
   const navigate = useNavigate()
   const location = useLocation()
-  const [form, setForm] = useState({ title: '', description: '', duration_minutes: 30, passing_marks: 35, difficulty: 'medium' })
+  const [form, setForm] = useState({ title: '', description: '', duration_minutes: 30, passing_marks: 35, difficulty: 'medium', audience: 'students' })
   const [file, setFile] = useState(null)
   const [saving, setSaving] = useState(false)
 
@@ -5614,10 +5616,11 @@ export function UploadQuiz() {
       const fd = new FormData()
       fd.append('title', form.title); fd.append('description', form.description)
       fd.append('duration_minutes', form.duration_minutes); fd.append('passing_marks', form.passing_marks); fd.append('difficulty', form.difficulty)
+      fd.append('audience', form.audience)
       fd.append('source_file', file)
       const res = await api.post('/quiz/upload/', fd)
       toast.success(res.data?.message || 'Quiz uploaded successfully!')
-      setForm({ title: '', description: '', duration_minutes: 30, passing_marks: 35, difficulty: 'medium' })
+      setForm({ title: '', description: '', duration_minutes: 30, passing_marks: 35, difficulty: 'medium', audience: 'students' })
       setFile(null)
       navigate(location.pathname.startsWith('/admin') ? '/admin/quiz' : '/employee/quiz')
     } catch (err) { toast.error(err.response?.data?.error || 'Upload failed') }
@@ -5633,6 +5636,25 @@ export function UploadQuiz() {
           <form onSubmit={handleSubmit}>
             <div className="employee-fg"><label className="employee-label">Quiz Title *</label><input className="employee-input" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} required /></div>
             <div className="employee-fg"><label className="employee-label">Description</label><textarea className="employee-input" rows={2} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></div>
+            <div className="employee-fg"><label className="employee-label">Quiz Audience *</label>
+              <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', marginTop: 8 }}>
+                {[['students', 'All Students'], ['public_users', 'Public Users']].map(([value, label]) => (
+                  <label key={value} style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={form.audience === value || form.audience === 'both'}
+                      onChange={e => {
+                        const checked = e.target.checked
+                        const hasStudents = value === 'students' ? checked : form.audience === 'students' || form.audience === 'both'
+                        const hasPublic = value === 'public_users' ? checked : form.audience === 'public_users' || form.audience === 'both'
+                        setForm({ ...form, audience: hasStudents && hasPublic ? 'both' : hasStudents ? 'students' : hasPublic ? 'public_users' : '' })
+                      }}
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </div>
             <div className="employee-row-grid-2">
               <div className="employee-fg"><label className="employee-label">Duration (minutes)</label><input type="number" className="employee-input" value={form.duration_minutes} onChange={e => setForm({ ...form, duration_minutes: parseInt(e.target.value) })} /></div>
               <div className="employee-fg"><label className="employee-label">Passing Marks (%)</label><input type="number" className="employee-input" value={form.passing_marks} onChange={e => setForm({ ...form, passing_marks: parseInt(e.target.value) })} /></div>
@@ -5651,14 +5673,12 @@ export function UploadQuiz() {
 export function ManageQuizzes() {
   const [quizzes, setQuizzes] = useState([])
   const [loading, setLoading] = useState(true)
-  const [batches, setBatches] = useState([])
-  const [selectedQuiz, setSelectedQuiz] = useState(null)
+  const [publishQuiz, setPublishQuiz] = useState(null)
   const [detailQuiz, setDetailQuiz] = useState(null)
-  const [selectedBatchIds, setSelectedBatchIds] = useState([])
-  const [assigning, setAssigning] = useState(false)
+  const [scheduleAt, setScheduleAt] = useState('')
   const [quizSearch, setQuizSearch] = useState('')
 
-  useEffect(() => { loadQuizzes(); loadBatches() }, [])
+  useEffect(() => { loadQuizzes() }, [])
 
   const loadQuizzes = async () => {
     try {
@@ -5676,62 +5696,26 @@ export function ManageQuizzes() {
     }
   }
 
-  const loadBatches = async () => {
+  const publishNow = async (quizId, action = 'now', scheduled_at = null) => {
     try {
-      const [activeRes, previousRes] = await Promise.all([
-        api.get('/batches/'),
-        api.get('/batches/?access=previous').catch(() => ({ data: { results: [] } })),
-      ])
-      const active = activeRes.data.results || activeRes.data || []
-      const previous = (previousRes.data.results || previousRes.data || []).map(batch => ({ ...batch, accessStatus: 'previous' }))
-      setBatches([...active, ...previous])
-    } catch (err) {
-      console.error('Failed to load batches:', err)
-      toast.error('Failed to load batches')
-    }
-  }
-
-  const openAssignModal = (quiz) => {
-    setSelectedQuiz(quiz)
-    setSelectedBatchIds([])
-  }
-
-  const toggleBatchSelection = (batchId) => {
-    const id = String(batchId)
-    setSelectedBatchIds(prev => (
-      prev.includes(id)
-        ? prev.filter(item => item !== id)
-        : [...prev, id]
-    ))
-  }
-
-  const assignQuiz = async () => {
-    if (!selectedQuiz || selectedBatchIds.length === 0) {
-      toast.error('Please select at least one batch')
-      return
-    }
-    setAssigning(true)
-    try {
-      await api.post(`/quiz/${selectedQuiz.id}/assign/`, { batch_ids: selectedBatchIds })
-      toast.success(`Quiz "${selectedQuiz.title}" assigned successfully!`)
-      setSelectedQuiz(null)
-      setSelectedBatchIds([])
+      await api.patch(`/quiz/${quizId}/toggle-publish/`, { action, scheduled_at })
+      toast.success(action === 'schedule' ? 'Quiz scheduled successfully!' : 'Quiz published successfully!')
+      setPublishQuiz(null); setScheduleAt('')
       loadQuizzes()
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Failed to assign quiz')
-    } finally {
-      setAssigning(false)
+      toast.error(err.response?.data?.error || 'Failed to update quiz status')
     }
   }
 
-  const togglePublish = async (quizId, isPublished) => {
-    try {
-      await api.patch(`/quiz/${quizId}/toggle-publish/`)
-      toast.success(`Quiz ${isPublished ? 'unpublished' : 'published'} successfully!`)
-      loadQuizzes()
-    } catch (err) {
-      toast.error('Failed to update quiz status')
-    }
+  const togglePublish = async (quiz) => {
+    if (quiz.is_published) return publishNow(quiz.id)
+    setPublishQuiz(quiz)
+    setScheduleAt('')
+  }
+
+  const submitSchedule = () => {
+    if (!scheduleAt) return toast.error('Choose a date and time')
+    publishNow(publishQuiz.id, 'schedule', new Date(scheduleAt).toISOString())
   }
 
   const deleteQuiz = async (quizId) => {
@@ -5794,9 +5778,6 @@ export function ManageQuizzes() {
               <thead>
                 <tr>
                   <th>Title</th>
-                  <th>Batch</th>
-                  <th>Uploaded By</th>
-                  <th>Type</th>
                   <th>Questions / Paper</th>
                   <th>Duration</th>
                   <th>Status</th>
@@ -5807,8 +5788,6 @@ export function ManageQuizzes() {
                 {filteredQuizzes.map(quiz => (
                   <tr key={quiz.id}>
                     <td style={{ fontWeight: 600 }}>{quiz.title}</td>
-                    <td>{quiz.batch_number || <Badge text="Not assigned" variant="warning" />}</td>
-                    <td>{quiz.created_by_name || '-'}<div style={{ marginTop: 4 }}><Badge text={quiz.created_by_trainer_status || 'Current Trainer'} variant={quiz.created_by_trainer_status === 'Previous Trainer' ? 'warning' : 'success'} /></div></td>
                     <td style={{ textAlign: 'center' }}>{quiz.total_questions || 0}</td>
                     <td>{quiz.duration_minutes} min</td>
                     <td>
@@ -5827,18 +5806,9 @@ export function ManageQuizzes() {
                           <i className="fas fa-eye" /> View
                         </button>
                         <button
-                          className="employee-btn employee-btn-sm employee-btn-primary"
-                          onClick={() => openAssignModal(quiz)}
-                          title="Assign quiz to batches"
-                        >
-                          <i className="fas fa-plus" /> Assign
-                        </button>
-                        <button
                           className={`employee-btn employee-btn-sm ${quiz.is_published ? 'employee-btn-warning' : 'employee-btn-teal'}`}
                           style={{ background: quiz.is_published ? T.amber : T.teal, color: '#fff' }}
-                          onClick={() => togglePublish(quiz.id, quiz.is_published)}
-                          disabled={!quiz.batch_number && !quiz.is_published}
-                          title={!quiz.batch_number && !quiz.is_published ? 'Assign this quiz to a batch first' : ''}
+                          onClick={() => togglePublish(quiz)}
                         >
                           <i className={`fas ${quiz.is_published ? 'fa-eye-slash' : 'fa-eye'}`} />
                           {quiz.is_published ? 'Unpublish' : 'Publish'}
@@ -5859,38 +5829,18 @@ export function ManageQuizzes() {
         )}
       </div>
 
-      {selectedQuiz && (
-        <Modal open onClose={() => setSelectedQuiz(null)} title="Assign Quiz to Batches" size="md">
-          <div className="employee-fg">
-            <label className="employee-label">Quiz: <strong>{selectedQuiz.title}</strong></label>
-            <div className="employee-hint" style={{ marginTop: 6 }}>
-              Select one or more batches. Each selected batch will get this quiz in student web and mobile.
-            </div>
+      {publishQuiz && (
+        <Modal open onClose={() => setPublishQuiz(null)} title="Publish Quiz" size="sm">
+          <div className="employee-hint" style={{ marginBottom: 16 }}>
+            Audience: <strong>{publishQuiz.audience === 'both' ? 'Students and Public Users' : publishQuiz.audience === 'public_users' ? 'Public Users' : 'All Students'}</strong>
           </div>
-          <div className="employee-fg">
-            <label className="employee-label">Select Batches <span className="employee-req">*</span></label>
-            <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, maxHeight: 260, overflowY: 'auto', padding: 8 }}>
-              {batches.length === 0 ? (
-                <div style={{ color: T.slate, fontSize: 13, padding: 10 }}>No batches found.</div>
-              ) : batches.map(batch => (
-                <label key={batch.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 8px', borderRadius: 6, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={selectedBatchIds.includes(String(batch.id))}
-                    onChange={() => toggleBatchSelection(batch.id)}
-                  />
-                  <span style={{ fontWeight: 600 }}>{getBatchDisplayName(batch)}{batch.accessStatus === 'previous' ? ' - Reassigned' : ''}</span>
-                  <span style={{ color: T.slate, fontSize: 12 }}>{batch.course_name_display || batch.course_name || ''}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 8 }}>
-            <button className="employee-btn employee-btn-ghost" onClick={() => setSelectedQuiz(null)}>Cancel</button>
-            <button className="employee-btn employee-btn-primary" onClick={assignQuiz} disabled={assigning || selectedBatchIds.length === 0}>
-              <i className={`fas ${assigning ? 'fa-spinner fa-spin' : 'fa-check'}`} />
-              {assigning ? 'Assigning...' : 'Assign Quiz'}
-            </button>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <button className="employee-btn employee-btn-primary" onClick={() => publishNow(publishQuiz.id)}><i className="fas fa-bolt" /> Publish Now</button>
+            <label className="employee-btn employee-btn-ghost" style={{ cursor: 'pointer' }}>
+              <i className="fas fa-calendar-alt" /> Schedule
+              <input type="datetime-local" value={scheduleAt} onChange={e => setScheduleAt(e.target.value)} style={{ marginLeft: 8 }} />
+            </label>
+            <button className="employee-btn employee-btn-teal" onClick={submitSchedule} disabled={!scheduleAt}>Confirm Schedule</button>
           </div>
         </Modal>
       )}

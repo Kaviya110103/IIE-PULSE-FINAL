@@ -2,6 +2,7 @@ import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
 import { registerGuest } from "@/services/api";
 import { Ionicons } from "@expo/vector-icons";
+import { Picker } from "@react-native-picker/picker";
 import { useRouter } from "expo-router";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
@@ -12,6 +13,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Text,
   TextInput,
   View,
 } from "react-native";
@@ -21,10 +23,12 @@ type RegisterForm = {
   email: string;
   mobile: string;
   qualification: string;
+  area_of_interest: string;
   pincode: string;
   location: string;
   city: string;
   state: string;
+  branch: string;
   username: string;
   password: string;
   confirmPassword: string;
@@ -35,10 +39,12 @@ const initialForm: RegisterForm = {
   email: "",
   mobile: "",
   qualification: "",
+  area_of_interest: "",
   pincode: "",
   location: "",
   city: "",
   state: "",
+  branch: "",
   username: "",
   password: "",
   confirmPassword: "",
@@ -128,10 +134,12 @@ export default function RegisterScreen() {
       email: form.email.trim().toLowerCase(),
       mobile: form.mobile.replace(/\D/g, ""),
       qualification: form.qualification.trim(),
+      area_of_interest: form.area_of_interest.trim(),
       pincode: form.pincode.replace(/\D/g, "").slice(0, 6),
       location: form.location.trim(),
       city: form.city.trim(),
       state: form.state.trim(),
+      branch: form.branch.trim(),
       username: form.username.trim().toLowerCase(),
       password: form.password.trim(),
       confirmPassword: form.confirmPassword.trim(),
@@ -142,8 +150,10 @@ export default function RegisterScreen() {
       !cleaned.email ||
       !cleaned.mobile ||
       !cleaned.qualification ||
+      !cleaned.area_of_interest ||
       !cleaned.pincode ||
       !cleaned.location ||
+      !cleaned.branch ||
       !cleaned.username ||
       !cleaned.password ||
       !cleaned.confirmPassword
@@ -184,10 +194,12 @@ export default function RegisterScreen() {
       email: cleaned.email,
       mobile: cleaned.mobile,
       qualification: cleaned.qualification,
+      area_of_interest: cleaned.area_of_interest,
       pincode: cleaned.pincode,
       location: cleaned.location,
       city: cleaned.city,
       state: cleaned.state,
+      branch: cleaned.branch,
       username: cleaned.username,
       password: cleaned.password,
     });
@@ -249,6 +261,29 @@ export default function RegisterScreen() {
               onChangeText={(value) => updateField("qualification", value)}
               editable={!loading}
             />
+            <Text style={styles.fieldLabel}>Area of Interest</Text>
+            <InputRow
+              icon="code-slash-outline"
+              placeholder="Area of Interest (e.g. Python, Java)"
+              value={form.area_of_interest}
+              onChangeText={(value) => updateField("area_of_interest", value)}
+              editable={!loading}
+            />
+            <Text style={styles.fieldLabel}>Branch</Text>
+            <View style={styles.pickerWrapper}>
+              <Ionicons name="business-outline" size={18} color="#5523D2" />
+              <Picker
+                selectedValue={form.branch}
+                onValueChange={(value) => updateField("branch", value)}
+                enabled={!loading}
+                style={styles.picker}
+              >
+                <Picker.Item label="Choose Branch" value="" />
+                <Picker.Item label="100FT" value="100ft" />
+                <Picker.Item label="Hopes" value="hopes" />
+                <Picker.Item label="Kuniyamuthur" value="kuniyamuthur" />
+              </Picker>
+            </View>
             <InputRow
               icon="location-outline"
               placeholder="Pincode"
@@ -422,6 +457,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "700",
   },
+  fieldLabel: {
+    alignSelf: "stretch",
+    color: "#24134F",
+    fontSize: 13,
+    fontWeight: "900",
+    marginTop: 8,
+    marginBottom: 5,
+  },
   iconCircle: {
     width: 62,
     height: 62,
@@ -455,6 +498,22 @@ const styles = StyleSheet.create({
     marginBottom: 13,
     width: "100%",
     backgroundColor: "#F6F3FF",
+  },
+  pickerWrapper: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    marginBottom: 13,
+    width: "100%",
+    backgroundColor: "#F6F3FF",
+  },
+  picker: {
+    flex: 1,
+    color: "#111827",
+    marginLeft: 4,
   },
   input: {
     flex: 1,
