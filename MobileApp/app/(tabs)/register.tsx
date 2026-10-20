@@ -13,6 +13,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Text,
   TextInput,
   View,
 } from "react-native";
@@ -229,7 +230,6 @@ export default function RegisterScreen() {
               Create your IIE Pulse access
             </ThemedText>
 
-            <Text style={styles.fieldLabel}>Area of Interest</Text>
             <InputRow
               icon="person-outline"
               placeholder="Name"
@@ -261,6 +261,7 @@ export default function RegisterScreen() {
               onChangeText={(value) => updateField("qualification", value)}
               editable={!loading}
             />
+            <Text style={styles.fieldLabel}>Area of Interest</Text>
             <InputRow
               icon="code-slash-outline"
               placeholder="Area of Interest (e.g. Python, Java)"
