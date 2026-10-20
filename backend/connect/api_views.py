@@ -4797,12 +4797,59 @@ def _material_file_path_or_response(material):
         )
 
     if not os.path.exists(file_path):
+        file_path = _cache_legacy_material_file(material, file_path)
+
+    if not file_path or not os.path.exists(file_path):
         return None, Response(
             {'error': 'File missing on server. Re-upload required or persistent storage required.'},
             status=404,
         )
 
     return file_path, None
+
+
+def _cache_legacy_material_file(material, target_path):
+    """Restore a missing local media file from the read-only production media store."""
+    relative_name = str(getattr(material, 'file', '') or '').replace('\\', '/').lstrip('/')
+    if not relative_name or '..' in Path(relative_name).parts:
+        return None
+
+    media_root = Path(settings.MEDIA_ROOT).resolve()
+    target = Path(target_path).resolve()
+    if media_root != target and media_root not in target.parents:
+        return None
+
+    legacy_base = os.getenv(
+        'LEGACY_MATERIAL_MEDIA_URL',
+        'https://iiepulse.indrainstitute.com/media/',
+    ).rstrip('/')
+    source_url = requests.utils.requote_uri(f'{legacy_base}/{relative_name}')
+    temporary_target = target.with_suffix(f'{target.suffix}.part')
+    max_bytes = 150 * 1024 * 1024
+    written = 0
+
+    try:
+        response = requests.get(source_url, stream=True, timeout=(8, 45))
+        response.raise_for_status()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with open(temporary_target, 'wb') as handle:
+            for chunk in response.iter_content(chunk_size=1024 * 256):
+                if not chunk:
+                    continue
+                written += len(chunk)
+                if written > max_bytes:
+                    raise ValueError('Legacy material exceeds the preview size limit.')
+                handle.write(chunk)
+        temporary_target.replace(target)
+        logger.info('Restored missing material %s from legacy media storage.', material.id)
+        return str(target)
+    except (requests.RequestException, OSError, ValueError) as exc:
+        logger.warning('Could not restore missing material %s: %s', material.id, exc)
+        try:
+            temporary_target.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return None
 
 
 def _material_access_error(request, material):
