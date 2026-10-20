@@ -422,6 +422,12 @@ class PublicUser(models.Model):
     STATUS_CHOICES = [
         ('new', 'New'),
         ('walked_in', 'Walked In'),
+        ('follow_up', 'Follow Up'),
+    ]
+    FOLLOW_UP_FEEDBACK_CHOICES = [
+        ('will_enroll', 'Will Enroll'),
+        ('not_interested', 'Not Interested'),
+        ('joined_another_institute', 'Joined in Another Institute'),
     ]
 
     name = models.CharField(max_length=120)
@@ -438,6 +444,15 @@ class PublicUser(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='new')
     status_updated_at = models.DateTimeField(null=True, blank=True)
     remark = models.TextField(blank=True, default='')
+    follow_up_specification = models.CharField(max_length=160, blank=True, default='')
+    follow_up_date = models.DateField(null=True, blank=True)
+    follow_up_feedback = models.CharField(
+        max_length=40,
+        choices=FOLLOW_UP_FEEDBACK_CHOICES,
+        blank=True,
+        default='',
+    )
+    follow_up_created_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

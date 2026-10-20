@@ -6258,6 +6258,7 @@ const publicUserTabs = [
   { key: 'users', label: 'New Users', icon: 'fa-user-plus' },
   { key: 'enrolled', label: 'Enrolled', icon: 'fa-user-check' },
   { key: 'walked_in', label: 'Walked In', icon: 'fa-walking' },
+  { key: 'follow_up', label: 'Follow Up', icon: 'fa-phone' },
 ]
 
 export function AdminPublicUsers() {
@@ -6265,8 +6266,11 @@ export function AdminPublicUsers() {
   const [items, setItems] = useState([])
   const [branches, setBranches] = useState([])
   const [branchFilter, setBranchFilter] = useState('')
-  const [tabCounts, setTabCounts] = useState({ users: 0, enrolled: 0, walked_in: 0 })
+  const [tabCounts, setTabCounts] = useState({ users: 0, enrolled: 0, walked_in: 0, follow_up: 0 })
   const [remarks, setRemarks] = useState({})
+  const [followUpUser, setFollowUpUser] = useState(null)
+  const [followUpForm, setFollowUpForm] = useState({ specification: '', followUpDate: '', feedback: '' })
+  const [followUpSaving, setFollowUpSaving] = useState(false)
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
   const { user } = useAuth()
@@ -6282,7 +6286,7 @@ export function AdminPublicUsers() {
       const rows = res.data.results || []
       setItems(rows)
       setBranches(res.data.branches || [])
-      setTabCounts(res.data.counts || { users: 0, enrolled: 0, walked_in: 0 })
+      setTabCounts(res.data.counts || { users: 0, enrolled: 0, walked_in: 0, follow_up: 0 })
       setRemarks(rows.reduce((next, item) => ({ ...next, [item.id]: item.remark || '' }), {}))
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to load public users')
@@ -6292,10 +6296,6 @@ export function AdminPublicUsers() {
   }
 
   useEffect(() => { load(activeTab) }, [activeTab, branchFilter])
-
-  useEffect(() => {
-    if (activeTab !== 'enrolled') setBranchFilter('')
-  }, [activeTab])
 
   const markWalkedIn = async (item) => {
     try {
@@ -6314,6 +6314,32 @@ export function AdminPublicUsers() {
         publicUser: item,
       },
     })
+  }
+
+  const openFollowUp = (item) => {
+    setFollowUpUser(item)
+    setFollowUpForm({ specification: '', followUpDate: '', feedback: '' })
+  }
+
+  const submitFollowUp = async (event) => {
+    event.preventDefault()
+    if (!followUpUser) return
+    setFollowUpSaving(true)
+    try {
+      await api.post(`/admin/public-users/${followUpUser.id}/status/`, {
+        status: 'follow_up',
+        follow_up_specification: followUpForm.specification.trim(),
+        follow_up_date: followUpForm.followUpDate || '',
+        follow_up_feedback: followUpForm.feedback,
+      })
+      toast.success('Follow-up saved')
+      setFollowUpUser(null)
+      setActiveTab('follow_up')
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to save follow-up')
+    } finally {
+      setFollowUpSaving(false)
+    }
   }
 
   const saveRemark = async (item) => {
@@ -6338,6 +6364,7 @@ export function AdminPublicUsers() {
         'Area of Interest',
         'Branch',
         ...(mode !== 'enrolled' ? ['Registered'] : []),
+        ...(mode === 'follow_up' ? ['Specification', 'Follow-up Date', 'Feedback'] : []),
         ...(mode === 'users' || mode === 'walked_in' ? ['Remark'] : []),
         ...(mode === 'enrolled' ? [] : ['Action']),
       ]}
@@ -6364,6 +6391,13 @@ export function AdminPublicUsers() {
               <td>{formatMonitoringTime(item.created_at)}</td>
             </>
           )}
+          {mode === 'follow_up' && (
+            <>
+              <td>{item.follow_up_specification || '-'}</td>
+              <td>{item.follow_up_date ? new Date(`${item.follow_up_date}T00:00:00`).toLocaleDateString('en-IN') : '-'}</td>
+              <td>{item.follow_up_feedback_display || '-'}</td>
+            </>
+          )}
           {(mode === 'users' || mode === 'walked_in') && (
             <td>
               <input
@@ -6387,9 +6421,14 @@ export function AdminPublicUsers() {
                 <button className="admin-btn admin-btn-primary admin-btn-sm" onClick={() => enrollUser(item)}>
                   <i className="fas fa-user-check" /> Enroll
                 </button>
-                {mode !== 'walked_in' && (
+                {mode === 'users' && (
                   <button className="admin-btn admin-btn-ghost admin-btn-sm" onClick={() => markWalkedIn(item)}>
                     <i className="fas fa-walking" /> Walk In
+                  </button>
+                )}
+                {mode === 'walked_in' && (
+                  <button className="admin-btn admin-btn-ghost admin-btn-sm" onClick={() => openFollowUp(item)}>
+                    <i className="fas fa-phone" /> Follow Up
                   </button>
                 )}
               </div>
@@ -6431,7 +6470,7 @@ export function AdminPublicUsers() {
               }}>{tabCounts[tab.key] || 0}</span>
             </button>
           ))}
-          {(activeTab === 'users' || activeTab === 'enrolled' || activeTab === 'walked_in') && (
+          {(activeTab === 'users' || activeTab === 'enrolled' || activeTab === 'walked_in' || activeTab === 'follow_up') && (
             <select className="admin-select" style={{ width: 190, marginLeft: 'auto' }} value={branchFilter} onChange={e => setBranchFilter(e.target.value)}>
               <option value="">All Branches</option>
               {branches.map(branch => <option key={branch.id} value={branch.id}>{branch.label}</option>)}
@@ -6440,6 +6479,62 @@ export function AdminPublicUsers() {
         </div>
         {loading ? <AdminSpin /> : renderUsers(activeTab)}
       </div>
+
+      <AdminModal open={!!followUpUser} onClose={() => setFollowUpUser(null)} title="Public User Follow Up" size="sm">
+        <form onSubmit={submitFollowUp} style={{ padding: 18 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
+            <div>
+              <label style={{ display: 'block', marginBottom: 6, fontSize: 13, fontWeight: 800 }}>Name</label>
+              <input className="admin-input" value={followUpUser?.name || ''} readOnly />
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: 6, fontSize: 13, fontWeight: 800 }}>Mobile Number</label>
+              <input className="admin-input" value={followUpUser?.mobile || ''} readOnly />
+            </div>
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ display: 'block', marginBottom: 6, fontSize: 13, fontWeight: 800 }}>Specification</label>
+            <input
+              className="admin-input"
+              value={followUpForm.specification}
+              onChange={e => setFollowUpForm(prev => ({ ...prev, specification: e.target.value }))}
+              placeholder="Example: AWS, Networking"
+              required
+            />
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ display: 'block', marginBottom: 6, fontSize: 13, fontWeight: 800 }}>Follow-up Date <span style={{ color: T.slate, fontWeight: 600 }}>(Optional)</span></label>
+            <input
+              className="admin-input"
+              type="date"
+              min={`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`}
+              value={followUpForm.followUpDate}
+              onChange={e => setFollowUpForm(prev => ({ ...prev, followUpDate: e.target.value }))}
+            />
+          </div>
+          <div style={{ marginBottom: 18 }}>
+            <label style={{ display: 'block', marginBottom: 6, fontSize: 13, fontWeight: 800 }}>Common Feedback</label>
+            <select
+              className="admin-select"
+              style={{ width: '100%' }}
+              value={followUpForm.feedback}
+              onChange={e => setFollowUpForm(prev => ({ ...prev, feedback: e.target.value }))}
+              required
+            >
+              <option value="">Choose feedback...</option>
+              <option value="will_enroll">Will Enroll</option>
+              <option value="not_interested">Not Interested</option>
+              <option value="joined_another_institute">Joined in Another Institute</option>
+            </select>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+            <button type="button" className="admin-btn admin-btn-ghost" onClick={() => setFollowUpUser(null)}>Cancel</button>
+            <button type="submit" className="admin-btn admin-btn-primary" disabled={followUpSaving}>
+              <i className="fas fa-check" /> {followUpSaving ? 'Saving...' : 'Submit Follow Up'}
+            </button>
+          </div>
+        </form>
+      </AdminModal>
     </div>
   )
 }

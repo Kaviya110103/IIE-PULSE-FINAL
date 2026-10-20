@@ -6194,6 +6194,11 @@ def serialize_public_user(user):
         'raw_status': getattr(user, 'status', 'new'),
         'status_updated_at': getattr(user, 'status_updated_at', None),
         'remark': getattr(user, 'remark', '') or '',
+        'follow_up_specification': getattr(user, 'follow_up_specification', '') or '',
+        'follow_up_date': getattr(user, 'follow_up_date', None),
+        'follow_up_feedback': getattr(user, 'follow_up_feedback', '') or '',
+        'follow_up_feedback_display': user.get_follow_up_feedback_display() if getattr(user, 'follow_up_feedback', '') else '',
+        'follow_up_created_at': getattr(user, 'follow_up_created_at', None),
         'created_at': user.created_at,
     }
     if enrolled_student:
@@ -6432,6 +6437,8 @@ def admin_public_users(request):
             ]
     elif tab in ('walked_in', 'walked'):
         serialized = [item for item in serialized if item.get('status') == 'walked_in']
+    elif tab in ('follow_up', 'followup'):
+        serialized = [item for item in serialized if item.get('status') == 'follow_up']
     else:
         serialized = [item for item in serialized if item.get('status') == 'new']
 
@@ -6439,6 +6446,7 @@ def admin_public_users(request):
         'users': 0,
         'enrolled': 0,
         'walked_in': 0,
+        'follow_up': 0,
     }
     branch_map = {}
     for item in [serialize_public_user(user) for user in users]:
@@ -6450,6 +6458,8 @@ def admin_public_users(request):
             counts['enrolled'] += 1
         elif item_status == 'walked_in':
             counts['walked_in'] += 1
+        elif item_status == 'follow_up':
+            counts['follow_up'] += 1
         else:
             counts['users'] += 1
 
@@ -6485,9 +6495,14 @@ def admin_public_user_status(request, pk):
     if not public_user:
         return Response({'error': 'Public user not found.'}, status=404)
 
+    if not is_admin_user(request.user):
+        employee = Employee.objects.filter(user=request.user).first()
+        if not employee or str(employee.branch or '').strip().lower() != str(public_user.branch or '').strip().lower():
+            return Response({'error': 'You can update public users from your branch only.'}, status=403)
+
     has_status = 'status' in request.data
     next_status = str(request.data.get('status', '')).strip() if has_status else ''
-    if has_status and next_status not in {'new', 'walked_in'}:
+    if has_status and next_status not in {'new', 'walked_in', 'follow_up'}:
         return Response({'error': 'Invalid public user status.'}, status=400)
 
     update_fields = ['updated_at']
@@ -6498,6 +6513,28 @@ def admin_public_user_status(request, pk):
     if 'remark' in request.data:
         public_user.remark = str(request.data.get('remark', '')).strip()
         update_fields.append('remark')
+    if next_status == 'follow_up':
+        specification = str(request.data.get('follow_up_specification', '')).strip()
+        feedback = str(request.data.get('follow_up_feedback', '')).strip()
+        date_value = str(request.data.get('follow_up_date', '')).strip()
+        allowed_feedback = {choice[0] for choice in PublicUser.FOLLOW_UP_FEEDBACK_CHOICES}
+        if not specification:
+            return Response({'error': 'Specification is required.'}, status=400)
+        if feedback not in allowed_feedback:
+            return Response({'error': 'Please choose a valid feedback.'}, status=400)
+        follow_up_date = parse_date(date_value) if date_value else None
+        if date_value and not follow_up_date:
+            return Response({'error': 'Please choose a valid follow-up date.'}, status=400)
+        if follow_up_date and follow_up_date < timezone.localdate():
+            return Response({'error': 'Previous dates cannot be selected.'}, status=400)
+        public_user.follow_up_specification = specification
+        public_user.follow_up_feedback = feedback
+        public_user.follow_up_date = follow_up_date
+        public_user.follow_up_created_at = timezone.now()
+        update_fields.extend([
+            'follow_up_specification', 'follow_up_feedback', 'follow_up_date',
+            'follow_up_created_at',
+        ])
     if update_fields == ['updated_at']:
         return Response({'error': 'No public user changes provided.'}, status=400)
 
