@@ -6335,7 +6335,7 @@ export function AdminPublicUsers() {
         'Name',
         'Contact',
         'Qualification',
-        'Location',
+        'Area of Interest',
         'Branch',
         ...(mode !== 'enrolled' ? ['Registered'] : []),
         ...(mode === 'users' || mode === 'walked_in' ? ['Remark'] : []),
@@ -6352,7 +6352,7 @@ export function AdminPublicUsers() {
             <div style={{ fontSize: 11, color: T.slate }}>{item.email || ''}</div>
           </td>
           <td>{item.qualification || '-'}</td>
-          <td>{[item.city, item.state].filter(Boolean).join(', ') || item.location || '-'}</td>
+          <td>{item.area_of_interest || '-'}</td>
           {mode === 'enrolled' ? (
             <td>
               <div style={{ fontWeight: 800 }}>{item.branch || '-'}</div>

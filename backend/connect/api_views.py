@@ -6379,11 +6379,11 @@ def admin_public_users(request):
     branch_map = {}
     for item in [serialize_public_user(user) for user in users]:
         item_status = item.get('status')
+        branch = str(item.get('branch') or '').strip()
+        if branch:
+            branch_map[branch.lower()] = branch
         if item_status == 'enrolled':
             counts['enrolled'] += 1
-            branch = str(item.get('branch') or '').strip()
-            if branch:
-                branch_map[branch.lower()] = branch
         elif item_status == 'walked_in':
             counts['walked_in'] += 1
         else:

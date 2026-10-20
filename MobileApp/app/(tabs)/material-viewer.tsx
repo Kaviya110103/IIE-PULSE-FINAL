@@ -39,6 +39,12 @@ export default function MaterialViewerScreen() {
     });
   }, []);
 
+  useEffect(() => {
+    if (!authReady || !loading || failed) return;
+    const timer = setTimeout(() => setLoading(false), 10000);
+    return () => clearTimeout(timer);
+  }, [authReady, failed, loading, retryKey]);
+
   const goBack = () => {
     if (returnTo) {
       router.replace(returnTo as any);
@@ -102,6 +108,10 @@ export default function MaterialViewerScreen() {
           setSupportMultipleWindows={false}
           onLoadStart={() => setLoading(true)}
           onLoadEnd={() => setLoading(false)}
+          onLoadProgress={({ nativeEvent }) => {
+            if (nativeEvent.progress >= 0.8) setLoading(false);
+          }}
+          onNavigationStateChange={() => setLoading(false)}
           onError={() => {
             setLoading(false);
             setFailed(true);
