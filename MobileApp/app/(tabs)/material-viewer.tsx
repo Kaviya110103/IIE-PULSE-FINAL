@@ -1,5 +1,5 @@
+import { getWithApiFallback } from "@/services/api";
 import { Ionicons } from "@expo/vector-icons";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
@@ -11,6 +11,12 @@ import {
 } from "react-native";
 import { WebView } from "react-native-webview";
 
+function apiEndpointFromUrl(url: string) {
+  const marker = "/api/";
+  const markerIndex = url.indexOf(marker);
+  return markerIndex >= 0 ? url.slice(markerIndex + marker.length) : url;
+}
+
 export default function MaterialViewerScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{
@@ -21,8 +27,7 @@ export default function MaterialViewerScreen() {
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
-  const [authToken, setAuthToken] = useState("");
-  const [authReady, setAuthReady] = useState(false);
+  const [previewHtml, setPreviewHtml] = useState("");
 
   const title = Array.isArray(params.title)
     ? params.title[0]
@@ -33,17 +38,40 @@ export default function MaterialViewerScreen() {
     : params.returnTo || "";
 
   useEffect(() => {
-    AsyncStorage.getItem("access_token").then((token) => {
-      setAuthToken(token || "");
-      setAuthReady(true);
-    });
-  }, []);
+    let active = true;
 
-  useEffect(() => {
-    if (!authReady || !loading || failed) return;
-    const timer = setTimeout(() => setLoading(false), 10000);
-    return () => clearTimeout(timer);
-  }, [authReady, failed, loading, retryKey]);
+    const loadPreview = async () => {
+      if (!uri) {
+        setFailed(true);
+        setLoading(false);
+        return;
+      }
+
+      setLoading(true);
+      setFailed(false);
+      setPreviewHtml("");
+      try {
+        const response = await getWithApiFallback(apiEndpointFromUrl(uri), {
+          headers: { Accept: "text/html" },
+          responseType: "text",
+          timeout: 30000,
+        });
+        if (!active) return;
+        const html = typeof response.data === "string" ? response.data : "";
+        if (!html.trim()) throw new Error("Empty material preview");
+        setPreviewHtml(html);
+      } catch {
+        if (active) setFailed(true);
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+
+    loadPreview();
+    return () => {
+      active = false;
+    };
+  }, [retryKey, uri]);
 
   const goBack = () => {
     if (returnTo) {
@@ -53,11 +81,7 @@ export default function MaterialViewerScreen() {
     router.replace("/materials" as any);
   };
 
-  const retry = () => {
-    setFailed(false);
-    setLoading(true);
-    setRetryKey((value) => value + 1);
-  };
+  const retry = () => setRetryKey((value) => value + 1);
 
   return (
     <View style={styles.screen}>
@@ -73,55 +97,33 @@ export default function MaterialViewerScreen() {
         </View>
       </View>
 
-      {!authReady || loading ? (
-        <View style={styles.loadingOverlay} pointerEvents="none">
+      {loading ? (
+        <View style={styles.loadingPanel}>
           <ActivityIndicator color="#5523D2" size="large" />
           <Text style={styles.loadingText}>Opening inside app...</Text>
         </View>
-      ) : null}
-
-      {failed || !uri ? (
+      ) : failed ? (
         <View style={styles.errorPanel}>
           <Ionicons name="document-text-outline" size={52} color="#5523D2" />
           <Text style={styles.errorTitle}>Unable to preview this material</Text>
           <Text style={styles.errorText}>
-            This file could not be opened right now. Check the connection and try again.
+            This file is unavailable or could not be read. Please try again.
           </Text>
-          {uri ? (
-            <TouchableOpacity style={styles.retryButton} onPress={retry}>
-              <Ionicons name="refresh" size={19} color="#FFFFFF" />
-              <Text style={styles.retryText}>Retry</Text>
-            </TouchableOpacity>
-          ) : null}
+          <TouchableOpacity style={styles.retryButton} onPress={retry}>
+            <Ionicons name="refresh" size={19} color="#FFFFFF" />
+            <Text style={styles.retryText}>Retry</Text>
+          </TouchableOpacity>
         </View>
-      ) : authReady ? (
+      ) : (
         <WebView
-          key={retryKey}
-          source={{
-            uri,
-            headers: authToken
-              ? { Authorization: `Bearer ${authToken}` }
-              : undefined,
-          }}
+          source={{ html: previewHtml }}
           style={styles.webView}
-          originWhitelist={["http://*", "https://*"]}
+          originWhitelist={["*"]}
           setSupportMultipleWindows={false}
-          onLoadStart={() => setLoading(true)}
-          onLoadEnd={() => setLoading(false)}
-          onLoadProgress={({ nativeEvent }) => {
-            if (nativeEvent.progress >= 0.8) setLoading(false);
-          }}
-          onNavigationStateChange={() => setLoading(false)}
-          onError={() => {
-            setLoading(false);
-            setFailed(true);
-          }}
-          onHttpError={() => {
-            setLoading(false);
-            setFailed(true);
-          }}
+          javaScriptEnabled={false}
+          onError={() => setFailed(true)}
         />
-      ) : null}
+      )}
     </View>
   );
 }
@@ -154,10 +156,8 @@ const styles = StyleSheet.create({
   },
   title: { color: "#FFFFFF", fontSize: 16, fontWeight: "900", marginTop: 2 },
   webView: { flex: 1, backgroundColor: "#F8F7FF" },
-  loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    top: 104,
-    zIndex: 3,
+  loadingPanel: {
+    flex: 1,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#F8F7FF",
@@ -168,6 +168,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
+    backgroundColor: "#F8F7FF",
   },
   errorTitle: { color: "#21183A", fontSize: 18, fontWeight: "900", marginTop: 14 },
   errorText: {

@@ -4719,14 +4719,16 @@ def preview_material(request, pk):
     suffix = Path(filename).suffix.lower()
     content_type = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
 
-    if suffix in MATERIAL_IMAGE_EXTENSIONS:
-        response = FileResponse(open(file_path, 'rb'), content_type=content_type)
-        response['Content-Disposition'] = f'inline; filename="{filename}"'
-        response['Content-Length'] = str(os.path.getsize(file_path))
-        return response
-
     try:
-        if suffix == '.pdf':
+        if suffix in MATERIAL_IMAGE_EXTENSIONS:
+            with open(file_path, 'rb') as handle:
+                encoded = base64.b64encode(handle.read()).decode('ascii')
+            body = (
+                '<div class="paragraph" style="text-align:center">'
+                f'<img src="data:{content_type};base64,{encoded}" '
+                'style="max-width:100%;height:auto" alt="Material image" /></div>'
+            )
+        elif suffix == '.pdf':
             reader = PyPDF2.PdfReader(file_path)
             pages = []
             for index, page in enumerate(reader.pages[:300], start=1):
@@ -4933,7 +4935,8 @@ def material_zip_entry_file(request, pk):
 
     filename = os.path.basename(entry_path)
     content_type = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
-    if Path(filename).suffix.lower() == '.pdf':
+    suffix = Path(filename).suffix.lower()
+    if suffix == '.pdf':
         try:
             reader = PyPDF2.PdfReader(io.BytesIO(content))
             pages = []
@@ -4949,6 +4952,20 @@ def material_zip_entry_file(request, pk):
             )
         except (OSError, ValueError, PyPDF2.errors.PdfReadError):
             return Response({'error': 'This PDF could not be read.'}, status=status.HTTP_400_BAD_REQUEST)
+    if suffix in MATERIAL_IMAGE_EXTENSIONS:
+        encoded = base64.b64encode(content).decode('ascii')
+        body = (
+            '<div class="paragraph" style="text-align:center">'
+            f'<img src="data:{content_type};base64,{encoded}" '
+            'style="max-width:100%;height:auto" alt="Material image" /></div>'
+        )
+        return HttpResponse(_material_preview_page(filename, body), content_type='text/html; charset=utf-8')
+    if suffix in MATERIAL_TEXT_EXTENSIONS:
+        text = content.decode('utf-8', errors='replace')
+        return HttpResponse(
+            _material_preview_page(filename, f'<pre>{escape(text)}</pre>'),
+            content_type='text/html; charset=utf-8',
+        )
     response = HttpResponse(content, content_type=content_type)
     response['Content-Disposition'] = f'inline; filename="{filename}"'
     response['Content-Length'] = str(len(content))
