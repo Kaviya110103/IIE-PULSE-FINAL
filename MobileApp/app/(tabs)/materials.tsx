@@ -104,13 +104,14 @@ export default function MaterialsScreen() {
     setErrorMsg("");
     const baseUrl = item.apiBaseUrl?.replace(/\/$/, "");
     const internalReaderUrl = baseUrl
-      ? `${baseUrl}/materials/${item.id}/download/`
+      ? `${baseUrl}/materials/${item.id}/preview/`
       : item.file;
     router.push({
       pathname: "/(tabs)/material-viewer",
       params: {
         title: item.title || "Material",
         uri: internalReaderUrl,
+        fileType: "pdf",
         returnTo: "/materials",
       },
     } as any);

@@ -4719,14 +4719,24 @@ def preview_material(request, pk):
     suffix = Path(filename).suffix.lower()
     content_type = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
 
-    if suffix == '.pdf' or suffix in MATERIAL_IMAGE_EXTENSIONS:
+    if suffix in MATERIAL_IMAGE_EXTENSIONS:
         response = FileResponse(open(file_path, 'rb'), content_type=content_type)
         response['Content-Disposition'] = f'inline; filename="{filename}"'
         response['Content-Length'] = str(os.path.getsize(file_path))
         return response
 
     try:
-        if suffix in MATERIAL_TEXT_EXTENSIONS:
+        if suffix == '.pdf':
+            reader = PyPDF2.PdfReader(file_path)
+            pages = []
+            for index, page in enumerate(reader.pages[:300], start=1):
+                text = (page.extract_text() or '').strip()
+                pages.append(
+                    f'<div class="paragraph"><strong>Page {index}</strong><br />'
+                    f'{escape(text) if text else "No readable text found on this page."}</div>'
+                )
+            body = ''.join(pages)
+        elif suffix in MATERIAL_TEXT_EXTENSIONS:
             with open(file_path, 'r', encoding='utf-8', errors='replace') as handle:
                 content = handle.read(2 * 1024 * 1024)
             body = f'<pre>{escape(content)}</pre>'
@@ -4748,7 +4758,7 @@ def preview_material(request, pk):
             body = ''.join(sections)
         else:
             body = '<div class="paragraph">This file format cannot be rendered inside the app. Please upload PDF, ZIP, DOCX, PPTX, XLSX, image, or text format.</div>'
-    except (OSError, ValueError, zipfile.BadZipFile, KeyError) as exc:
+    except (OSError, ValueError, zipfile.BadZipFile, KeyError, PyPDF2.errors.PdfReadError) as exc:
         logger.warning('Material preview failed for %s: %s', material.id, exc)
         body = '<div class="paragraph">This file could not be read. It may be corrupted or unsupported.</div>'
 
@@ -4923,6 +4933,22 @@ def material_zip_entry_file(request, pk):
 
     filename = os.path.basename(entry_path)
     content_type = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
+    if Path(filename).suffix.lower() == '.pdf':
+        try:
+            reader = PyPDF2.PdfReader(io.BytesIO(content))
+            pages = []
+            for index, page in enumerate(reader.pages[:300], start=1):
+                text = (page.extract_text() or '').strip()
+                pages.append(
+                    f'<div class="paragraph"><strong>Page {index}</strong><br />'
+                    f'{escape(text) if text else "No readable text found on this page."}</div>'
+                )
+            return HttpResponse(
+                _material_preview_page(filename, ''.join(pages)),
+                content_type='text/html; charset=utf-8',
+            )
+        except (OSError, ValueError, PyPDF2.errors.PdfReadError):
+            return Response({'error': 'This PDF could not be read.'}, status=status.HTTP_400_BAD_REQUEST)
     response = HttpResponse(content, content_type=content_type)
     response['Content-Disposition'] = f'inline; filename="{filename}"'
     response['Content-Length'] = str(len(content))
