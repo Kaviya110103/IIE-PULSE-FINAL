@@ -4185,7 +4185,7 @@ export function QuizResults() {
       .then(x => {
         const data = x.data || {}
         const practiceResults = data.public_results || []
-        setResults(practiceResults.filter(result => result.audience === 'student'))
+        setResults(data.student_results || practiceResults.filter(result => result.audience === 'student'))
         setPublicResults(practiceResults.filter(result => result.audience !== 'student'))
       })
       .catch(() => toast.error('Failed to load quiz results'))
@@ -6277,7 +6277,7 @@ export function AdminPublicUsers() {
     setLoading(true)
     try {
       const params = new URLSearchParams({ tab })
-      if (tab === 'enrolled' && branchFilter) params.set('branch', branchFilter)
+      if (branchFilter) params.set('branch', branchFilter)
       const res = await api.get(`/admin/public-users/?${params.toString()}`)
       const rows = res.data.results || []
       setItems(rows)
@@ -6336,7 +6336,8 @@ export function AdminPublicUsers() {
         'Contact',
         'Qualification',
         'Location',
-        mode === 'enrolled' ? 'Branch' : 'Registered',
+        'Branch',
+        ...(mode !== 'enrolled' ? ['Registered'] : []),
         ...(mode === 'users' || mode === 'walked_in' ? ['Remark'] : []),
         ...(mode === 'enrolled' ? [] : ['Action']),
       ]}
@@ -6358,7 +6359,10 @@ export function AdminPublicUsers() {
               <div style={{ fontSize: 11, color: T.slate }}>{item.student_code || ''}</div>
             </td>
           ) : (
-            <td>{formatMonitoringTime(item.created_at)}</td>
+            <>
+              <td>{item.branch || '-'}</td>
+              <td>{formatMonitoringTime(item.created_at)}</td>
+            </>
           )}
           {(mode === 'users' || mode === 'walked_in') && (
             <td>
@@ -6427,7 +6431,7 @@ export function AdminPublicUsers() {
               }}>{tabCounts[tab.key] || 0}</span>
             </button>
           ))}
-          {activeTab === 'enrolled' && (
+          {(activeTab === 'users' || activeTab === 'enrolled' || activeTab === 'walked_in') && (
             <select className="admin-select" style={{ width: 190, marginLeft: 'auto' }} value={branchFilter} onChange={e => setBranchFilter(e.target.value)}>
               <option value="">All Branches</option>
               {branches.map(branch => <option key={branch.id} value={branch.id}>{branch.label}</option>)}

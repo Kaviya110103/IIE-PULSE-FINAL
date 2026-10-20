@@ -8,22 +8,23 @@ const parseAllowedHosts = () => {
     : ['iiepulse.indrainstitute.com', 'www.iiepulse.indrainstitute.com', 'localhost', '127.0.0.1']
 }
 
-const productionBackend = 'https://iiepulse.indrainstitute.com'
+// Local development must never fall through to the production API.
+const localBackend = 'http://127.0.0.1:8000'
 
 export default defineConfig({
   plugins: [react()],
 
   server: {
     host: '0.0.0.0',
-    port: 5173,
+    port: Number(process.env.VITE_PORT || 5173),
     allowedHosts: parseAllowedHosts(),
     proxy: {
       '/api': {
-        target: process.env.VITE_API_PROXY_TARGET || productionBackend,
+        target: process.env.VITE_API_PROXY_TARGET || localBackend,
         changeOrigin: true,
       },
       '/media': {
-        target: process.env.VITE_API_PROXY_TARGET || productionBackend,
+        target: process.env.VITE_API_PROXY_TARGET || localBackend,
         changeOrigin: true,
       },
     },

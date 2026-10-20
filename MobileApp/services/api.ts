@@ -5,7 +5,7 @@ import { Platform } from "react-native";
 const PRODUCTION_API = "https://iiepulse.indrainstitute.com/api/";
 const DEV_LAN_API =
   process.env.EXPO_PUBLIC_LOCAL_API_URL ||
-  (typeof __DEV__ !== "undefined" && __DEV__ ? "http://192.168.1.5:8000/api/" : "");
+  (typeof __DEV__ !== "undefined" && __DEV__ ? "http://192.168.1.6:8000/api/" : "");
 const LOCAL_LAN_API = DEV_LAN_API || PRODUCTION_API;
 const DEFAULT_API = Platform.OS === "web" ? PRODUCTION_API : LOCAL_LAN_API;
 
@@ -17,6 +17,12 @@ function getEnvApiBaseUrl() {
   const envApiUrl = process.env.EXPO_PUBLIC_API_URL;
 
   if (!envApiUrl) {
+    return "";
+  }
+
+  // Development builds must use the current LAN backend, even when an EAS
+  // profile still carries the production API variable.
+  if (typeof __DEV__ !== "undefined" && __DEV__) {
     return "";
   }
 
@@ -120,7 +126,6 @@ api.interceptors.request.use(async (config) => {
     requestUrl.includes("vlogs/") ||
     requestUrl.includes("news/") ||
     requestUrl.includes("calendar-events/") ||
-    requestUrl.includes("quiz/practice/") ||
     requestUrl.includes("referrals/")
   ) {
     delete config.headers.Authorization;
@@ -236,10 +241,12 @@ export type GuestRegistrationPayload = {
   email: string;
   mobile: string;
   qualification: string;
+  area_of_interest: string;
   pincode?: string;
   location: string;
   city?: string;
   state?: string;
+  branch: string;
   username: string;
   password: string;
 };

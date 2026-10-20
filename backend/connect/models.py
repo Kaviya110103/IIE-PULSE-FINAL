@@ -414,6 +414,11 @@ class StudentLoginRatingEvent ( models.Model ) :
 
 
 class PublicUser(models.Model):
+    BRANCH_CHOICES = [
+        ('100ft', '100FT'),
+        ('hopes', 'Hopes'),
+        ('kuniyamuthur', 'Kuniyamuthur'),
+    ]
     STATUS_CHOICES = [
         ('new', 'New'),
         ('walked_in', 'Walked In'),
@@ -423,9 +428,11 @@ class PublicUser(models.Model):
     email = models.EmailField(blank=True, null=True)
     mobile = models.CharField(max_length=20, blank=True, null=True)
     qualification = models.CharField(max_length=120, blank=True, null=True)
+    area_of_interest = models.CharField(max_length=160, blank=True, default='')
     location = models.CharField(max_length=160, blank=True, null=True)
     city = models.CharField(max_length=100, blank=True, null=True)
     state = models.CharField(max_length=100, blank=True, null=True)
+    branch = models.CharField(max_length=40, choices=BRANCH_CHOICES, blank=True, default='')
     username = models.CharField(max_length=120, unique=True)
     password = models.CharField(max_length=255)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='new')
@@ -1366,6 +1373,11 @@ import uuid
 
 class Quiz ( models.Model ) :
     """Quiz created from uploaded file"""
+    AUDIENCE_CHOICES = [
+        ('students', 'All Students'),
+        ('public_users', 'Public Users'),
+        ('both', 'Students and Public Users'),
+    ]
     DIFFICULTY_CHOICES = [
             ('easy' , 'Easy') ,
             ('medium' , 'Medium') ,
@@ -1376,6 +1388,7 @@ class Quiz ( models.Model ) :
     title = models.CharField ( max_length = 200 )
     description = models.TextField ( blank = True )
     batch = models.ForeignKey ( Batches , on_delete = models.CASCADE , related_name = 'quizzes' , blank = True , null = True )
+    audience = models.CharField(max_length=20, choices=AUDIENCE_CHOICES, default='students')
     created_by = models.ForeignKey ( Employee , on_delete = models.SET_NULL , null = True )
     source_file = models.FileField ( upload_to = 'quiz_files/' , blank = True , null = True )
     total_questions = models.IntegerField ( default = 0 )
@@ -1392,6 +1405,7 @@ class Quiz ( models.Model ) :
     
     is_published = models.BooleanField ( default = False )
     publish_date = models.DateTimeField ( null = True , blank = True )
+    scheduled_publish_at = models.DateTimeField(null=True, blank=True)
     deadline = models.DateTimeField ( null = True , blank = True )
     allow_retake = models.BooleanField ( default = False )
     max_attempts = models.IntegerField ( default = 1 )

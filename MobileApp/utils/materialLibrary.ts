@@ -133,6 +133,13 @@ function materialDownloadUrl(material: DownloadableMaterial) {
   return `${baseUrl.replace(/\/$/, "")}/materials/${material.id}/download/`;
 }
 
+function materialFileUrl(material: DownloadableMaterial) {
+  const file = material.file || "";
+  if (/^https?:\/\//i.test(file)) return file;
+  const baseUrl = material.apiBaseUrl || API_BASE_URL;
+  return `${baseUrl.replace(/\/$/, "")}/${file.replace(/^\//, "")}`;
+}
+
 export async function getLibraryMaterials(): Promise<LibraryMaterial[]> {
   const raw = await AsyncStorage.getItem(LIBRARY_KEY);
   if (!raw) return [];
@@ -225,21 +232,24 @@ export async function downloadMaterialToLibrary(
   const localUri = `${LIBRARY_DIR}${material.id}-${fileName}`;
   const token = await AsyncStorage.getItem("access_token");
   const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
-  const download = FileSystem.createDownloadResumable(
-    materialDownloadUrl(material),
-    localUri,
-    { headers },
-    ({ totalBytesWritten, totalBytesExpectedToWrite }) => {
-      const totalBytes = totalBytesExpectedToWrite || 0;
-      onProgress?.({
-        receivedBytes: totalBytesWritten,
-        totalBytes,
-        percent: totalBytes ? Math.min(100, Math.round((totalBytesWritten / totalBytes) * 100)) : 0,
-      });
-    }
-  );
+  const progress = ({ totalBytesWritten, totalBytesExpectedToWrite }: any) => {
+    const totalBytes = totalBytesExpectedToWrite || 0;
+    onProgress?.({
+      receivedBytes: totalBytesWritten,
+      totalBytes,
+      percent: totalBytes ? Math.min(100, Math.round((totalBytesWritten / totalBytes) * 100)) : 0,
+    });
+  };
+  let result = await FileSystem.createDownloadResumable(
+    materialDownloadUrl(material), localUri, { headers }, progress
+  ).downloadAsync();
 
-  const result = await download.downloadAsync();
+  if (!result?.uri || result.status < 200 || result.status >= 300) {
+    await FileSystem.deleteAsync(localUri, { idempotent: true });
+    result = await FileSystem.createDownloadResumable(
+      materialFileUrl(material), localUri, { headers }, progress
+    ).downloadAsync();
+  }
   if (!result?.uri) {
     throw new Error("Unable to save material to Library.");
   }
@@ -325,6 +335,44 @@ export async function removeLibraryMaterial(id: number) {
 
 export async function readLibraryText(uri: string) {
   return FileSystem.readAsStringAsync(uri);
+}
+
+function decodeXml(value: string) {
+  return value
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+export async function readLibraryDocument(uri: string, fileName: string) {
+  const lower = fileName.toLowerCase();
+  if (!lower.endsWith(".docx")) {
+    throw new Error("This document format cannot be previewed inside the app yet.");
+  }
+
+  const base64 = await FileSystem.readAsStringAsync(uri, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+  const zipBytes = base64ToUint8Array(base64);
+  const files = unzipSync(zipBytes);
+  const documentXml = files["word/document.xml"];
+  if (!documentXml) throw new Error("The DOCX document content could not be read.");
+
+  const xml = strFromU8(documentXml);
+  const paragraphs = xml
+    .split(/<w:p(?:\s[^>]*)?>/i)
+    .slice(1)
+    .map((paragraph) => {
+      const text = [...paragraph.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/gi)]
+        .map((match) => decodeXml(match[1]))
+        .join("");
+      return text.trim();
+    })
+    .filter(Boolean);
+
+  return paragraphs.join("\n\n").slice(0, 30000) || "No readable text found in this document.";
 }
 
 export function readZipTextPreview(bytes: Uint8Array) {

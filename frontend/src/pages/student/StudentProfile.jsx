@@ -24,8 +24,8 @@ const emptyProfile = {
   course: '',
   batch: '',
   qualification: '',
-  joining: '',
-  ending: '',
+  batchStart: '',
+  batchEnd: '',
 }
 
 export default function StudentProfile() {
@@ -61,6 +61,9 @@ export default function StudentProfile() {
             .filter(Boolean)
             .join(', ')
         : data.assigned_batch_code || data.assigned_batch_number || ''
+      const primaryBatch = Array.isArray(data.assigned_batches) && data.assigned_batches.length
+        ? data.assigned_batches[0]
+        : null
 
       setProfile({
         name: `${data.first_name || ''} ${data.last_name || ''}`.trim(),
@@ -71,8 +74,8 @@ export default function StudentProfile() {
         course: courseNames,
         batch: batchNames,
         qualification: data.qualification || '',
-        joining: data.created_at ? String(data.created_at).split('T')[0] : '',
-        ending: '',
+        batchStart: primaryBatch?.start_date || primaryBatch?.batch_start_date || '',
+        batchEnd: primaryBatch?.end_date || primaryBatch?.batch_end_date || '',
       })
       setPhotoUrl(data.photo || '')
       setPhotoFile(null)
@@ -187,8 +190,8 @@ export default function StudentProfile() {
         <ProfileCard title="Course Details" icon="fa-briefcase">
           <ProfileRow icon="fa-book" label="Course" value={profile.course} />
           <ProfileRow icon="fa-layer-group" label="Batch" value={profile.batch} />
-          <ProfileRow icon="fa-right-to-bracket" label="Joining Date" value={profile.joining} />
-          <ProfileRow icon="fa-right-from-bracket" label="Ending Date" value={profile.ending || '—'} />
+          <ProfileRow icon="fa-calendar-plus" label="Batch Start Date" value={profile.batchStart} />
+          <ProfileRow icon="fa-calendar-check" label="Batch End Date" value={profile.batchEnd} />
         </ProfileCard>
       </div>
     </div>

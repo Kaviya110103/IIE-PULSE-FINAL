@@ -11,7 +11,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { getWithApiFallback, resolveMediaUrl } from "@/services/api";
+import { API_BASE_URL, getWithApiFallback, resolveMediaUrl } from "@/services/api";
 import { getFileType } from "@/utils/materialLibrary";
 
 const MATERIALS_CACHE_KEY = "iie_pulse_cached_materials";
@@ -68,7 +68,14 @@ export default function MaterialsScreen() {
       }
 
       if (Array.isArray(cachedItems) && cachedItems.length) {
-        setMaterials(cachedItems);
+        // Older cached material records may contain the previous LAN IP.
+        // Keep the offline list, but route the next protected download through
+        // the current API base URL.
+        const currentApiItems = cachedItems.map((item) => ({
+          ...item,
+          apiBaseUrl: API_BASE_URL,
+        }));
+        setMaterials(currentApiItems);
         setErrorMsg("No connection. Showing saved materials.");
       } else {
         setMaterials([]);
@@ -152,6 +159,7 @@ export default function MaterialsScreen() {
           const fileType = getFileType(fileName);
           const isZip = fileType === "zip";
           const isPdf = fileType === "pdf";
+          const isDirectPreview = fileType === "image" || fileType === "text";
 
           return (
           <View key={item.id} style={styles.card}>
@@ -187,7 +195,7 @@ export default function MaterialsScreen() {
 
             <TouchableOpacity
               style={styles.button}
-              onPress={() => {
+              onPress={async () => {
                 if (isPdf) {
                   openPdf(item);
                   return;
@@ -203,7 +211,16 @@ export default function MaterialsScreen() {
                   } as any);
                   return;
                 }
-                setErrorMsg("This file type can be viewed after converting it to PDF or uploading it as ZIP/PDF.");
+                if (!item.file) return;
+                router.push({
+                  pathname: "/(tabs)/material-viewer",
+                  params: {
+                    title: item.title || "Material",
+                    uri: item.file,
+                    fileType,
+                    returnTo: "/materials",
+                  },
+                } as any);
               }}
             >
               {isPdf ? (
@@ -211,10 +228,14 @@ export default function MaterialsScreen() {
               ) : isZip ? (
                 <Ionicons name="archive-outline" size={17} color="#FFFFFF" />
               ) : (
-                <Ionicons name="lock-closed-outline" size={17} color="#FFFFFF" />
+                <Ionicons name="eye-outline" size={17} color="#FFFFFF" />
               )}
               <Text style={styles.buttonText}>
-                {isPdf ? "View PDF" : isZip ? "Open ZIP" : "PDF/ZIP only"}
+                {isPdf
+                    ? "View PDF"
+                    : isZip
+                      ? "Open ZIP"
+                      : "Open File"}
               </Text>
             </TouchableOpacity>
           </View>
