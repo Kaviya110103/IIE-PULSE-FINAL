@@ -5,7 +5,7 @@ import { Platform } from "react-native";
 const PRODUCTION_API = "https://iiepulse.indrainstitute.com/api/";
 const DEV_LAN_API =
   process.env.EXPO_PUBLIC_LOCAL_API_URL ||
-  (typeof __DEV__ !== "undefined" && __DEV__ ? "http://192.168.1.8:8000/api/" : "");
+  (typeof __DEV__ !== "undefined" && __DEV__ ? "http://192.168.1.6:8000/api/" : "");
 const LOCAL_LAN_API = DEV_LAN_API || PRODUCTION_API;
 const DEFAULT_API = Platform.OS === "web" ? PRODUCTION_API : LOCAL_LAN_API;
 
