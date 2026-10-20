@@ -12,7 +12,7 @@ import {
   View,
 } from "react-native";
 import { API_BASE_URL, getWithApiFallback, resolveMediaUrl } from "@/services/api";
-import { downloadMaterialToLibrary, getFileType } from "@/utils/materialLibrary";
+import { getFileType } from "@/utils/materialLibrary";
 
 const MATERIALS_CACHE_KEY = "iie_pulse_cached_materials";
 
@@ -35,7 +35,6 @@ export default function MaterialsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [materials, setMaterials] = useState<MaterialItem[]>([]);
   const [errorMsg, setErrorMsg] = useState("");
-  const [savingId, setSavingId] = useState<number | null>(null);
 
   const loadMaterials = async () => {
     try {
@@ -212,39 +211,31 @@ export default function MaterialsScreen() {
                   } as any);
                   return;
                 }
-                if (!item.file || savingId === item.id) return;
-                setSavingId(item.id);
-                setErrorMsg("");
-                try {
-                  await downloadMaterialToLibrary(item);
-                  router.push("/(tabs)/library" as any);
-                } catch (error: any) {
-                  setErrorMsg(error?.message || "Unable to open this material inside the app.");
-                } finally {
-                  setSavingId(null);
-                }
+                if (!item.file) return;
+                router.push({
+                  pathname: "/(tabs)/material-viewer",
+                  params: {
+                    title: item.title || "Material",
+                    uri: item.file,
+                    fileType,
+                    returnTo: "/materials",
+                  },
+                } as any);
               }}
-              disabled={savingId === item.id}
             >
-              {savingId === item.id ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : isPdf ? (
+              {isPdf ? (
                 <Ionicons name="eye-outline" size={17} color="#FFFFFF" />
               ) : isZip ? (
                 <Ionicons name="archive-outline" size={17} color="#FFFFFF" />
               ) : (
-                <Ionicons name={isDirectPreview ? "eye-outline" : "download-outline"} size={17} color="#FFFFFF" />
+                <Ionicons name="eye-outline" size={17} color="#FFFFFF" />
               )}
               <Text style={styles.buttonText}>
-                {savingId === item.id
-                  ? "Saving in Library..."
-                  : isPdf
+                {isPdf
                     ? "View PDF"
                     : isZip
                       ? "Open ZIP"
-                      : isDirectPreview
-                        ? "Open in App"
-                        : "Save & Open in App"}
+                      : "Open File"}
               </Text>
             </TouchableOpacity>
           </View>

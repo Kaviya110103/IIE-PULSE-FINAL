@@ -229,6 +229,7 @@ export default function RegisterScreen() {
               Create your IIE Pulse access
             </ThemedText>
 
+            <Text style={styles.fieldLabel}>Area of Interest</Text>
             <InputRow
               icon="person-outline"
               placeholder="Name"
@@ -267,6 +268,7 @@ export default function RegisterScreen() {
               onChangeText={(value) => updateField("area_of_interest", value)}
               editable={!loading}
             />
+            <Text style={styles.fieldLabel}>Branch</Text>
             <View style={styles.pickerWrapper}>
               <Ionicons name="business-outline" size={18} color="#5523D2" />
               <Picker
@@ -453,6 +455,14 @@ const styles = StyleSheet.create({
     color: "#5523D2",
     fontSize: 14,
     fontWeight: "700",
+  },
+  fieldLabel: {
+    alignSelf: "stretch",
+    color: "#24134F",
+    fontSize: 13,
+    fontWeight: "900",
+    marginTop: 8,
+    marginBottom: 5,
   },
   iconCircle: {
     width: 62,

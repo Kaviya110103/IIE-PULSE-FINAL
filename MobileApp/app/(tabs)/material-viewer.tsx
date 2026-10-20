@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { WebView } from "react-native-webview";
 
 const PDF_CACHE_DIR = `${FileSystem.cacheDirectory || FileSystem.documentDirectory || ""}iie-pulse-pdf-cache/`;
 
@@ -38,7 +39,7 @@ async function ensureDirectory(uri: string) {
 
 export default function MaterialViewerScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ title?: string; uri?: string; localUri?: string; returnTo?: string }>();
+  const params = useLocalSearchParams<{ title?: string; uri?: string; localUri?: string; fileType?: string; returnTo?: string }>();
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [authToken, setAuthToken] = useState("");
@@ -57,6 +58,7 @@ export default function MaterialViewerScreen() {
   const uri = Array.isArray(params.uri) ? params.uri[0] : params.uri || "";
   const localUri = Array.isArray(params.localUri) ? params.localUri[0] : params.localUri || "";
   const returnTo = Array.isArray(params.returnTo) ? params.returnTo[0] : params.returnTo || "";
+  const fileType = Array.isArray(params.fileType) ? params.fileType[0] : params.fileType || "pdf";
 
   const goBack = () => {
     if (returnTo) {
@@ -151,6 +153,18 @@ export default function MaterialViewerScreen() {
       </View>
 
       {!Pdf || !pdfSource || failed ? (
+        fileType !== "pdf" && uri ? (
+          <WebView
+            source={{
+              uri,
+              headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+            }}
+            style={styles.webView}
+            onLoadStart={() => setLoading(true)}
+            onLoadEnd={() => setLoading(false)}
+            onError={() => setFailed(true)}
+          />
+        ) : (
         <View style={styles.errorPanel}>
           <Ionicons name="document-lock-outline" size={52} color="#A78BFA" />
           <Text style={styles.errorTitle}>Unable to preview this PDF</Text>
@@ -160,6 +174,7 @@ export default function MaterialViewerScreen() {
               : "This PDF cannot be opened right now. Please try again after reconnecting or reloading the material."}
           </Text>
         </View>
+        )
       ) : (
         <View style={styles.viewerWrap}>
           {loading ? (
@@ -207,6 +222,7 @@ const styles = StyleSheet.create({
   title: { color: "#FFFFFF", fontSize: 16, fontWeight: "900", marginTop: 2 },
   viewerWrap: { flex: 1, backgroundColor: "#111827" },
   pdf: { flex: 1, width: "100%", backgroundColor: "#FFFFFF" },
+  webView: { flex: 1, backgroundColor: "#FFFFFF" },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 2,
