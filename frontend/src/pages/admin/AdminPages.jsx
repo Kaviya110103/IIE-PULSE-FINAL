@@ -6269,6 +6269,7 @@ export function AdminPublicUsers() {
   const [tabCounts, setTabCounts] = useState({ users: 0, enrolled: 0, walked_in: 0, follow_up: 0 })
   const [remarks, setRemarks] = useState({})
   const [followUpUser, setFollowUpUser] = useState(null)
+  const [followUpDetailsUser, setFollowUpDetailsUser] = useState(null)
   const [followUpForm, setFollowUpForm] = useState({ specification: '', followUpDate: '', feedback: '', remark: '' })
   const [followUpSaving, setFollowUpSaving] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -6276,6 +6277,9 @@ export function AdminPublicUsers() {
   const { user } = useAuth()
   const isCounselor = user?.designation === 'counselor'
   const addStudentPath = isCounselor ? '/counselor/add-student' : '/admin/students'
+  const visibleTabs = isCounselor
+    ? publicUserTabs
+    : publicUserTabs.filter(tab => tab.key !== 'follow_up')
 
   const load = async (tab = activeTab) => {
     setLoading(true)
@@ -6367,7 +6371,7 @@ export function AdminPublicUsers() {
         ...(mode !== 'enrolled' ? ['Registered'] : []),
         ...(mode === 'follow_up' ? ['Specification', 'Follow-up Date', 'Feedback'] : []),
         ...(mode === 'users' ? ['Remark'] : []),
-        ...(isCounselor && mode !== 'enrolled' ? ['Action'] : []),
+        ...((isCounselor && mode !== 'enrolled') || (!isCounselor && mode === 'walked_in') ? ['Action'] : []),
       ]}
       items={items}
       emptyMsg="No public users registered yet"
@@ -6435,6 +6439,17 @@ export function AdminPublicUsers() {
               </div>
             </td>
           )}
+          {!isCounselor && mode === 'walked_in' && (
+            <td>
+              <button
+                type="button"
+                className="admin-btn admin-btn-ghost admin-btn-sm"
+                onClick={() => setFollowUpDetailsUser(item)}
+              >
+                <i className="fas fa-eye" /> View Details
+              </button>
+            </td>
+          )}
         </>
       )}
     />
@@ -6449,7 +6464,7 @@ export function AdminPublicUsers() {
       />
       <div className="admin-card">
         <div style={{ padding: 16, borderBottom: `1px solid ${T.border}`, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          {publicUserTabs.map(tab => (
+          {visibleTabs.map(tab => (
             <button
               key={tab.key}
               type="button"
@@ -6545,6 +6560,49 @@ export function AdminPublicUsers() {
             </button>
           </div>
         </form>
+      </AdminModal>
+
+      <AdminModal
+        open={!!followUpDetailsUser}
+        onClose={() => setFollowUpDetailsUser(null)}
+        title="Follow Up Details"
+        size="sm"
+      >
+        <div style={{ padding: 18 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            {[
+              ['Name', followUpDetailsUser?.name],
+              ['Mobile Number', followUpDetailsUser?.mobile],
+              ['Area of Interest', followUpDetailsUser?.area_of_interest],
+              ['Counselled By', followUpDetailsUser?.counselled_by],
+              ['Specification', followUpDetailsUser?.follow_up_specification],
+              ['Follow-up Date', followUpDetailsUser?.follow_up_date
+                ? new Date(`${followUpDetailsUser.follow_up_date}T00:00:00`).toLocaleDateString('en-IN')
+                : 'Not scheduled'],
+              ['Feedback', followUpDetailsUser?.follow_up_feedback_display],
+              ['Remark', followUpDetailsUser?.remark],
+            ].map(([label, value]) => (
+              <div
+                key={label}
+                style={{
+                  border: `1px solid ${T.border}`,
+                  borderRadius: 8,
+                  padding: '12px 14px',
+                  background: 'rgba(15,27,45,0.03)',
+                  gridColumn: label === 'Remark' ? '1 / -1' : undefined,
+                }}
+              >
+                <div style={{ color: T.slate, fontSize: 11, fontWeight: 800, marginBottom: 5 }}>{label}</div>
+                <div style={{ fontWeight: 800 }}>{value || '-'}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 18 }}>
+            <button type="button" className="admin-btn admin-btn-primary" onClick={() => setFollowUpDetailsUser(null)}>
+              Close
+            </button>
+          </div>
+        </div>
       </AdminModal>
     </div>
   )

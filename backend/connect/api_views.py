@@ -6451,7 +6451,8 @@ def admin_public_users(request):
                 if str(item.get('branch') or '').strip().lower() == branch_filter.lower()
             ]
     elif tab in ('walked_in', 'walked'):
-        serialized = [item for item in serialized if item.get('status') == 'walked_in']
+        visible_statuses = {'walked_in', 'follow_up'} if is_admin_user(request.user) else {'walked_in'}
+        serialized = [item for item in serialized if item.get('status') in visible_statuses]
     elif tab in ('follow_up', 'followup'):
         serialized = [item for item in serialized if item.get('status') == 'follow_up']
     else:
