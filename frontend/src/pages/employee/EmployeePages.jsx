@@ -1,5 +1,5 @@
 
-import { useState, useEffect, useCallback } from 'react'
+import { Fragment, useState, useEffect, useCallback } from 'react'
 import api from '../../api/client'
 import toast from 'react-hot-toast'
 import { useNavigate, useLocation, useParams, Link } from 'react-router-dom' // ← ADD THIS
@@ -800,12 +800,10 @@ export function StaffBatchDetails() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [loginModal, setLoginModal] = useState(null)
-  const [attendanceStudentFilter, setAttendanceStudentFilter] = useState('')
-  const [resultStudentFilter, setResultStudentFilter] = useState('')
+  const [expandedStudents, setExpandedStudents] = useState({})
 
   useEffect(() => {
-    setAttendanceStudentFilter('')
-    setResultStudentFilter('')
+    setExpandedStudents({})
     setLoading(true)
     api.get(`/batches/${batchId}/staff-detail-report/`)
       .then(res => setData(res.data))
@@ -821,31 +819,44 @@ export function StaffBatchDetails() {
     .join(', ')
 
   const attendanceRecords = data?.attendance_records || []
-  const attendanceStudentOptions = Array.from(
-    new Map(attendanceRecords.map(record => {
-      const value = `${record.student_id || '-'}|${record.student_name || '-'}`
-      return [value, {
-        value,
-        label: `${record.student_name || '-'} (${record.student_id || '-'})`,
-      }]
-    })).values()
-  ).sort((a, b) => a.label.localeCompare(b.label))
-  const filteredAttendanceRecords = attendanceStudentFilter
-    ? attendanceRecords.filter(record => `${record.student_id || '-'}|${record.student_name || '-'}` === attendanceStudentFilter)
-    : attendanceRecords
   const quizResults = data?.quiz_results || []
   const testResults = data?.test_results || []
-  const resultStudentOptions = Array.from(
-    new Map([...quizResults, ...testResults].map(result => {
-      const value = `${result.student_id || '-'}|${result.student_name || '-'}`
-      return [value, { value, label: `${result.student_name || '-'} (${result.student_id || '-'})` }]
-    })).values()
-  ).sort((a, b) => a.label.localeCompare(b.label))
-  const filterStudentResults = results => resultStudentFilter
-    ? results.filter(result => `${result.student_id || '-'}|${result.student_name || '-'}` === resultStudentFilter)
-    : results
-  const filteredQuizResults = filterStudentResults(quizResults)
-  const filteredTestResults = filterStudentResults(testResults)
+  const groupStudentRecords = records => {
+    const grouped = new Map()
+    records.forEach(record => {
+      const key = `${record.student_id || '-'}|${record.student_name || '-'}`
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          key,
+          student_id: record.student_id || '-',
+          student_name: record.student_name || '-',
+          records: [],
+        })
+      }
+      grouped.get(key).records.push(record)
+    })
+    return Array.from(grouped.values()).sort((a, b) => a.student_name.localeCompare(b.student_name))
+  }
+  const attendanceGroups = groupStudentRecords(attendanceRecords)
+  const testGroups = groupStudentRecords(testResults)
+  const quizGroups = groupStudentRecords(quizResults)
+  const toggleStudent = (section, studentKey) => {
+    const key = `${section}:${studentKey}`
+    setExpandedStudents(previous => ({ ...previous, [key]: !previous[key] }))
+  }
+  const isStudentExpanded = (section, studentKey) => Boolean(expandedStudents[`${section}:${studentKey}`])
+  const expandButton = (section, group, label) => (
+    <button
+      type="button"
+      className="employee-btn employee-btn-sm employee-btn-ghost"
+      onClick={() => toggleStudent(section, group.key)}
+      aria-label={`${isStudentExpanded(section, group.key) ? 'Hide' : 'View'} ${label} for ${group.student_name}`}
+      title={`${isStudentExpanded(section, group.key) ? 'Hide' : 'View'} details`}
+      style={{ width: 34, height: 34, padding: 0, display: 'inline-grid', placeItems: 'center' }}
+    >
+      <i className={`fas fa-chevron-${isStudentExpanded(section, group.key) ? 'up' : 'down'}`} />
+    </button>
+  )
 
   const loginDateKey = (value) => {
     const date = new Date(value)
@@ -938,36 +949,50 @@ export function StaffBatchDetails() {
           <section style={{ marginBottom: 26 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 10, flexWrap: 'wrap' }}>
               <h4 style={{ margin: 0, fontSize: 18, color: T.navy }}>Student Attendance Details</h4>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                <select
-                  className="employee-input"
-                  value={attendanceStudentFilter}
-                  onChange={event => setAttendanceStudentFilter(event.target.value)}
-                  style={{ width: 240, height: 38, padding: '0 12px' }}
-                >
-                  <option value="">All Students</option>
-                  {attendanceStudentOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
-                <span style={{ color: T.slate, fontSize: 13 }}>Last 30 days | {filteredAttendanceRecords.length}/{attendanceRecords.length} records</span>
-              </div>
+              <span style={{ color: T.slate, fontSize: 13 }}>Last 30 days | {attendanceGroups.length} students</span>
             </div>
             <div style={{ overflowX: 'auto', border: `1px solid ${T.border}`, borderRadius: 10 }}>
               <table className="employee-table">
-                <thead><tr><th>Date</th><th>Student</th><th>Student ID</th><th>Status</th><th>Session</th><th>Marked By</th><th>Remarks</th></tr></thead>
+                <thead><tr><th aria-label="Expand details" /><th>Student</th><th>Student ID</th><th>Total Days</th><th>Present</th><th>Absent</th><th>Attendance</th></tr></thead>
                 <tbody>
-                  {filteredAttendanceRecords.length === 0 ? (
-                    <tr><td colSpan="7" style={{ textAlign: 'center', color: T.slate }}>No attendance records for the selected student in the last 30 days.</td></tr>
-                  ) : filteredAttendanceRecords.map(record => (
-                    <tr key={record.id}>
-                      <td>{formatSimpleDate(record.date)}</td>
-                      <td>{record.student_name || '-'}</td>
-                      <td>{record.student_id || '-'}</td>
-                      <td><Badge text={record.status || '-'} variant={record.status === 'Present' ? 'success' : 'danger'} /></td>
-                      <td>{record.session || '-'}</td>
-                      <td>{record.marked_by || '-'}</td>
-                      <td>{record.remarks || '-'}</td>
-                    </tr>
-                  ))}
+                  {attendanceGroups.length === 0 ? (
+                    <tr><td colSpan="7" style={{ textAlign: 'center', color: T.slate }}>No attendance records in the last 30 days.</td></tr>
+                  ) : attendanceGroups.map(group => {
+                    const present = group.records.filter(record => String(record.status).toLowerCase() === 'present').length
+                    const absent = group.records.filter(record => String(record.status).toLowerCase() === 'absent').length
+                    const percentage = group.records.length ? Math.round((present / group.records.length) * 100) : 0
+                    return (
+                      <Fragment key={`attendance-${group.key}`}>
+                        <tr>
+                          <td>{expandButton('attendance', group, 'attendance')}</td>
+                          <td style={{ fontWeight: 800 }}>{group.student_name}</td>
+                          <td>{group.student_id}</td>
+                          <td>{group.records.length}</td>
+                          <td>{present}</td>
+                          <td>{absent}</td>
+                          <td><strong>{percentage}%</strong></td>
+                        </tr>
+                        {isStudentExpanded('attendance', group.key) && (
+                          <tr key={`attendance-details-${group.key}`}>
+                            <td colSpan="7" style={{ padding: 12, background: 'rgba(15,27,45,.025)' }}>
+                              <table className="employee-table" style={{ margin: 0 }}>
+                                <thead><tr><th>Date</th><th>Status</th><th>Session</th><th>Marked By</th><th>Remarks</th></tr></thead>
+                                <tbody>{group.records.map(record => (
+                                  <tr key={record.id}>
+                                    <td>{formatSimpleDate(record.date)}</td>
+                                    <td><Badge text={record.status || '-'} variant={record.status === 'Present' ? 'success' : 'danger'} /></td>
+                                    <td>{record.session || '-'}</td>
+                                    <td>{record.marked_by || '-'}</td>
+                                    <td>{record.remarks || '-'}</td>
+                                  </tr>
+                                ))}</tbody>
+                              </table>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -976,36 +1001,51 @@ export function StaffBatchDetails() {
           <section style={{ marginBottom: 26 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 10, flexWrap: 'wrap' }}>
               <h4 style={{ margin: 0, fontSize: 18, color: T.navy }}>Student Test & Quiz Results</h4>
-              <select
-                className="employee-input"
-                value={resultStudentFilter}
-                onChange={event => setResultStudentFilter(event.target.value)}
-                style={{ width: 240, height: 38, padding: '0 12px' }}
-              >
-                <option value="">All Students</option>
-                {resultStudentOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-              </select>
+              <span style={{ color: T.slate, fontSize: 13 }}>Expand a student row to view every result</span>
             </div>
 
             <div style={{ marginBottom: 18 }}>
               <h5 style={{ margin: '0 0 8px', color: T.navy, fontSize: 15 }}>Technical Test Results</h5>
               <div style={{ overflowX: 'auto', border: `1px solid ${T.border}`, borderRadius: 10 }}>
                 <table className="employee-table">
-                  <thead><tr><th>Student</th><th>Student ID</th><th>Test</th><th>Mark</th><th>Percentage</th><th>Status</th><th>Submitted</th></tr></thead>
+                  <thead><tr><th aria-label="Expand details" /><th>Student</th><th>Student ID</th><th>Tests Attended</th><th>Average</th><th>Evaluated</th></tr></thead>
                   <tbody>
-                    {filteredTestResults.length === 0 ? (
-                      <tr><td colSpan="7" style={{ textAlign: 'center', color: T.slate }}>No technical test results found.</td></tr>
-                    ) : filteredTestResults.map(result => (
-                      <tr key={result.id}>
-                        <td>{result.student_name || '-'}</td>
-                        <td>{result.student_id || '-'}</td>
-                        <td>{result.test_title || '-'}</td>
-                        <td><strong>{result.mark ?? 0}</strong> / {result.max_marks ?? 0}</td>
-                        <td>{result.percentage || 0}%</td>
-                        <td><Badge text={result.evaluated ? 'Evaluated' : 'Pending Mark'} variant={result.evaluated ? 'success' : 'warning'} /></td>
-                        <td>{formatSimpleDate(result.submitted_at)}</td>
-                      </tr>
-                    ))}
+                    {testGroups.length === 0 ? (
+                      <tr><td colSpan="6" style={{ textAlign: 'center', color: T.slate }}>No technical test results found.</td></tr>
+                    ) : testGroups.map(group => {
+                      const evaluated = group.records.filter(result => result.evaluated).length
+                      const average = Math.round(group.records.reduce((sum, result) => sum + Number(result.percentage || 0), 0) / group.records.length)
+                      return (
+                        <Fragment key={`test-${group.key}`}>
+                          <tr>
+                            <td>{expandButton('test', group, 'technical test results')}</td>
+                            <td style={{ fontWeight: 800 }}>{group.student_name}</td>
+                            <td>{group.student_id}</td>
+                            <td>{group.records.length}</td>
+                            <td><strong>{average}%</strong></td>
+                            <td>{evaluated}/{group.records.length}</td>
+                          </tr>
+                          {isStudentExpanded('test', group.key) && (
+                            <tr key={`test-details-${group.key}`}>
+                              <td colSpan="6" style={{ padding: 12, background: 'rgba(15,27,45,.025)' }}>
+                                <table className="employee-table" style={{ margin: 0 }}>
+                                  <thead><tr><th>Test</th><th>Mark</th><th>Percentage</th><th>Status</th><th>Submitted</th></tr></thead>
+                                  <tbody>{group.records.map(result => (
+                                    <tr key={result.id}>
+                                      <td>{result.test_title || '-'}</td>
+                                      <td><strong>{result.mark ?? 0}</strong> / {result.max_marks ?? 0}</td>
+                                      <td>{result.percentage || 0}%</td>
+                                      <td><Badge text={result.evaluated ? 'Evaluated' : 'Pending Mark'} variant={result.evaluated ? 'success' : 'warning'} /></td>
+                                      <td>{formatSimpleDate(result.submitted_at)}</td>
+                                    </tr>
+                                  ))}</tbody>
+                                </table>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1015,22 +1055,45 @@ export function StaffBatchDetails() {
               <h5 style={{ margin: '0 0 8px', color: T.navy, fontSize: 15 }}>Quiz Results</h5>
               <div style={{ overflowX: 'auto', border: `1px solid ${T.border}`, borderRadius: 10 }}>
                 <table className="employee-table">
-                  <thead><tr><th>Student</th><th>Student ID</th><th>Quiz</th><th>Attempt</th><th>Score</th><th>Percentage</th><th>Result</th><th>Submitted</th></tr></thead>
+                  <thead><tr><th aria-label="Expand details" /><th>Student</th><th>Student ID</th><th>Quizzes Attended</th><th>Average</th><th>Passed</th></tr></thead>
                   <tbody>
-                    {filteredQuizResults.length === 0 ? (
-                      <tr><td colSpan="8" style={{ textAlign: 'center', color: T.slate }}>No quiz results found.</td></tr>
-                    ) : filteredQuizResults.map(result => (
-                      <tr key={result.id}>
-                        <td>{result.student_name || '-'}</td>
-                        <td>{result.student_id || '-'}</td>
-                        <td>{result.quiz_title || '-'}</td>
-                        <td>{result.attempt_number || 1}</td>
-                        <td><strong>{result.score || 0}</strong> / {result.total_marks || 0}</td>
-                        <td>{result.percentage || 0}%</td>
-                        <td><Badge text={result.is_passed ? 'Passed' : 'Not Passed'} variant={result.is_passed ? 'success' : 'danger'} /></td>
-                        <td>{formatSimpleDate(result.submitted_at)}</td>
-                      </tr>
-                    ))}
+                    {quizGroups.length === 0 ? (
+                      <tr><td colSpan="6" style={{ textAlign: 'center', color: T.slate }}>No quiz results found.</td></tr>
+                    ) : quizGroups.map(group => {
+                      const passed = group.records.filter(result => result.is_passed).length
+                      const average = Math.round(group.records.reduce((sum, result) => sum + Number(result.percentage || 0), 0) / group.records.length)
+                      return (
+                        <Fragment key={`quiz-${group.key}`}>
+                          <tr>
+                            <td>{expandButton('quiz', group, 'quiz results')}</td>
+                            <td style={{ fontWeight: 800 }}>{group.student_name}</td>
+                            <td>{group.student_id}</td>
+                            <td>{group.records.length}</td>
+                            <td><strong>{average}%</strong></td>
+                            <td>{passed}/{group.records.length}</td>
+                          </tr>
+                          {isStudentExpanded('quiz', group.key) && (
+                            <tr key={`quiz-details-${group.key}`}>
+                              <td colSpan="6" style={{ padding: 12, background: 'rgba(15,27,45,.025)' }}>
+                                <table className="employee-table" style={{ margin: 0 }}>
+                                  <thead><tr><th>Quiz</th><th>Attempt</th><th>Score</th><th>Percentage</th><th>Result</th><th>Submitted</th></tr></thead>
+                                  <tbody>{group.records.map(result => (
+                                    <tr key={result.id}>
+                                      <td>{result.quiz_title || '-'}</td>
+                                      <td>{result.attempt_number || 1}</td>
+                                      <td><strong>{result.score || 0}</strong> / {result.total_marks || 0}</td>
+                                      <td>{result.percentage || 0}%</td>
+                                      <td><Badge text={result.is_passed ? 'Passed' : 'Not Passed'} variant={result.is_passed ? 'success' : 'danger'} /></td>
+                                      <td>{formatSimpleDate(result.submitted_at)}</td>
+                                    </tr>
+                                  ))}</tbody>
+                                </table>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
