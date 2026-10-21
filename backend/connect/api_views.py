@@ -9120,16 +9120,42 @@ def staff_batch_detail_report(request, batch_id):
     start_dt = timezone.make_aware(datetime.combine(start_date, datetime.min.time()))
     end_dt = timezone.make_aware(datetime.combine(today + timedelta(days=1), datetime.min.time()))
 
-    batch_students_qs = active_students_for_batch(batch).select_related('user', 'assigned_staff', 'assigned_batch')
+    enrollment_qs = StudentBatchEnrollment.objects.filter(batch=batch)
+    enrollment_student_ids = list(enrollment_qs.values_list('student_id', flat=True))
+    reassigned_qs = ReassignedStudentRecord.objects.filter(source_batch=batch)
+    reassigned_student_ids = list(reassigned_qs.exclude(student_id__isnull=True).values_list('student_id', flat=True))
+    completed_qs = CompletedStudent.objects.filter(
+        Q(batch_id=str(batch.id)) | Q(batch_number=batch.batch_number)
+    )
+    completed_student_pks = []
+    completed_student_codes = []
+    for original_id in completed_qs.values_list('original_student_id', flat=True):
+        value = str(original_id or '').strip()
+        if not value:
+            continue
+        completed_student_codes.append(value)
+        if value.isdigit():
+            completed_student_pks.append(int(value))
+
+    batch_students_qs = Students.objects.filter(
+        Q(id__in=enrollment_student_ids) |
+        Q(id__in=reassigned_student_ids) |
+        Q(id__in=completed_student_pks) |
+        Q(student_id__in=completed_student_codes) |
+        Q(assigned_batch=batch) |
+        Q(previous_batch=batch)
+    ).distinct().select_related('user', 'assigned_staff', 'assigned_batch')
     student_ids = list(batch_students_qs.values_list('id', flat=True))
     sessions_qs = CourseSession.objects.filter(batch=batch)
     session_ids = list(sessions_qs.values_list('id', flat=True))
 
-    attendance_qs = StudentAttendance.objects.filter(
+    attendance_history_qs = StudentAttendance.objects.filter(
         batch=batch,
+    ).select_related('student', 'staff', 'session')
+    attendance_qs = attendance_history_qs.filter(
         date__gte=start_date,
         date__lte=today,
-    ).select_related('student', 'staff', 'session')
+    )
     staff_attendance_qs = attendance_qs.filter(staff=staff)
 
     batch_materials_qs = StudyMaterial.objects.filter(
@@ -9292,11 +9318,8 @@ def staff_batch_detail_report(request, batch_id):
     }
     attendance_counts = {
         row['student_id']: row
-        for row in StudentAttendance.objects.filter(
-            batch=batch,
+        for row in attendance_history_qs.filter(
             student_id__in=student_ids,
-            date__gte=start_date,
-            date__lte=today,
         ).values('student_id').annotate(
             total=Count('id'),
             present=Count('id', filter=Q(status='Present')),
@@ -9315,8 +9338,12 @@ def staff_batch_detail_report(request, batch_id):
     }
     enrollment_dates = {
         row.student_id: row.assigned_at
-        for row in StudentBatchEnrollment.objects.filter(batch=batch, student_id__in=student_ids)
+        for row in enrollment_qs.filter(student_id__in=student_ids)
     }
+    active_enrollment_ids = set(enrollment_qs.filter(is_active=True).values_list('student_id', flat=True))
+    reassigned_ids = set(reassigned_student_ids)
+    completed_ids = set(completed_student_pks)
+    completed_codes = set(completed_student_codes)
 
     quiz_results_qs = QuizAttempt.objects.filter(
         student_id__in=student_ids,
@@ -9336,6 +9363,14 @@ def staff_batch_detail_report(request, batch_id):
         progress_done = progress.get('completed', 0) or progress.get('staff_completed', 0) or 0
         progress_total = progress.get('total', 0) or total_sessions
         assigned_at = enrollment_dates.get(student.id)
+        if student.id in completed_ids or student.student_id in completed_codes:
+            batch_status = 'completed'
+        elif student.id in reassigned_ids or student.previous_batch_id == batch.id:
+            batch_status = 'reassigned'
+        elif student.id in active_enrollment_ids or student.assigned_batch_id == batch.id:
+            batch_status = 'active'
+        else:
+            batch_status = 'removed'
         student_rows.append({
             'id': student.id,
             'student_id': student.student_id,
@@ -9344,6 +9379,7 @@ def staff_batch_detail_report(request, batch_id):
             'mobile_no': student.mobile_no,
             'assigned_at': assigned_at,
             'is_new': bool(assigned_at and assigned_at >= start_dt),
+            'batch_status': batch_status,
             'login_count': student_login_counts.get(student.id, 0),
             'attendance_total': att.get('total', 0),
             'attendance_present': att.get('present', 0),
@@ -9429,7 +9465,7 @@ def staff_batch_detail_report(request, batch_id):
             'student_count': len(student_ids),
             'new_students': new_enrollment_qs.count(),
             'attendance_marked_days': len(attendance_dates),
-            'attendance_records': attendance_qs.count(),
+            'attendance_records': attendance_history_qs.count(),
             'quizzes_uploaded': quizzes_qs.count(),
             'tests_uploaded': tests_qs.values('test_id').distinct().count(),
             'materials_uploaded': batch_materials_qs.count(),
@@ -9449,16 +9485,18 @@ def staff_batch_detail_report(request, batch_id):
             'date': item.date,
             'student_name': f"{item.student.first_name} {item.student.last_name or ''}".strip() if item.student else '',
             'student_id': item.student.student_id if item.student else '',
+            'batch_status': next((row['batch_status'] for row in student_rows if row['id'] == item.student_id), ''),
             'status': item.status,
             'marked_by': f"{item.staff.first_name} {item.staff.last_name or ''}".strip() if item.staff else '',
             'session': f"Session {item.session.session_number}" if item.session else '',
             'remarks': item.remarks or '',
-        } for item in attendance_qs.order_by('-date', 'student__first_name', 'student__last_name')[:250]],
+        } for item in attendance_history_qs.order_by('-date', 'student__first_name', 'student__last_name')[:1000]],
         'quiz_results': [{
             'id': item.id,
             'student_db_id': item.student_id,
             'student_id': item.student.student_id if item.student else '',
             'student_name': f"{item.student.first_name} {item.student.last_name or ''}".strip() if item.student else '',
+            'batch_status': next((row['batch_status'] for row in student_rows if row['id'] == item.student_id), ''),
             'quiz_title': item.quiz.title if item.quiz else '',
             'attempt_number': item.attempt_number,
             'score': item.score or 0,
@@ -9472,6 +9510,7 @@ def staff_batch_detail_report(request, batch_id):
             'student_db_id': item.student_id,
             'student_id': item.student.student_id if item.student else '',
             'student_name': f"{item.student.first_name} {item.student.last_name or ''}".strip() if item.student else '',
+            'batch_status': next((row['batch_status'] for row in student_rows if row['id'] == item.student_id), ''),
             'test_title': item.test.title if item.test else '',
             'mark': item.manual_mark if item.manual_mark is not None else item.score,
             'max_marks': item.max_marks if item.max_marks is not None else item.total_questions,

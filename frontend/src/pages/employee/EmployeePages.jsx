@@ -830,6 +830,7 @@ export function StaffBatchDetails() {
           key,
           student_id: record.student_id || '-',
           student_name: record.student_name || '-',
+          batch_status: record.batch_status || 'active',
           records: [],
         })
       }
@@ -949,14 +950,14 @@ export function StaffBatchDetails() {
           <section style={{ marginBottom: 26 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 10, flexWrap: 'wrap' }}>
               <h4 style={{ margin: 0, fontSize: 18, color: T.navy }}>Student Attendance Details</h4>
-              <span style={{ color: T.slate, fontSize: 13 }}>Last 30 days | {attendanceGroups.length} students</span>
+              <span style={{ color: T.slate, fontSize: 13 }}>Full batch history | {attendanceGroups.length} students</span>
             </div>
             <div style={{ overflowX: 'auto', border: `1px solid ${T.border}`, borderRadius: 10 }}>
               <table className="employee-table">
-                <thead><tr><th aria-label="Expand details" /><th>Student</th><th>Student ID</th><th>Total Days</th><th>Present</th><th>Absent</th><th>Attendance</th></tr></thead>
+                <thead><tr><th aria-label="Expand details" /><th>Student</th><th>Student ID</th><th>Status</th><th>Total Days</th><th>Present</th><th>Absent</th><th>Attendance</th></tr></thead>
                 <tbody>
                   {attendanceGroups.length === 0 ? (
-                    <tr><td colSpan="7" style={{ textAlign: 'center', color: T.slate }}>No attendance records in the last 30 days.</td></tr>
+                    <tr><td colSpan="8" style={{ textAlign: 'center', color: T.slate }}>No attendance records found for this batch.</td></tr>
                   ) : attendanceGroups.map(group => {
                     const present = group.records.filter(record => String(record.status).toLowerCase() === 'present').length
                     const absent = group.records.filter(record => String(record.status).toLowerCase() === 'absent').length
@@ -967,6 +968,7 @@ export function StaffBatchDetails() {
                           <td>{expandButton('attendance', group, 'attendance')}</td>
                           <td style={{ fontWeight: 800 }}>{group.student_name}</td>
                           <td>{group.student_id}</td>
+                          <td><Badge text={group.batch_status} variant={group.batch_status === 'active' ? 'success' : group.batch_status === 'completed' ? 'info' : 'warning'} /></td>
                           <td>{group.records.length}</td>
                           <td>{present}</td>
                           <td>{absent}</td>
@@ -974,7 +976,7 @@ export function StaffBatchDetails() {
                         </tr>
                         {isStudentExpanded('attendance', group.key) && (
                           <tr key={`attendance-details-${group.key}`}>
-                            <td colSpan="7" style={{ padding: 12, background: 'rgba(15,27,45,.025)' }}>
+                            <td colSpan="8" style={{ padding: 12, background: 'rgba(15,27,45,.025)' }}>
                               <table className="employee-table" style={{ margin: 0 }}>
                                 <thead><tr><th>Date</th><th>Status</th><th>Session</th><th>Marked By</th><th>Remarks</th></tr></thead>
                                 <tbody>{group.records.map(record => (
@@ -1008,10 +1010,10 @@ export function StaffBatchDetails() {
               <h5 style={{ margin: '0 0 8px', color: T.navy, fontSize: 15 }}>Technical Test Results</h5>
               <div style={{ overflowX: 'auto', border: `1px solid ${T.border}`, borderRadius: 10 }}>
                 <table className="employee-table">
-                  <thead><tr><th aria-label="Expand details" /><th>Student</th><th>Student ID</th><th>Tests Attended</th><th>Average</th><th>Evaluated</th></tr></thead>
+                  <thead><tr><th aria-label="Expand details" /><th>Student</th><th>Student ID</th><th>Status</th><th>Tests Attended</th><th>Average</th><th>Evaluated</th></tr></thead>
                   <tbody>
                     {testGroups.length === 0 ? (
-                      <tr><td colSpan="6" style={{ textAlign: 'center', color: T.slate }}>No technical test results found.</td></tr>
+                      <tr><td colSpan="7" style={{ textAlign: 'center', color: T.slate }}>No technical test results found.</td></tr>
                     ) : testGroups.map(group => {
                       const evaluated = group.records.filter(result => result.evaluated).length
                       const average = Math.round(group.records.reduce((sum, result) => sum + Number(result.percentage || 0), 0) / group.records.length)
@@ -1021,13 +1023,14 @@ export function StaffBatchDetails() {
                             <td>{expandButton('test', group, 'technical test results')}</td>
                             <td style={{ fontWeight: 800 }}>{group.student_name}</td>
                             <td>{group.student_id}</td>
+                            <td><Badge text={group.batch_status} variant={group.batch_status === 'active' ? 'success' : group.batch_status === 'completed' ? 'info' : 'warning'} /></td>
                             <td>{group.records.length}</td>
                             <td><strong>{average}%</strong></td>
                             <td>{evaluated}/{group.records.length}</td>
                           </tr>
                           {isStudentExpanded('test', group.key) && (
                             <tr key={`test-details-${group.key}`}>
-                              <td colSpan="6" style={{ padding: 12, background: 'rgba(15,27,45,.025)' }}>
+                              <td colSpan="7" style={{ padding: 12, background: 'rgba(15,27,45,.025)' }}>
                                 <table className="employee-table" style={{ margin: 0 }}>
                                   <thead><tr><th>Test</th><th>Mark</th><th>Percentage</th><th>Status</th><th>Submitted</th></tr></thead>
                                   <tbody>{group.records.map(result => (
@@ -1055,10 +1058,10 @@ export function StaffBatchDetails() {
               <h5 style={{ margin: '0 0 8px', color: T.navy, fontSize: 15 }}>Quiz Results</h5>
               <div style={{ overflowX: 'auto', border: `1px solid ${T.border}`, borderRadius: 10 }}>
                 <table className="employee-table">
-                  <thead><tr><th aria-label="Expand details" /><th>Student</th><th>Student ID</th><th>Quizzes Attended</th><th>Average</th><th>Passed</th></tr></thead>
+                  <thead><tr><th aria-label="Expand details" /><th>Student</th><th>Student ID</th><th>Status</th><th>Quizzes Attended</th><th>Average</th><th>Passed</th></tr></thead>
                   <tbody>
                     {quizGroups.length === 0 ? (
-                      <tr><td colSpan="6" style={{ textAlign: 'center', color: T.slate }}>No quiz results found.</td></tr>
+                      <tr><td colSpan="7" style={{ textAlign: 'center', color: T.slate }}>No quiz results found.</td></tr>
                     ) : quizGroups.map(group => {
                       const passed = group.records.filter(result => result.is_passed).length
                       const average = Math.round(group.records.reduce((sum, result) => sum + Number(result.percentage || 0), 0) / group.records.length)
@@ -1068,13 +1071,14 @@ export function StaffBatchDetails() {
                             <td>{expandButton('quiz', group, 'quiz results')}</td>
                             <td style={{ fontWeight: 800 }}>{group.student_name}</td>
                             <td>{group.student_id}</td>
+                            <td><Badge text={group.batch_status} variant={group.batch_status === 'active' ? 'success' : group.batch_status === 'completed' ? 'info' : 'warning'} /></td>
                             <td>{group.records.length}</td>
                             <td><strong>{average}%</strong></td>
                             <td>{passed}/{group.records.length}</td>
                           </tr>
                           {isStudentExpanded('quiz', group.key) && (
                             <tr key={`quiz-details-${group.key}`}>
-                              <td colSpan="6" style={{ padding: 12, background: 'rgba(15,27,45,.025)' }}>
+                              <td colSpan="7" style={{ padding: 12, background: 'rgba(15,27,45,.025)' }}>
                                 <table className="employee-table" style={{ margin: 0 }}>
                                   <thead><tr><th>Quiz</th><th>Attempt</th><th>Score</th><th>Percentage</th><th>Result</th><th>Submitted</th></tr></thead>
                                   <tbody>{group.records.map(result => (
