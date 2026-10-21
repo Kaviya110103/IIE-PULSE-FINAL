@@ -801,9 +801,11 @@ export function StaffBatchDetails() {
   const [loading, setLoading] = useState(true)
   const [loginModal, setLoginModal] = useState(null)
   const [attendanceStudentFilter, setAttendanceStudentFilter] = useState('')
+  const [resultStudentFilter, setResultStudentFilter] = useState('')
 
   useEffect(() => {
     setAttendanceStudentFilter('')
+    setResultStudentFilter('')
     setLoading(true)
     api.get(`/batches/${batchId}/staff-detail-report/`)
       .then(res => setData(res.data))
@@ -831,6 +833,19 @@ export function StaffBatchDetails() {
   const filteredAttendanceRecords = attendanceStudentFilter
     ? attendanceRecords.filter(record => `${record.student_id || '-'}|${record.student_name || '-'}` === attendanceStudentFilter)
     : attendanceRecords
+  const quizResults = data?.quiz_results || []
+  const testResults = data?.test_results || []
+  const resultStudentOptions = Array.from(
+    new Map([...quizResults, ...testResults].map(result => {
+      const value = `${result.student_id || '-'}|${result.student_name || '-'}`
+      return [value, { value, label: `${result.student_name || '-'} (${result.student_id || '-'})` }]
+    })).values()
+  ).sort((a, b) => a.label.localeCompare(b.label))
+  const filterStudentResults = results => resultStudentFilter
+    ? results.filter(result => `${result.student_id || '-'}|${result.student_name || '-'}` === resultStudentFilter)
+    : results
+  const filteredQuizResults = filterStudentResults(quizResults)
+  const filteredTestResults = filterStudentResults(testResults)
 
   const loginDateKey = (value) => {
     const date = new Date(value)
@@ -955,6 +970,70 @@ export function StaffBatchDetails() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          </section>
+
+          <section style={{ marginBottom: 26 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 10, flexWrap: 'wrap' }}>
+              <h4 style={{ margin: 0, fontSize: 18, color: T.navy }}>Student Test & Quiz Results</h4>
+              <select
+                className="employee-input"
+                value={resultStudentFilter}
+                onChange={event => setResultStudentFilter(event.target.value)}
+                style={{ width: 240, height: 38, padding: '0 12px' }}
+              >
+                <option value="">All Students</option>
+                {resultStudentOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </div>
+
+            <div style={{ marginBottom: 18 }}>
+              <h5 style={{ margin: '0 0 8px', color: T.navy, fontSize: 15 }}>Technical Test Results</h5>
+              <div style={{ overflowX: 'auto', border: `1px solid ${T.border}`, borderRadius: 10 }}>
+                <table className="employee-table">
+                  <thead><tr><th>Student</th><th>Student ID</th><th>Test</th><th>Mark</th><th>Percentage</th><th>Status</th><th>Submitted</th></tr></thead>
+                  <tbody>
+                    {filteredTestResults.length === 0 ? (
+                      <tr><td colSpan="7" style={{ textAlign: 'center', color: T.slate }}>No technical test results found.</td></tr>
+                    ) : filteredTestResults.map(result => (
+                      <tr key={result.id}>
+                        <td>{result.student_name || '-'}</td>
+                        <td>{result.student_id || '-'}</td>
+                        <td>{result.test_title || '-'}</td>
+                        <td><strong>{result.mark ?? 0}</strong> / {result.max_marks ?? 0}</td>
+                        <td>{result.percentage || 0}%</td>
+                        <td><Badge text={result.evaluated ? 'Evaluated' : 'Pending Mark'} variant={result.evaluated ? 'success' : 'warning'} /></td>
+                        <td>{formatSimpleDate(result.submitted_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div>
+              <h5 style={{ margin: '0 0 8px', color: T.navy, fontSize: 15 }}>Quiz Results</h5>
+              <div style={{ overflowX: 'auto', border: `1px solid ${T.border}`, borderRadius: 10 }}>
+                <table className="employee-table">
+                  <thead><tr><th>Student</th><th>Student ID</th><th>Quiz</th><th>Attempt</th><th>Score</th><th>Percentage</th><th>Result</th><th>Submitted</th></tr></thead>
+                  <tbody>
+                    {filteredQuizResults.length === 0 ? (
+                      <tr><td colSpan="8" style={{ textAlign: 'center', color: T.slate }}>No quiz results found.</td></tr>
+                    ) : filteredQuizResults.map(result => (
+                      <tr key={result.id}>
+                        <td>{result.student_name || '-'}</td>
+                        <td>{result.student_id || '-'}</td>
+                        <td>{result.quiz_title || '-'}</td>
+                        <td>{result.attempt_number || 1}</td>
+                        <td><strong>{result.score || 0}</strong> / {result.total_marks || 0}</td>
+                        <td>{result.percentage || 0}%</td>
+                        <td><Badge text={result.is_passed ? 'Passed' : 'Not Passed'} variant={result.is_passed ? 'success' : 'danger'} /></td>
+                        <td>{formatSimpleDate(result.submitted_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </section>
 

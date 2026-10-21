@@ -9132,11 +9132,13 @@ def staff_batch_detail_report(request, batch_id):
     ).select_related('student', 'staff', 'session')
     staff_attendance_qs = attendance_qs.filter(staff=staff)
 
-    materials_qs = StudyMaterial.objects.filter(
+    batch_materials_qs = StudyMaterial.objects.filter(
         Q(batch=batch) | Q(assignments__batch=batch),
+    ).distinct().select_related('uploaded_by', 'batch')
+    materials_qs = batch_materials_qs.filter(
         uploaded_at__gte=start_dt,
         uploaded_at__lt=end_dt,
-    ).distinct().select_related('uploaded_by', 'batch')
+    )
     quizzes_qs = Quiz.objects.filter(
         batch=batch,
         created_at__gte=start_dt,
@@ -9316,6 +9318,17 @@ def staff_batch_detail_report(request, batch_id):
         for row in StudentBatchEnrollment.objects.filter(batch=batch, student_id__in=student_ids)
     }
 
+    quiz_results_qs = QuizAttempt.objects.filter(
+        student_id__in=student_ids,
+        quiz__batch=batch,
+        is_completed=True,
+    ).select_related('student', 'quiz').order_by('-submitted_at', '-id')
+    assigned_test_ids = AssignedTest.objects.filter(batch=batch).values_list('test_id', flat=True)
+    test_results_qs = TestResult.objects.filter(
+        student_id__in=student_ids,
+        test_id__in=assigned_test_ids,
+    ).select_related('student', 'test').order_by('-submitted_at', '-id')
+
     student_rows = []
     for student in batch_students_qs.order_by('first_name', 'last_name'):
         att = attendance_counts.get(student.id, {})
@@ -9419,7 +9432,7 @@ def staff_batch_detail_report(request, batch_id):
             'attendance_records': attendance_qs.count(),
             'quizzes_uploaded': quizzes_qs.count(),
             'tests_uploaded': tests_qs.values('test_id').distinct().count(),
-            'materials_uploaded': materials_qs.count(),
+            'materials_uploaded': batch_materials_qs.count(),
             'student_logins': student_login_qs.count(),
             'unique_student_logins': student_login_qs.values('student_id').distinct().count(),
             'staff_completed_sessions': len(staff_completed_session_ids),
@@ -9441,6 +9454,31 @@ def staff_batch_detail_report(request, batch_id):
             'session': f"Session {item.session.session_number}" if item.session else '',
             'remarks': item.remarks or '',
         } for item in attendance_qs.order_by('-date', 'student__first_name', 'student__last_name')[:250]],
+        'quiz_results': [{
+            'id': item.id,
+            'student_db_id': item.student_id,
+            'student_id': item.student.student_id if item.student else '',
+            'student_name': f"{item.student.first_name} {item.student.last_name or ''}".strip() if item.student else '',
+            'quiz_title': item.quiz.title if item.quiz else '',
+            'attempt_number': item.attempt_number,
+            'score': item.score or 0,
+            'total_marks': item.quiz.total_marks if item.quiz else 0,
+            'percentage': float(item.percentage or 0),
+            'is_passed': item.is_passed,
+            'submitted_at': item.submitted_at,
+        } for item in quiz_results_qs],
+        'test_results': [{
+            'id': item.id,
+            'student_db_id': item.student_id,
+            'student_id': item.student.student_id if item.student else '',
+            'student_name': f"{item.student.first_name} {item.student.last_name or ''}".strip() if item.student else '',
+            'test_title': item.test.title if item.test else '',
+            'mark': item.manual_mark if item.manual_mark is not None else item.score,
+            'max_marks': item.max_marks if item.max_marks is not None else item.total_questions,
+            'percentage': float(item.percentage or 0),
+            'evaluated': item.manual_mark is not None,
+            'submitted_at': item.submitted_at,
+        } for item in test_results_qs],
         'student_login_records': [{
             'id': item.id,
             'login_time': item.login_time,
