@@ -14,6 +14,8 @@ from .models import (
     Courses,
     DailySessionCompletion,
     Employee,
+    ReassignedStudentRecord,
+    StudyMaterial,
     StudentBatchEnrollment,
     StudentChallenge,
     StudentChallengeAchievement,
@@ -793,3 +795,42 @@ class StudentChallengePhaseOneTests(TestCase):
         self.assertEqual(allowed.status_code, 200)
         self.assertEqual(allowed.json()['created_count'], 5)
         self.assertNotIn('mock-key', str(allowed.json()))
+
+    def test_materials_are_limited_to_active_student_batches(self):
+        current_material = StudyMaterial.objects.create(
+            batch=self.batch,
+            uploaded_by=self.staff,
+            title='Current batch material',
+            file='materials/current.pdf',
+        )
+        old_material = StudyMaterial.objects.create(
+            batch=self.other_batch,
+            uploaded_by=self.staff,
+            title='Other batch material',
+            file='materials/other.pdf',
+        )
+        ReassignedStudentRecord.objects.create(
+            student=self.student,
+            previous_trainer=self.staff,
+            reassigned_trainer=self.staff,
+            source_batch=self.other_batch,
+            target_batch=self.batch,
+            student_name='Student One',
+            student_code='STU001',
+            course_name='Python',
+            source_batch_number='BAT002',
+            target_batch_number='BAT001',
+            previous_trainer_name='Mentor One',
+            reassigned_trainer_name='Mentor One',
+            reassigned_at=timezone.now(),
+        )
+        self.client.force_authenticate(user=self.student_user)
+
+        response = self.client.get('/api/materials/')
+
+        self.assertEqual(response.status_code, 200)
+        material_ids = {item['id'] for item in response.json()['results']}
+        self.assertIn(current_material.id, material_ids)
+        self.assertNotIn(old_material.id, material_ids)
+        denied = self.client.get(f'/api/materials/{old_material.id}/preview/')
+        self.assertEqual(denied.status_code, 403)

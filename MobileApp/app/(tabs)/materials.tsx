@@ -16,6 +16,11 @@ import { getFileType } from "@/utils/materialLibrary";
 
 const MATERIALS_CACHE_KEY = "iie_pulse_cached_materials";
 
+const getMaterialsCacheKey = async () => {
+  const studentPk = await AsyncStorage.getItem("student_pk");
+  return `${MATERIALS_CACHE_KEY}:${studentPk || "unknown"}`;
+};
+
 type MaterialItem = {
   id: number;
   title: string;
@@ -51,7 +56,8 @@ export default function MaterialsScreen() {
         file: item.file ? resolveMediaUrl(item.file, apiBaseUrl) : item.file,
       }));
       setMaterials(mappedItems);
-      await AsyncStorage.setItem(MATERIALS_CACHE_KEY, JSON.stringify(mappedItems));
+      const cacheKey = await getMaterialsCacheKey();
+      await AsyncStorage.setItem(cacheKey, JSON.stringify(mappedItems));
     } catch (error: any) {
       if (error?.response?.status === 401 || error?.response?.status === 403) {
         setMaterials([]);
@@ -59,7 +65,8 @@ export default function MaterialsScreen() {
         return;
       }
 
-      const cached = await AsyncStorage.getItem(MATERIALS_CACHE_KEY);
+      const cacheKey = await getMaterialsCacheKey();
+      const cached = await AsyncStorage.getItem(cacheKey);
       let cachedItems: MaterialItem[] = [];
       try {
         cachedItems = cached ? JSON.parse(cached) : [];

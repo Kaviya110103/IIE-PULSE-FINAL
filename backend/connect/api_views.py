@@ -4381,7 +4381,7 @@ class StudyMaterialListView(generics.ListAPIView):
         except Employee.DoesNotExist:
             try:
                 student = Students.objects.get(user=user)
-                student_batches_list = _student_accessible_batches(student)
+                student_batches_list = _student_enrolled_batches(student)
                 student_batch_ids = [batch.id for batch in student_batches_list if batch]
                 if student_batch_ids:
                     return qs.filter(
@@ -4610,7 +4610,7 @@ def download_material(request, pk):
     if student:
         student_batch_ids = {
             batch.id
-            for batch in _student_accessible_batches(student)
+            for batch in _student_enrolled_batches(student)
             if batch
         }
         material_batch_ids = set()
@@ -4851,7 +4851,7 @@ def _material_access_error(request, material):
 
     student_batch_ids = {
         batch.id
-        for batch in _student_accessible_batches(student)
+        for batch in _student_enrolled_batches(student)
         if batch
     }
     material_batch_ids = set()
