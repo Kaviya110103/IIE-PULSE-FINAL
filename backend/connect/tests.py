@@ -15,6 +15,8 @@ from .models import (
     DailySessionCompletion,
     Employee,
     ReassignedStudentRecord,
+    Quiz,
+    QuizQuestion,
     StudyMaterial,
     StudentBatchEnrollment,
     StudentChallenge,
@@ -834,3 +836,74 @@ class StudentChallengePhaseOneTests(TestCase):
         self.assertNotIn(old_material.id, material_ids)
         denied = self.client.get(f'/api/materials/{old_material.id}/preview/')
         self.assertEqual(denied.status_code, 403)
+
+    def test_admin_and_staff_quiz_management_are_separate(self):
+        admin_user = User.objects.create_superuser(
+            username='quiz-admin', email='quiz-admin@example.com', password='pass123'
+        )
+        admin_quiz = Quiz.objects.create(
+            title='Global quiz', quiz_scope='admin_global', audience='both', is_published=True
+        )
+        staff_quiz = Quiz.objects.create(
+            title='Batch quiz', quiz_scope='staff_batch', created_by=self.staff
+        )
+
+        self.client.force_authenticate(user=admin_user)
+        admin_titles = {item['title'] for item in self.client.get('/api/quiz/').json()['results']}
+        self.assertIn(admin_quiz.title, admin_titles)
+        self.assertNotIn(staff_quiz.title, admin_titles)
+
+        self.client.force_authenticate(user=self.staff_user)
+        staff_titles = {item['title'] for item in self.client.get('/api/quiz/').json()['results']}
+        self.assertIn(staff_quiz.title, staff_titles)
+        self.assertNotIn(admin_quiz.title, staff_titles)
+
+    def test_staff_quiz_can_be_assigned_to_multiple_batches(self):
+        quiz = Quiz.objects.create(
+            title='Multi batch quiz', quiz_scope='staff_batch', created_by=self.staff
+        )
+        QuizQuestion.objects.create(
+            quiz=quiz,
+            question_number=1,
+            question_text='What is Python?',
+            option_a='A language',
+            option_b='A database',
+            correct_answer='A',
+        )
+        self.client.force_authenticate(user=self.staff_user)
+
+        response = self.client.post(
+            f'/api/quiz/{quiz.id}/assign/',
+            {'batch_ids': [self.batch.id, self.other_batch.id]},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        quiz.refresh_from_db()
+        self.assertTrue(quiz.is_published)
+        self.assertSetEqual(
+            set(quiz.assigned_batches.values_list('id', flat=True)),
+            {self.batch.id, self.other_batch.id},
+        )
+
+    def test_student_sees_only_global_and_assigned_batch_quizzes(self):
+        global_quiz = Quiz.objects.create(
+            title='All students quiz', quiz_scope='admin_global', audience='students', is_published=True
+        )
+        assigned_quiz = Quiz.objects.create(
+            title='Assigned batch quiz', quiz_scope='staff_batch', created_by=self.staff, is_published=True
+        )
+        assigned_quiz.assigned_batches.add(self.batch)
+        hidden_quiz = Quiz.objects.create(
+            title='Other batch quiz', quiz_scope='staff_batch', created_by=self.staff, is_published=True
+        )
+        hidden_quiz.assigned_batches.add(self.other_batch)
+        self.client.force_authenticate(user=self.student_user)
+
+        response = self.client.get('/api/quiz/student/')
+
+        self.assertEqual(response.status_code, 200)
+        titles = {item['title'] for item in response.json()['results']}
+        self.assertIn(global_quiz.title, titles)
+        self.assertIn(assigned_quiz.title, titles)
+        self.assertNotIn(hidden_quiz.title, titles)

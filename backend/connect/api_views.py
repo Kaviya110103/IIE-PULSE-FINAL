@@ -1515,7 +1515,9 @@ class StudentDashboardView(APIView):
                 assigned_test_ids.update(mentor_test_ids)
             tests_count = len(assigned_test_ids)
             quizzes_count = Quiz.objects.filter(
-                batch=student.assigned_batch,
+                Q(quiz_scope='staff_batch', assigned_batches=student.assigned_batch) |
+                Q(quiz_scope='staff_batch', batch=student.assigned_batch) |
+                Q(quiz_scope='admin_global', audience__in=['students', 'both']),
                 is_published=True,
             ).distinct().count()
         else:
@@ -5693,33 +5695,27 @@ class QuizListView(generics.ListAPIView):
         _publish_due_quizzes()
         user = self.request.user
         
-        # Admin can see all quizzes
+        # Admin global quizzes and staff batch quizzes are separate workflows.
         if user.is_superuser or user.is_staff:
-            return Quiz.objects.all().order_by('-created_at')
+            return Quiz.objects.filter(quiz_scope='admin_global').prefetch_related('assigned_batches').order_by('-created_at')
         
         try:
             emp = Employee.objects.get(user=user)
-            active_batch_ids = Batches.objects.filter(
-                Q(faculty=emp) | Q(trainer_assignments__trainer=emp)
-            ).values_list('id', flat=True)
-            history_batch_ids = _reassignment_history_batches_for_trainer(emp).values_list('id', flat=True)
-            visible_batch_ids = set(list(active_batch_ids) + list(history_batch_ids))
             return Quiz.objects.filter(
-                Q(created_by=emp) |
-                Q(batch_id__in=visible_batch_ids)
-            ).distinct().order_by('-created_at')
+                created_by=emp,
+                quiz_scope='staff_batch',
+            ).prefetch_related('assigned_batches').distinct().order_by('-created_at')
             
         except Employee.DoesNotExist:
             try:
                 student = Students.objects.get(user=user)
-                if student.assigned_batch:
-                    # Students see published quizzes from their batch
-                    return Quiz.objects.filter(
-                        Q(batch=student.assigned_batch) |
-                        Q(batch__isnull=True, audience__in=['students', 'both']),
-                        is_published=True
-                    ).order_by('-created_at')
-                return Quiz.objects.none()
+                batch_ids = [batch.id for batch in _student_enrolled_batches(student)]
+                return Quiz.objects.filter(
+                    Q(quiz_scope='staff_batch', assigned_batches__id__in=batch_ids) |
+                    Q(quiz_scope='staff_batch', batch_id__in=batch_ids) |
+                    Q(quiz_scope='admin_global', audience__in=['students', 'both']),
+                    is_published=True,
+                ).distinct().order_by('-created_at')
             except Students.DoesNotExist:
                 return Quiz.objects.none()
 
@@ -5728,6 +5724,7 @@ class QuizListView(generics.ListAPIView):
 @permission_classes([IsAuthenticated])
 @parser_classes([MultiPartParser, FormParser, JSONParser])
 def upload_quiz(request):
+    is_admin_upload = request.user.is_superuser or request.user.is_staff
     try:
         emp = Employee.objects.get(user=request.user)
     except Employee.DoesNotExist:
@@ -5748,27 +5745,9 @@ def upload_quiz(request):
             raw_batch_ids.append(str(value).strip())
     raw_batch_ids = [value for idx, value in enumerate(raw_batch_ids) if value and value not in raw_batch_ids[:idx]]
 
-    target_batches = []
     requested_audience = str(request.data.get('audience') or '').strip().lower()
-    if requested_audience not in ('students', 'public_users', 'both'):
+    if not is_admin_upload or requested_audience not in ('students', 'public_users', 'both'):
         requested_audience = 'students'
-    is_practice_quiz = requested_audience == 'public_users' or any(value in ('practice', 'all', 'public', '0') for value in raw_batch_ids)
-    if is_practice_quiz:
-        target_batches = [None]
-    elif not raw_batch_ids:
-        target_batches = [None]
-    else:
-        try:
-            target_batches = list(Batches.objects.filter(id__in=raw_batch_ids))
-        except ValueError:
-            return Response({'error': 'Invalid batch selected'}, status=400)
-        if len(target_batches) != len(raw_batch_ids):
-            return Response({'error': 'One or more selected batches were not found'}, status=404)
-
-    if emp:
-        for batch in target_batches:
-            if batch and not (_is_batch_trainer(batch, emp) or _is_previous_trainer_for_batch(batch, emp)):
-                return Response({'error': 'You are not allowed to upload quizzes for one or more selected batches.'}, status=403)
 
     file = request.FILES.get('source_file')
     if not file:
@@ -5836,35 +5815,32 @@ def upload_quiz(request):
     if not questions:
         return Response({'error': 'No valid questions found in the uploaded file.'}, status=400)
 
-    created_quizzes = []
     with transaction.atomic():
-        for batch in target_batches:
-            file.seek(0)
-            quiz = Quiz.objects.create(
-                title=request.data.get('title', 'Quiz'),
-                description=request.data.get('description', ''),
-                batch=batch,
-                audience=requested_audience,
-                created_by=emp,
-                duration_minutes=int(request.data.get('duration_minutes', 30)),
-                passing_marks=int(request.data.get('passing_marks', 35)),
-                difficulty=request.data.get('difficulty', 'medium') or 'medium',
-                source_file=file,
-                total_questions=len(questions),
-                total_marks=sum(item['marks'] for item in questions),
-                is_published=bool(raw_batch_ids) or requested_audience in ('students', 'public_users', 'both'),
-                publish_date=timezone.now() if (raw_batch_ids or requested_audience in ('students', 'public_users', 'both')) else None,
-            )
-            QuizQuestion.objects.bulk_create([
-                QuizQuestion(quiz=quiz, **question)
-                for question in questions
-            ])
-            created_quizzes.append(quiz)
+        file.seek(0)
+        quiz = Quiz.objects.create(
+            title=request.data.get('title', 'Quiz'),
+            description=request.data.get('description', ''),
+            batch=None,
+            quiz_scope='admin_global' if is_admin_upload else 'staff_batch',
+            audience=requested_audience,
+            created_by=emp,
+            duration_minutes=int(request.data.get('duration_minutes', 30)),
+            passing_marks=int(request.data.get('passing_marks', 35)),
+            difficulty=request.data.get('difficulty', 'medium') or 'medium',
+            source_file=file,
+            total_questions=len(questions),
+            total_marks=sum(item['marks'] for item in questions),
+            is_published=False,
+        )
+        QuizQuestion.objects.bulk_create([
+            QuizQuestion(quiz=quiz, **question)
+            for question in questions
+        ])
 
     return Response({
-        'message': f'Quiz created for {len(created_quizzes)} batch(es)' if raw_batch_ids else 'Quiz uploaded. Assign it to batches from Manage Quizzes.',
-        'quiz_ids': [quiz.id for quiz in created_quizzes],
-        'quiz_id': created_quizzes[0].id,
+        'message': 'Quiz uploaded. Publish it from Manage Quizzes.' if is_admin_upload else 'Quiz uploaded. Assign it to batches from Manage Quizzes.',
+        'quiz_ids': [quiz.id],
+        'quiz_id': quiz.id,
         'questions': len(questions),
     }, status=201)
 
@@ -5887,6 +5863,8 @@ def assign_quiz_to_batches(request, quiz_id):
 
     if emp and quiz.created_by_id != emp.id:
         return Response({'error': 'You can assign only your uploaded quizzes.'}, status=403)
+    if quiz.quiz_scope != 'staff_batch' or emp is None:
+        return Response({'error': 'Only staff batch quizzes can be assigned to batches.'}, status=400)
 
     raw_batch_ids = []
     if hasattr(request.data, 'getlist'):
@@ -5916,68 +5894,20 @@ def assign_quiz_to_batches(request, quiz_id):
             if not (_is_batch_trainer(batch, emp) or _is_previous_trainer_for_batch(batch, emp)):
                 return Response({'error': 'You are not allowed to assign quizzes for one or more selected batches.'}, status=403)
 
-    questions = list(quiz.questions.all().order_by('question_number'))
-    if not questions:
+    if not quiz.questions.exists():
         return Response({'error': 'Cannot assign a quiz without questions.'}, status=400)
 
-    assigned_quizzes = []
     with transaction.atomic():
-        for batch in batches:
-            existing = Quiz.objects.filter(
-                title=quiz.title,
-                created_by=quiz.created_by,
-                batch=batch,
-            ).first()
-            if existing:
-                existing.is_published = True
-                existing.publish_date = existing.publish_date or timezone.now()
-                existing.save(update_fields=['is_published', 'publish_date', 'updated_at'])
-                assigned_quizzes.append(existing)
-                continue
-
-            target_quiz = Quiz.objects.create(
-                title=quiz.title,
-                description=quiz.description,
-                batch=batch,
-                created_by=quiz.created_by,
-                source_file=quiz.source_file,
-                total_questions=quiz.total_questions,
-                total_marks=quiz.total_marks,
-                passing_marks=quiz.passing_marks,
-                duration_minutes=quiz.duration_minutes,
-                difficulty=quiz.difficulty,
-                category=quiz.category,
-                start_date=quiz.start_date,
-                end_date=quiz.end_date,
-                shuffle_questions=quiz.shuffle_questions,
-                shuffle_options=quiz.shuffle_options,
-                number_of_questions=quiz.number_of_questions,
-                is_published=True,
-                publish_date=timezone.now(),
-                deadline=quiz.deadline,
-                allow_retake=quiz.allow_retake,
-                max_attempts=quiz.max_attempts,
-            )
-            QuizQuestion.objects.bulk_create([
-                QuizQuestion(
-                    quiz=target_quiz,
-                    question_number=question.question_number,
-                    question_text=question.question_text,
-                    option_a=question.option_a,
-                    option_b=question.option_b,
-                    option_c=question.option_c,
-                    option_d=question.option_d,
-                    correct_answer=question.correct_answer,
-                    explanation=question.explanation,
-                    marks=question.marks,
-                )
-                for question in questions
-            ])
-            assigned_quizzes.append(target_quiz)
+        quiz.assigned_batches.set(batches)
+        quiz.is_published = True
+        quiz.publish_date = timezone.now()
+        quiz.scheduled_publish_at = None
+        quiz.save(update_fields=['is_published', 'publish_date', 'scheduled_publish_at', 'updated_at'])
 
     return Response({
-        'message': f'Quiz assigned to {len(assigned_quizzes)} batch(es).',
-        'quiz_ids': [item.id for item in assigned_quizzes],
+        'message': f'Quiz assigned to {len(batches)} batch(es).',
+        'quiz_ids': [quiz.id],
+        'assigned_batches': [batch.id for batch in batches],
     })
 
 
@@ -5989,6 +5919,20 @@ def take_quiz(request, quiz_id):
         quiz = Quiz.objects.get(id=quiz_id)
     except (Students.DoesNotExist, Quiz.DoesNotExist):
         return Response({'error': 'Not found'}, status=404)
+    student_batch_ids = [batch.id for batch in _student_accessible_batches(student)]
+    has_access = (
+        quiz.is_published and (
+            (quiz.quiz_scope == 'admin_global' and quiz.audience in ('students', 'both')) or
+            (
+                quiz.quiz_scope == 'staff_batch' and (
+                    quiz.batch_id in student_batch_ids or
+                    quiz.assigned_batches.filter(id__in=student_batch_ids).exists()
+                )
+            )
+        )
+    )
+    if not has_access:
+        return Response({'error': 'This quiz is not assigned to your batch'}, status=403)
     existing_count = QuizAttempt.objects.filter(student=student, quiz=quiz).count()
     if not quiz.allow_retake and existing_count >= quiz.max_attempts:
         return Response({'error': 'Max attempts reached'}, status=400)
@@ -6028,6 +5972,8 @@ def quiz_result(request, attempt_id):
 def toggle_quiz_publish(request, quiz_id):
     try:
         quiz = Quiz.objects.get(id=quiz_id)
+        if quiz.quiz_scope != 'admin_global':
+            return Response({'error': 'Staff quizzes are published by assigning batches.'}, status=400)
         if not (request.user.is_superuser or request.user.is_staff):
             try:
                 emp = Employee.objects.get(user=request.user)
@@ -6132,7 +6078,7 @@ def practice_quizzes(request):
         except Students.DoesNotExist:
             pass
     quizzes = Quiz.objects.filter(
-        batch__isnull=True,
+        quiz_scope='admin_global',
         audience__in=audiences,
         is_published=True,
     ).order_by('-created_at')
@@ -6557,8 +6503,11 @@ def admin_public_user_status(request, pk):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def staff_quiz_results(request):
-    attempts = QuizAttempt.objects.filter(is_completed=True, quiz__batch__isnull=False)
     include_public_results = is_admin_user(request.user) or request.user.is_superuser or request.user.is_staff
+    attempts = QuizAttempt.objects.filter(
+        is_completed=True,
+        quiz__quiz_scope='admin_global' if include_public_results else 'staff_batch',
+    )
 
     if include_public_results:
         attempts = attempts
@@ -6572,6 +6521,7 @@ def staff_quiz_results(request):
             visible_batch_ids = set(list(active_batch_ids) + list(history_batch_ids))
             attempts = attempts.filter(
                 Q(quiz__created_by=emp) |
+                Q(quiz__assigned_batches__id__in=visible_batch_ids) |
                 Q(quiz__batch_id__in=visible_batch_ids)
             ).distinct()
         except Employee.DoesNotExist:
@@ -6579,13 +6529,15 @@ def staff_quiz_results(request):
 
     batch_id = request.query_params.get('batch_id') or request.query_params.get('batch')
     if batch_id:
-        attempts = attempts.filter(quiz__batch_id=batch_id)
+        attempts = attempts.filter(
+            Q(quiz__assigned_batches__id=batch_id) | Q(quiz__batch_id=batch_id)
+        ).distinct()
 
     attempts = attempts.select_related('student', 'quiz', 'quiz__batch').order_by('-submitted_at')
 
     data = []
     for attempt in attempts:
-        batch = attempt.quiz.batch
+        batch = attempt.quiz.batch or attempt.quiz.assigned_batches.first()
         data.append({
             'id': attempt.id,
             'student_name': f"{attempt.student.first_name} {attempt.student.last_name or ''}".strip(),
@@ -6606,7 +6558,10 @@ def staff_quiz_results(request):
     public_data = []
 
     if include_public_results and not batch_id:
-        public_results = PublicPracticeResult.objects.select_related('public_user').order_by('-completed_at')
+        admin_quiz_ids = Quiz.objects.filter(quiz_scope='admin_global').values_list('id', flat=True)
+        public_results = PublicPracticeResult.objects.filter(
+            quiz_id__in=admin_quiz_ids,
+        ).select_related('public_user').order_by('-completed_at')
         quiz_ids = [result.quiz_id for result in public_results if result.quiz_id]
         quiz_map = {quiz.id: quiz for quiz in Quiz.objects.filter(id__in=quiz_ids)}
         result_usernames = [result.username for result in public_results if result.username]
@@ -7943,9 +7898,11 @@ def _student_detail_payload(student):
     test_qs = list(TestResult.objects.filter(student=student).select_related('test').order_by('-submitted_at'))
     quiz_qs = list(QuizAttempt.objects.filter(student=student).select_related('quiz').order_by('-submitted_at'))
     assigned_quiz_qs = Quiz.objects.filter(
-        batch=student.assigned_batch,
+        Q(quiz_scope='staff_batch', assigned_batches=student.assigned_batch) |
+        Q(quiz_scope='staff_batch', batch=student.assigned_batch) |
+        Q(quiz_scope='admin_global', audience__in=['students', 'both']),
         is_published=True
-    ).prefetch_related('questions').order_by('-created_at') if student.assigned_batch_id else Quiz.objects.none()
+    ).distinct().prefetch_related('questions').order_by('-created_at') if student.assigned_batch_id else Quiz.objects.none()
     leave_qs = list(StudentLeaveApplication.objects.filter(student=student).order_by('-applied_at'))
     progress_qs = Student_Session_Progress.objects.filter(student=student)
     total_sessions = progress_qs.count()
@@ -8601,7 +8558,11 @@ def quiz_staff_results_view(request):
     try:
         emp = Employee.objects.get(user=request.user)
         batches = Batches.objects.filter(faculty=emp)
-        attempts = QuizAttempt.objects.filter(quiz__batch__in=batches, is_completed=True).order_by('-submitted_at')
+        attempts = QuizAttempt.objects.filter(
+            Q(quiz__assigned_batches__in=batches) | Q(quiz__batch__in=batches),
+            quiz__quiz_scope='staff_batch',
+            is_completed=True,
+        ).distinct().order_by('-submitted_at')
         return Response(QuizAttemptSerializer(attempts, many=True).data)
     except Employee.DoesNotExist:
         return Response([])
@@ -9158,10 +9119,11 @@ def staff_batch_detail_report(request, batch_id):
         uploaded_at__lt=end_dt,
     )
     quizzes_qs = Quiz.objects.filter(
-        batch=batch,
+        Q(assigned_batches=batch) | Q(batch=batch),
+        quiz_scope='staff_batch',
         created_at__gte=start_dt,
         created_at__lt=end_dt,
-    ).select_related('created_by')
+    ).distinct().select_related('created_by')
     tests_qs = AssignedTest.objects.filter(
         batch=batch,
         assigned_date__gte=start_dt,
@@ -9339,9 +9301,11 @@ def staff_batch_detail_report(request, batch_id):
 
     quiz_results_qs = QuizAttempt.objects.filter(
         student_id__in=student_ids,
-        quiz__batch=batch,
+        quiz__quiz_scope='staff_batch',
         is_completed=True,
-    ).select_related('student', 'quiz').order_by('-submitted_at', '-id')
+    ).filter(
+        Q(quiz__assigned_batches=batch) | Q(quiz__batch=batch),
+    ).distinct().select_related('student', 'quiz').order_by('-submitted_at', '-id')
     assigned_test_ids = AssignedTest.objects.filter(batch=batch).values_list('test_id', flat=True)
     test_results_qs = TestResult.objects.filter(
         student_id__in=student_ids,
@@ -9806,7 +9770,11 @@ def _tracking_staff_summary(staff):
     materials_assigned = material_assignments.count()
     material_batch_count = material_assignments.values('batch_id').distinct().count()
     quizzes_created = Quiz.objects.filter(created_by=staff).count()
-    quiz_attempts = QuizAttempt.objects.filter(quiz__batch__in=batches, is_completed=True).count()
+    quiz_attempts = QuizAttempt.objects.filter(
+        Q(quiz__assigned_batches__in=batches) | Q(quiz__batch__in=batches),
+        quiz__quiz_scope='staff_batch',
+        is_completed=True,
+    ).distinct().count()
     completed_students = completed_students_for_staff(staff).count()
 
     def percent_of_target(value, target):
@@ -10125,7 +10093,11 @@ def admin_employee_tracking(request):
             )
             batch_uploaded_materials = StudyMaterial.objects.filter(id__in=batch_material_ids)
             batch_tests = AssignedTest.objects.filter(batch=batch, test__created_by=staff)
-            batch_quizzes = Quiz.objects.filter(batch=batch, created_by=staff)
+            batch_quizzes = Quiz.objects.filter(
+                Q(assigned_batches=batch) | Q(batch=batch),
+                created_by=staff,
+                quiz_scope='staff_batch',
+            ).distinct()
 
             batch_student_rows = []
             for student in batch_students:
@@ -10538,7 +10510,11 @@ def admin_employee_tracking_pdf(request):
         material_count = StudyMaterial.objects.filter(id__in=set(list(direct_material_ids) + list(assigned_material_ids))).count()
         batch_attendance_total = StudentAttendance.objects.filter(staff=staff, batch=batch).count()
         batch_attendance_present = StudentAttendance.objects.filter(staff=staff, batch=batch, status__iexact='Present').count()
-        quiz_count = Quiz.objects.filter(created_by=staff, batch=batch).count()
+        quiz_count = Quiz.objects.filter(
+            Q(assigned_batches=batch) | Q(batch=batch),
+            created_by=staff,
+            quiz_scope='staff_batch',
+        ).distinct().count()
         student_rows = []
         for student in batch_students.order_by('first_name', 'last_name'):
             student_att_qs = StudentAttendance.objects.filter(staff=staff, batch=batch, student=student)
@@ -11748,10 +11724,11 @@ def student_quizzes(request):
             return Response({'results': []})
         
         quizzes = Quiz.objects.filter(
-            Q(batch__in=student_batches_list) |
-            Q(batch__isnull=True, audience__in=['students', 'both']),
+            Q(quiz_scope='staff_batch', assigned_batches__in=student_batches_list) |
+            Q(quiz_scope='staff_batch', batch__in=student_batches_list) |
+            Q(quiz_scope='admin_global', audience__in=['students', 'both']),
             is_published=True
-        ).select_related('batch', 'batch__course_name').distinct().order_by('-created_at')
+        ).select_related('batch', 'batch__course_name').prefetch_related('assigned_batches').distinct().order_by('-created_at')
         
         data = []
         for quiz in quizzes:
@@ -11793,8 +11770,8 @@ def student_quizzes(request):
                 'status': 'completed' if is_completed else 'available',
                 'last_attempt_id': best_score.id if best_score else None,
                 'completed_at': best_score.submitted_at if best_score else None,
-                'batch_id': quiz.batch_id,
-                'batch_number': quiz.batch.batch_number if quiz.batch else '',
+                'batch_id': quiz.batch_id or next((batch.id for batch in quiz.assigned_batches.all() if batch.id in {item.id for item in student_batches_list}), None),
+                'batch_number': quiz.batch.batch_number if quiz.batch else ', '.join(batch.batch_number for batch in quiz.assigned_batches.all()),
                 'course_name': quiz.batch.course_name.course_name if quiz.batch and quiz.batch.course_name else '',
                 'questions': questions_data
             })
@@ -11812,9 +11789,15 @@ def student_take_quiz(request, quiz_id):
         quiz = Quiz.objects.get(id=quiz_id, is_published=True)
         
         assigned_batch_ids = [batch.id for batch in _student_accessible_batches(student)]
-        assigned_to_batch = bool(quiz.batch_id in assigned_batch_ids)
+        assigned_to_batch = (
+            quiz.quiz_scope == 'staff_batch' and (
+                quiz.batch_id in assigned_batch_ids or
+                quiz.assigned_batches.filter(id__in=assigned_batch_ids).exists()
+            )
+        )
+        assigned_globally = quiz.quiz_scope == 'admin_global' and quiz.audience in ('students', 'both')
 
-        if not assigned_to_batch and not (quiz.batch_id is None and quiz.audience in ('students', 'both')):
+        if not assigned_to_batch and not assigned_globally:
             return Response({'error': 'This quiz is not assigned to your batch'}, status=400)
         
         # Student quizzes are one-time only in the mobile app.

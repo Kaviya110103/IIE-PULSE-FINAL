@@ -5750,6 +5750,7 @@ export function AddQuestions() {
 export function UploadQuiz() {
   const navigate = useNavigate()
   const location = useLocation()
+  const isAdminQuiz = location.pathname.startsWith('/admin')
   const [form, setForm] = useState({ title: '', description: '', duration_minutes: 30, passing_marks: 35, difficulty: 'medium', audience: 'students' })
   const [file, setFile] = useState(null)
   const [saving, setSaving] = useState(false)
@@ -5762,7 +5763,8 @@ export function UploadQuiz() {
       const fd = new FormData()
       fd.append('title', form.title); fd.append('description', form.description)
       fd.append('duration_minutes', form.duration_minutes); fd.append('passing_marks', form.passing_marks); fd.append('difficulty', form.difficulty)
-      fd.append('audience', form.audience)
+      fd.append('audience', isAdminQuiz ? form.audience : 'students')
+      fd.append('quiz_scope', isAdminQuiz ? 'admin_global' : 'staff_batch')
       fd.append('source_file', file)
       const res = await api.post('/quiz/upload/', fd)
       toast.success(res.data?.message || 'Quiz uploaded successfully!')
@@ -5776,13 +5778,13 @@ export function UploadQuiz() {
   return (
     <div className="employee-root">
       <Styles />
-      <PH title="Upload Quiz" sub="Upload quiz from Excel/CSV file, then assign it from Manage Quizzes" />
+      <PH title="Upload Quiz" sub={isAdminQuiz ? 'Upload a global quiz for students and public users' : 'Upload first, then assign this quiz to one or more batches'} />
       <div className="employee-card" style={{ maxWidth: 700 }}>
         <div className="employee-card-body" style={{ padding: 22 }}>
           <form onSubmit={handleSubmit}>
             <div className="employee-fg"><label className="employee-label">Quiz Title *</label><input className="employee-input" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} required /></div>
             <div className="employee-fg"><label className="employee-label">Description</label><textarea className="employee-input" rows={2} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></div>
-            <div className="employee-fg"><label className="employee-label">Quiz Audience *</label>
+            {isAdminQuiz && <div className="employee-fg"><label className="employee-label">Quiz Audience *</label>
               <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', marginTop: 8 }}>
                 {[['students', 'All Students'], ['public_users', 'Public Users']].map(([value, label]) => (
                   <label key={value} style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
@@ -5800,7 +5802,7 @@ export function UploadQuiz() {
                   </label>
                 ))}
               </div>
-            </div>
+            </div>}
             <div className="employee-row-grid-2">
               <div className="employee-fg"><label className="employee-label">Duration (minutes)</label><input type="number" className="employee-input" value={form.duration_minutes} onChange={e => setForm({ ...form, duration_minutes: parseInt(e.target.value) })} /></div>
               <div className="employee-fg"><label className="employee-label">Passing Marks (%)</label><input type="number" className="employee-input" value={form.passing_marks} onChange={e => setForm({ ...form, passing_marks: parseInt(e.target.value) })} /></div>
@@ -5817,14 +5819,25 @@ export function UploadQuiz() {
 }
 
 export function ManageQuizzes() {
+  const location = useLocation()
+  const isAdminQuiz = location.pathname.startsWith('/admin')
   const [quizzes, setQuizzes] = useState([])
+  const [batches, setBatches] = useState([])
+  const [assignQuiz, setAssignQuiz] = useState(null)
+  const [selectedBatchIds, setSelectedBatchIds] = useState([])
+  const [assigning, setAssigning] = useState(false)
   const [loading, setLoading] = useState(true)
   const [publishQuiz, setPublishQuiz] = useState(null)
   const [detailQuiz, setDetailQuiz] = useState(null)
   const [scheduleAt, setScheduleAt] = useState('')
   const [quizSearch, setQuizSearch] = useState('')
 
-  useEffect(() => { loadQuizzes() }, [])
+  useEffect(() => {
+    loadQuizzes()
+    if (!isAdminQuiz) {
+      api.get('/batches/').then(response => setBatches(response.data.results || response.data || [])).catch(() => setBatches([]))
+    }
+  }, [isAdminQuiz])
 
   const loadQuizzes = async () => {
     try {
@@ -5875,6 +5888,32 @@ export function ManageQuizzes() {
     }
   }
 
+  const openBatchAssignment = (quiz) => {
+    setAssignQuiz(quiz)
+    setSelectedBatchIds((quiz.assigned_batch_details || []).map(batch => String(batch.id)))
+  }
+
+  const toggleBatchSelection = (batchId) => {
+    const value = String(batchId)
+    setSelectedBatchIds(current => current.includes(value) ? current.filter(id => id !== value) : [...current, value])
+  }
+
+  const saveBatchAssignment = async () => {
+    if (!selectedBatchIds.length) return toast.error('Select at least one batch')
+    setAssigning(true)
+    try {
+      await api.post(`/quiz/${assignQuiz.id}/assign/`, { batch_ids: selectedBatchIds })
+      toast.success('Quiz assigned to selected batches')
+      setAssignQuiz(null)
+      setSelectedBatchIds([])
+      await loadQuizzes()
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Quiz assignment failed')
+    } finally {
+      setAssigning(false)
+    }
+  }
+
   const filteredQuizzes = quizzes.filter(quiz => {
     const text = [
       quiz.title,
@@ -5895,9 +5934,9 @@ export function ManageQuizzes() {
       <Styles />
       <PH
         title="Manage Quizzes"
-        sub="View, publish, and manage your uploaded quizzes"
+        sub={isAdminQuiz ? 'Publish global quizzes for students and public users' : 'Assign your uploaded quizzes to one or more batches'}
         btn={
-          <button className="employee-btn employee-btn-primary" onClick={() => window.location.href = '/employee/quiz/upload'}>
+          <button className="employee-btn employee-btn-primary" onClick={() => window.location.href = isAdminQuiz ? '/admin/quiz/upload' : '/employee/quiz/upload'}>
             <i className="fas fa-upload" /> Upload Quiz
           </button>
         }
@@ -5938,27 +5977,32 @@ export function ManageQuizzes() {
                     <td>{quiz.duration_minutes} min</td>
                     <td>
                       <Badge
-                        text={quiz.is_published ? 'Published' : 'Draft'}
+                        text={isAdminQuiz ? (quiz.is_published ? 'Published' : 'Draft') : ((quiz.assigned_batch_details || []).length ? `Assigned (${quiz.assigned_batch_details.length})` : 'Not Assigned')}
                         variant={quiz.is_published ? 'success' : 'warning'}
                       />
                     </td>
                     <td>
                       <div style={{ display: 'flex', gap: 8 }}>
-                        <button
+                        {isAdminQuiz ? <button
                           className="employee-btn employee-btn-sm employee-btn-ghost"
                           onClick={() => setDetailQuiz(quiz)}
                           title="View complete quiz details"
                         >
                           <i className="fas fa-eye" /> View
-                        </button>
-                        <button
+                        </button> : <button
+                          className="employee-btn employee-btn-sm employee-btn-primary"
+                          onClick={() => openBatchAssignment(quiz)}
+                        >
+                          <i className="fas fa-layer-group" /> Assign Batches
+                        </button>}
+                        {isAdminQuiz && <button
                           className={`employee-btn employee-btn-sm ${quiz.is_published ? 'employee-btn-warning' : 'employee-btn-teal'}`}
                           style={{ background: quiz.is_published ? T.amber : T.teal, color: '#fff' }}
                           onClick={() => togglePublish(quiz)}
                         >
                           <i className={`fas ${quiz.is_published ? 'fa-eye-slash' : 'fa-eye'}`} />
                           {quiz.is_published ? 'Unpublish' : 'Publish'}
-                        </button>
+                        </button>}
                         <button
                           className="employee-btn employee-btn-sm employee-btn-danger"
                           onClick={() => deleteQuiz(quiz.id)}
@@ -5975,7 +6019,7 @@ export function ManageQuizzes() {
         )}
       </div>
 
-      {publishQuiz && (
+      {isAdminQuiz && publishQuiz && (
         <Modal open onClose={() => setPublishQuiz(null)} title="Publish Quiz" size="sm">
           <div className="employee-hint" style={{ marginBottom: 16 }}>
             Audience: <strong>{publishQuiz.audience === 'both' ? 'Students and Public Users' : publishQuiz.audience === 'public_users' ? 'Public Users' : 'All Students'}</strong>
@@ -5991,12 +6035,39 @@ export function ManageQuizzes() {
         </Modal>
       )}
 
+      {!isAdminQuiz && assignQuiz && (
+        <Modal open onClose={() => setAssignQuiz(null)} title="Assign Quiz to Batches" size="md">
+          <div className="employee-hint" style={{ marginBottom: 14 }}>
+            <strong>{assignQuiz.title}</strong> can be assigned to multiple batches.
+          </div>
+          <div style={{ display: 'grid', gap: 10, maxHeight: 360, overflowY: 'auto' }}>
+            {batches.map(batch => {
+              const batchId = String(batch.id)
+              const checked = selectedBatchIds.includes(batchId)
+              return (
+                <label key={batch.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 12, border: `1px solid ${checked ? T.amber : T.border}`, borderRadius: 8, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={checked} onChange={() => toggleBatchSelection(batch.id)} />
+                  <span style={{ fontWeight: 700 }}>{batch.batch_code || batch.batch_number}</span>
+                  <span className="employee-hint">{batch.course_name_display || ''}</span>
+                </label>
+              )
+            })}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
+            <button className="employee-btn employee-btn-ghost" onClick={() => setAssignQuiz(null)}>Cancel</button>
+            <button className="employee-btn employee-btn-primary" onClick={saveBatchAssignment} disabled={assigning || !selectedBatchIds.length}>
+              {assigning ? 'Assigning...' : `Assign to ${selectedBatchIds.length} Batch${selectedBatchIds.length === 1 ? '' : 'es'}`}
+            </button>
+          </div>
+        </Modal>
+      )}
+
       <Modal open={!!detailQuiz} onClose={() => setDetailQuiz(null)} title="Quiz Details" size="xl">
         {detailQuiz && (
           <div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 18 }}>
               <div className="employee-card" style={{ boxShadow: 'none', padding: 14 }}><strong>Title</strong><div>{detailQuiz.title}</div></div>
-              <div className="employee-card" style={{ boxShadow: 'none', padding: 14 }}><strong>Batch</strong><div>{detailQuiz.batch_number || 'Not assigned'}</div></div>
+              <div className="employee-card" style={{ boxShadow: 'none', padding: 14 }}><strong>{isAdminQuiz ? 'Audience' : 'Batches'}</strong><div>{isAdminQuiz ? (detailQuiz.audience === 'both' ? 'Students and Public Users' : detailQuiz.audience === 'public_users' ? 'Public Users' : 'All Students') : ((detailQuiz.assigned_batch_details || []).map(batch => batch.display_name).join(', ') || 'Not assigned')}</div></div>
               <div className="employee-card" style={{ boxShadow: 'none', padding: 14 }}><strong>Questions</strong><div>{detailQuiz.total_questions || 0}</div></div>
               <div className="employee-card" style={{ boxShadow: 'none', padding: 14 }}><strong>Marks</strong><div>{detailQuiz.total_marks || 0}</div></div>
               <div className="employee-card" style={{ boxShadow: 'none', padding: 14 }}><strong>Duration</strong><div>{detailQuiz.duration_minutes || 0} min</div></div>

@@ -1388,6 +1388,10 @@ import uuid
 
 class Quiz ( models.Model ) :
     """Quiz created from uploaded file"""
+    SCOPE_CHOICES = [
+        ('admin_global', 'Admin Global Quiz'),
+        ('staff_batch', 'Staff Batch Quiz'),
+    ]
     AUDIENCE_CHOICES = [
         ('students', 'All Students'),
         ('public_users', 'Public Users'),
@@ -1403,6 +1407,13 @@ class Quiz ( models.Model ) :
     title = models.CharField ( max_length = 200 )
     description = models.TextField ( blank = True )
     batch = models.ForeignKey ( Batches , on_delete = models.CASCADE , related_name = 'quizzes' , blank = True , null = True )
+    assigned_batches = models.ManyToManyField(
+        Batches,
+        related_name='assigned_quizzes',
+        blank=True,
+        db_constraint=False,
+    )
+    quiz_scope = models.CharField(max_length=20, choices=SCOPE_CHOICES, default='staff_batch')
     audience = models.CharField(max_length=20, choices=AUDIENCE_CHOICES, default='students')
     created_by = models.ForeignKey ( Employee , on_delete = models.SET_NULL , null = True )
     source_file = models.FileField ( upload_to = 'quiz_files/' , blank = True , null = True )
