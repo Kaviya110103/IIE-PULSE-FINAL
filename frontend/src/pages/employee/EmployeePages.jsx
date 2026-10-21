@@ -854,7 +854,7 @@ export function StaffBatchDetails() {
       title={`${isStudentExpanded(section, group.key) ? 'Hide' : 'View'} details`}
       style={{ width: 34, height: 34, padding: 0, display: 'inline-grid', placeItems: 'center' }}
     >
-      <i className={`fas fa-chevron-${isStudentExpanded(section, group.key) ? 'up' : 'down'}`} />
+      <i className={`fas fa-chevron-${isStudentExpanded(section, group.key) ? 'down' : 'right'}`} />
     </button>
   )
 
