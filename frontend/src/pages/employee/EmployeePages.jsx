@@ -1,5 +1,5 @@
 
-import { useState, useEffect, useCallback } from 'react'
+import { Fragment, useState, useEffect, useCallback } from 'react'
 import api from '../../api/client'
 import toast from 'react-hot-toast'
 import { useNavigate, useLocation, useParams, Link } from 'react-router-dom' // ← ADD THIS
@@ -800,10 +800,10 @@ export function StaffBatchDetails() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [loginModal, setLoginModal] = useState(null)
-  const [attendanceStudentFilter, setAttendanceStudentFilter] = useState('')
+  const [expandedStudents, setExpandedStudents] = useState({})
 
   useEffect(() => {
-    setAttendanceStudentFilter('')
+    setExpandedStudents({})
     setLoading(true)
     api.get(`/batches/${batchId}/staff-detail-report/`)
       .then(res => setData(res.data))
@@ -819,18 +819,45 @@ export function StaffBatchDetails() {
     .join(', ')
 
   const attendanceRecords = data?.attendance_records || []
-  const attendanceStudentOptions = Array.from(
-    new Map(attendanceRecords.map(record => {
-      const value = `${record.student_id || '-'}|${record.student_name || '-'}`
-      return [value, {
-        value,
-        label: `${record.student_name || '-'} (${record.student_id || '-'})`,
-      }]
-    })).values()
-  ).sort((a, b) => a.label.localeCompare(b.label))
-  const filteredAttendanceRecords = attendanceStudentFilter
-    ? attendanceRecords.filter(record => `${record.student_id || '-'}|${record.student_name || '-'}` === attendanceStudentFilter)
-    : attendanceRecords
+  const quizResults = data?.quiz_results || []
+  const testResults = data?.test_results || []
+  const groupStudentRecords = records => {
+    const grouped = new Map()
+    records.forEach(record => {
+      const key = `${record.student_id || '-'}|${record.student_name || '-'}`
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          key,
+          student_id: record.student_id || '-',
+          student_name: record.student_name || '-',
+          batch_status: record.batch_status || 'active',
+          records: [],
+        })
+      }
+      grouped.get(key).records.push(record)
+    })
+    return Array.from(grouped.values()).sort((a, b) => a.student_name.localeCompare(b.student_name))
+  }
+  const attendanceGroups = groupStudentRecords(attendanceRecords)
+  const testGroups = groupStudentRecords(testResults)
+  const quizGroups = groupStudentRecords(quizResults)
+  const toggleStudent = (section, studentKey) => {
+    const key = `${section}:${studentKey}`
+    setExpandedStudents(previous => ({ ...previous, [key]: !previous[key] }))
+  }
+  const isStudentExpanded = (section, studentKey) => Boolean(expandedStudents[`${section}:${studentKey}`])
+  const expandButton = (section, group, label) => (
+    <button
+      type="button"
+      className="employee-btn employee-btn-sm employee-btn-ghost"
+      onClick={() => toggleStudent(section, group.key)}
+      aria-label={`${isStudentExpanded(section, group.key) ? 'Hide' : 'View'} ${label} for ${group.student_name}`}
+      title={`${isStudentExpanded(section, group.key) ? 'Hide' : 'View'} details`}
+      style={{ width: 34, height: 34, padding: 0, display: 'inline-grid', placeItems: 'center' }}
+    >
+      <i className={`fas fa-chevron-${isStudentExpanded(section, group.key) ? 'down' : 'right'}`} />
+    </button>
+  )
 
   const loginDateKey = (value) => {
     const date = new Date(value)
@@ -923,38 +950,157 @@ export function StaffBatchDetails() {
           <section style={{ marginBottom: 26 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 10, flexWrap: 'wrap' }}>
               <h4 style={{ margin: 0, fontSize: 18, color: T.navy }}>Student Attendance Details</h4>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                <select
-                  className="employee-input"
-                  value={attendanceStudentFilter}
-                  onChange={event => setAttendanceStudentFilter(event.target.value)}
-                  style={{ width: 240, height: 38, padding: '0 12px' }}
-                >
-                  <option value="">All Students</option>
-                  {attendanceStudentOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
-                <span style={{ color: T.slate, fontSize: 13 }}>Last 30 days | {filteredAttendanceRecords.length}/{attendanceRecords.length} records</span>
-              </div>
+              <span style={{ color: T.slate, fontSize: 13 }}>Full batch history | {attendanceGroups.length} students</span>
             </div>
             <div style={{ overflowX: 'auto', border: `1px solid ${T.border}`, borderRadius: 10 }}>
               <table className="employee-table">
-                <thead><tr><th>Date</th><th>Student</th><th>Student ID</th><th>Status</th><th>Session</th><th>Marked By</th><th>Remarks</th></tr></thead>
+                <thead><tr><th aria-label="Expand details" /><th>Student</th><th>Student ID</th><th>Status</th><th>Total Days</th><th>Present</th><th>Absent</th><th>Attendance</th></tr></thead>
                 <tbody>
-                  {filteredAttendanceRecords.length === 0 ? (
-                    <tr><td colSpan="7" style={{ textAlign: 'center', color: T.slate }}>No attendance records for the selected student in the last 30 days.</td></tr>
-                  ) : filteredAttendanceRecords.map(record => (
-                    <tr key={record.id}>
-                      <td>{formatSimpleDate(record.date)}</td>
-                      <td>{record.student_name || '-'}</td>
-                      <td>{record.student_id || '-'}</td>
-                      <td><Badge text={record.status || '-'} variant={record.status === 'Present' ? 'success' : 'danger'} /></td>
-                      <td>{record.session || '-'}</td>
-                      <td>{record.marked_by || '-'}</td>
-                      <td>{record.remarks || '-'}</td>
-                    </tr>
-                  ))}
+                  {attendanceGroups.length === 0 ? (
+                    <tr><td colSpan="8" style={{ textAlign: 'center', color: T.slate }}>No attendance records found for this batch.</td></tr>
+                  ) : attendanceGroups.map(group => {
+                    const present = group.records.filter(record => String(record.status).toLowerCase() === 'present').length
+                    const absent = group.records.filter(record => String(record.status).toLowerCase() === 'absent').length
+                    const percentage = group.records.length ? Math.round((present / group.records.length) * 100) : 0
+                    return (
+                      <Fragment key={`attendance-${group.key}`}>
+                        <tr>
+                          <td>{expandButton('attendance', group, 'attendance')}</td>
+                          <td style={{ fontWeight: 800 }}>{group.student_name}</td>
+                          <td>{group.student_id}</td>
+                          <td><Badge text={group.batch_status} variant={group.batch_status === 'active' ? 'success' : group.batch_status === 'completed' ? 'info' : 'warning'} /></td>
+                          <td>{group.records.length}</td>
+                          <td>{present}</td>
+                          <td>{absent}</td>
+                          <td><strong>{percentage}%</strong></td>
+                        </tr>
+                        {isStudentExpanded('attendance', group.key) && (
+                          <tr key={`attendance-details-${group.key}`}>
+                            <td colSpan="8" style={{ padding: 12, background: 'rgba(15,27,45,.025)' }}>
+                              <table className="employee-table" style={{ margin: 0 }}>
+                                <thead><tr><th>Date</th><th>Status</th><th>Session</th><th>Marked By</th><th>Remarks</th></tr></thead>
+                                <tbody>{group.records.map(record => (
+                                  <tr key={record.id}>
+                                    <td>{formatSimpleDate(record.date)}</td>
+                                    <td><Badge text={record.status || '-'} variant={record.status === 'Present' ? 'success' : 'danger'} /></td>
+                                    <td>{record.session || '-'}</td>
+                                    <td>{record.marked_by || '-'}</td>
+                                    <td>{record.remarks || '-'}</td>
+                                  </tr>
+                                ))}</tbody>
+                              </table>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    )
+                  })}
                 </tbody>
               </table>
+            </div>
+          </section>
+
+          <section style={{ marginBottom: 26 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 10, flexWrap: 'wrap' }}>
+              <h4 style={{ margin: 0, fontSize: 18, color: T.navy }}>Student Test & Quiz Results</h4>
+              <span style={{ color: T.slate, fontSize: 13 }}>Expand a student row to view every result</span>
+            </div>
+
+            <div style={{ marginBottom: 18 }}>
+              <h5 style={{ margin: '0 0 8px', color: T.navy, fontSize: 15 }}>Technical Test Results</h5>
+              <div style={{ overflowX: 'auto', border: `1px solid ${T.border}`, borderRadius: 10 }}>
+                <table className="employee-table">
+                  <thead><tr><th aria-label="Expand details" /><th>Student</th><th>Student ID</th><th>Status</th><th>Tests Attended</th><th>Average</th><th>Evaluated</th></tr></thead>
+                  <tbody>
+                    {testGroups.length === 0 ? (
+                      <tr><td colSpan="7" style={{ textAlign: 'center', color: T.slate }}>No technical test results found.</td></tr>
+                    ) : testGroups.map(group => {
+                      const evaluated = group.records.filter(result => result.evaluated).length
+                      const average = Math.round(group.records.reduce((sum, result) => sum + Number(result.percentage || 0), 0) / group.records.length)
+                      return (
+                        <Fragment key={`test-${group.key}`}>
+                          <tr>
+                            <td>{expandButton('test', group, 'technical test results')}</td>
+                            <td style={{ fontWeight: 800 }}>{group.student_name}</td>
+                            <td>{group.student_id}</td>
+                            <td><Badge text={group.batch_status} variant={group.batch_status === 'active' ? 'success' : group.batch_status === 'completed' ? 'info' : 'warning'} /></td>
+                            <td>{group.records.length}</td>
+                            <td><strong>{average}%</strong></td>
+                            <td>{evaluated}/{group.records.length}</td>
+                          </tr>
+                          {isStudentExpanded('test', group.key) && (
+                            <tr key={`test-details-${group.key}`}>
+                              <td colSpan="7" style={{ padding: 12, background: 'rgba(15,27,45,.025)' }}>
+                                <table className="employee-table" style={{ margin: 0 }}>
+                                  <thead><tr><th>Test</th><th>Mark</th><th>Percentage</th><th>Status</th><th>Submitted</th></tr></thead>
+                                  <tbody>{group.records.map(result => (
+                                    <tr key={result.id}>
+                                      <td>{result.test_title || '-'}</td>
+                                      <td><strong>{result.mark ?? 0}</strong> / {result.max_marks ?? 0}</td>
+                                      <td>{result.percentage || 0}%</td>
+                                      <td><Badge text={result.evaluated ? 'Evaluated' : 'Pending Mark'} variant={result.evaluated ? 'success' : 'warning'} /></td>
+                                      <td>{formatSimpleDate(result.submitted_at)}</td>
+                                    </tr>
+                                  ))}</tbody>
+                                </table>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div>
+              <h5 style={{ margin: '0 0 8px', color: T.navy, fontSize: 15 }}>Quiz Results</h5>
+              <div style={{ overflowX: 'auto', border: `1px solid ${T.border}`, borderRadius: 10 }}>
+                <table className="employee-table">
+                  <thead><tr><th aria-label="Expand details" /><th>Student</th><th>Student ID</th><th>Status</th><th>Quizzes Attended</th><th>Average</th><th>Passed</th></tr></thead>
+                  <tbody>
+                    {quizGroups.length === 0 ? (
+                      <tr><td colSpan="7" style={{ textAlign: 'center', color: T.slate }}>No quiz results found.</td></tr>
+                    ) : quizGroups.map(group => {
+                      const passed = group.records.filter(result => result.is_passed).length
+                      const average = Math.round(group.records.reduce((sum, result) => sum + Number(result.percentage || 0), 0) / group.records.length)
+                      return (
+                        <Fragment key={`quiz-${group.key}`}>
+                          <tr>
+                            <td>{expandButton('quiz', group, 'quiz results')}</td>
+                            <td style={{ fontWeight: 800 }}>{group.student_name}</td>
+                            <td>{group.student_id}</td>
+                            <td><Badge text={group.batch_status} variant={group.batch_status === 'active' ? 'success' : group.batch_status === 'completed' ? 'info' : 'warning'} /></td>
+                            <td>{group.records.length}</td>
+                            <td><strong>{average}%</strong></td>
+                            <td>{passed}/{group.records.length}</td>
+                          </tr>
+                          {isStudentExpanded('quiz', group.key) && (
+                            <tr key={`quiz-details-${group.key}`}>
+                              <td colSpan="7" style={{ padding: 12, background: 'rgba(15,27,45,.025)' }}>
+                                <table className="employee-table" style={{ margin: 0 }}>
+                                  <thead><tr><th>Quiz</th><th>Attempt</th><th>Score</th><th>Percentage</th><th>Result</th><th>Submitted</th></tr></thead>
+                                  <tbody>{group.records.map(result => (
+                                    <tr key={result.id}>
+                                      <td>{result.quiz_title || '-'}</td>
+                                      <td>{result.attempt_number || 1}</td>
+                                      <td><strong>{result.score || 0}</strong> / {result.total_marks || 0}</td>
+                                      <td>{result.percentage || 0}%</td>
+                                      <td><Badge text={result.is_passed ? 'Passed' : 'Not Passed'} variant={result.is_passed ? 'success' : 'danger'} /></td>
+                                      <td>{formatSimpleDate(result.submitted_at)}</td>
+                                    </tr>
+                                  ))}</tbody>
+                                </table>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </section>
 
@@ -5604,6 +5750,7 @@ export function AddQuestions() {
 export function UploadQuiz() {
   const navigate = useNavigate()
   const location = useLocation()
+  const isAdminQuiz = location.pathname.startsWith('/admin')
   const [form, setForm] = useState({ title: '', description: '', duration_minutes: 30, passing_marks: 35, difficulty: 'medium', audience: 'students' })
   const [file, setFile] = useState(null)
   const [saving, setSaving] = useState(false)
@@ -5616,7 +5763,8 @@ export function UploadQuiz() {
       const fd = new FormData()
       fd.append('title', form.title); fd.append('description', form.description)
       fd.append('duration_minutes', form.duration_minutes); fd.append('passing_marks', form.passing_marks); fd.append('difficulty', form.difficulty)
-      fd.append('audience', form.audience)
+      fd.append('audience', isAdminQuiz ? form.audience : 'students')
+      fd.append('quiz_scope', isAdminQuiz ? 'admin_global' : 'staff_batch')
       fd.append('source_file', file)
       const res = await api.post('/quiz/upload/', fd)
       toast.success(res.data?.message || 'Quiz uploaded successfully!')
@@ -5630,13 +5778,13 @@ export function UploadQuiz() {
   return (
     <div className="employee-root">
       <Styles />
-      <PH title="Upload Quiz" sub="Upload quiz from Excel/CSV file, then assign it from Manage Quizzes" />
+      <PH title="Upload Quiz" sub={isAdminQuiz ? 'Upload a global quiz for students and public users' : 'Upload first, then assign this quiz to one or more batches'} />
       <div className="employee-card" style={{ maxWidth: 700 }}>
         <div className="employee-card-body" style={{ padding: 22 }}>
           <form onSubmit={handleSubmit}>
             <div className="employee-fg"><label className="employee-label">Quiz Title *</label><input className="employee-input" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} required /></div>
             <div className="employee-fg"><label className="employee-label">Description</label><textarea className="employee-input" rows={2} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></div>
-            <div className="employee-fg"><label className="employee-label">Quiz Audience *</label>
+            {isAdminQuiz && <div className="employee-fg"><label className="employee-label">Quiz Audience *</label>
               <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', marginTop: 8 }}>
                 {[['students', 'All Students'], ['public_users', 'Public Users']].map(([value, label]) => (
                   <label key={value} style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
@@ -5654,7 +5802,7 @@ export function UploadQuiz() {
                   </label>
                 ))}
               </div>
-            </div>
+            </div>}
             <div className="employee-row-grid-2">
               <div className="employee-fg"><label className="employee-label">Duration (minutes)</label><input type="number" className="employee-input" value={form.duration_minutes} onChange={e => setForm({ ...form, duration_minutes: parseInt(e.target.value) })} /></div>
               <div className="employee-fg"><label className="employee-label">Passing Marks (%)</label><input type="number" className="employee-input" value={form.passing_marks} onChange={e => setForm({ ...form, passing_marks: parseInt(e.target.value) })} /></div>
@@ -5671,14 +5819,25 @@ export function UploadQuiz() {
 }
 
 export function ManageQuizzes() {
+  const location = useLocation()
+  const isAdminQuiz = location.pathname.startsWith('/admin')
   const [quizzes, setQuizzes] = useState([])
+  const [batches, setBatches] = useState([])
+  const [assignQuiz, setAssignQuiz] = useState(null)
+  const [selectedBatchIds, setSelectedBatchIds] = useState([])
+  const [assigning, setAssigning] = useState(false)
   const [loading, setLoading] = useState(true)
   const [publishQuiz, setPublishQuiz] = useState(null)
   const [detailQuiz, setDetailQuiz] = useState(null)
   const [scheduleAt, setScheduleAt] = useState('')
   const [quizSearch, setQuizSearch] = useState('')
 
-  useEffect(() => { loadQuizzes() }, [])
+  useEffect(() => {
+    loadQuizzes()
+    if (!isAdminQuiz) {
+      api.get('/batches/').then(response => setBatches(response.data.results || response.data || [])).catch(() => setBatches([]))
+    }
+  }, [isAdminQuiz])
 
   const loadQuizzes = async () => {
     try {
@@ -5729,6 +5888,32 @@ export function ManageQuizzes() {
     }
   }
 
+  const openBatchAssignment = (quiz) => {
+    setAssignQuiz(quiz)
+    setSelectedBatchIds((quiz.assigned_batch_details || []).map(batch => String(batch.id)))
+  }
+
+  const toggleBatchSelection = (batchId) => {
+    const value = String(batchId)
+    setSelectedBatchIds(current => current.includes(value) ? current.filter(id => id !== value) : [...current, value])
+  }
+
+  const saveBatchAssignment = async () => {
+    if (!selectedBatchIds.length) return toast.error('Select at least one batch')
+    setAssigning(true)
+    try {
+      await api.post(`/quiz/${assignQuiz.id}/assign/`, { batch_ids: selectedBatchIds })
+      toast.success('Quiz assigned to selected batches')
+      setAssignQuiz(null)
+      setSelectedBatchIds([])
+      await loadQuizzes()
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Quiz assignment failed')
+    } finally {
+      setAssigning(false)
+    }
+  }
+
   const filteredQuizzes = quizzes.filter(quiz => {
     const text = [
       quiz.title,
@@ -5749,9 +5934,9 @@ export function ManageQuizzes() {
       <Styles />
       <PH
         title="Manage Quizzes"
-        sub="View, publish, and manage your uploaded quizzes"
+        sub={isAdminQuiz ? 'Publish global quizzes for students and public users' : 'Assign your uploaded quizzes to one or more batches'}
         btn={
-          <button className="employee-btn employee-btn-primary" onClick={() => window.location.href = '/employee/quiz/upload'}>
+          <button className="employee-btn employee-btn-primary" onClick={() => window.location.href = isAdminQuiz ? '/admin/quiz/upload' : '/employee/quiz/upload'}>
             <i className="fas fa-upload" /> Upload Quiz
           </button>
         }
@@ -5792,27 +5977,32 @@ export function ManageQuizzes() {
                     <td>{quiz.duration_minutes} min</td>
                     <td>
                       <Badge
-                        text={quiz.is_published ? 'Published' : 'Draft'}
+                        text={isAdminQuiz ? (quiz.is_published ? 'Published' : 'Draft') : ((quiz.assigned_batch_details || []).length ? `Assigned (${quiz.assigned_batch_details.length})` : 'Not Assigned')}
                         variant={quiz.is_published ? 'success' : 'warning'}
                       />
                     </td>
                     <td>
                       <div style={{ display: 'flex', gap: 8 }}>
-                        <button
+                        {isAdminQuiz ? <button
                           className="employee-btn employee-btn-sm employee-btn-ghost"
                           onClick={() => setDetailQuiz(quiz)}
                           title="View complete quiz details"
                         >
                           <i className="fas fa-eye" /> View
-                        </button>
-                        <button
+                        </button> : <button
+                          className="employee-btn employee-btn-sm employee-btn-primary"
+                          onClick={() => openBatchAssignment(quiz)}
+                        >
+                          <i className="fas fa-layer-group" /> Assign Batches
+                        </button>}
+                        {isAdminQuiz && <button
                           className={`employee-btn employee-btn-sm ${quiz.is_published ? 'employee-btn-warning' : 'employee-btn-teal'}`}
                           style={{ background: quiz.is_published ? T.amber : T.teal, color: '#fff' }}
                           onClick={() => togglePublish(quiz)}
                         >
                           <i className={`fas ${quiz.is_published ? 'fa-eye-slash' : 'fa-eye'}`} />
                           {quiz.is_published ? 'Unpublish' : 'Publish'}
-                        </button>
+                        </button>}
                         <button
                           className="employee-btn employee-btn-sm employee-btn-danger"
                           onClick={() => deleteQuiz(quiz.id)}
@@ -5829,7 +6019,7 @@ export function ManageQuizzes() {
         )}
       </div>
 
-      {publishQuiz && (
+      {isAdminQuiz && publishQuiz && (
         <Modal open onClose={() => setPublishQuiz(null)} title="Publish Quiz" size="sm">
           <div className="employee-hint" style={{ marginBottom: 16 }}>
             Audience: <strong>{publishQuiz.audience === 'both' ? 'Students and Public Users' : publishQuiz.audience === 'public_users' ? 'Public Users' : 'All Students'}</strong>
@@ -5845,12 +6035,39 @@ export function ManageQuizzes() {
         </Modal>
       )}
 
+      {!isAdminQuiz && assignQuiz && (
+        <Modal open onClose={() => setAssignQuiz(null)} title="Assign Quiz to Batches" size="md">
+          <div className="employee-hint" style={{ marginBottom: 14 }}>
+            <strong>{assignQuiz.title}</strong> can be assigned to multiple batches.
+          </div>
+          <div style={{ display: 'grid', gap: 10, maxHeight: 360, overflowY: 'auto' }}>
+            {batches.map(batch => {
+              const batchId = String(batch.id)
+              const checked = selectedBatchIds.includes(batchId)
+              return (
+                <label key={batch.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 12, border: `1px solid ${checked ? T.amber : T.border}`, borderRadius: 8, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={checked} onChange={() => toggleBatchSelection(batch.id)} />
+                  <span style={{ fontWeight: 700 }}>{batch.batch_code || batch.batch_number}</span>
+                  <span className="employee-hint">{batch.course_name_display || ''}</span>
+                </label>
+              )
+            })}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
+            <button className="employee-btn employee-btn-ghost" onClick={() => setAssignQuiz(null)}>Cancel</button>
+            <button className="employee-btn employee-btn-primary" onClick={saveBatchAssignment} disabled={assigning || !selectedBatchIds.length}>
+              {assigning ? 'Assigning...' : `Assign to ${selectedBatchIds.length} Batch${selectedBatchIds.length === 1 ? '' : 'es'}`}
+            </button>
+          </div>
+        </Modal>
+      )}
+
       <Modal open={!!detailQuiz} onClose={() => setDetailQuiz(null)} title="Quiz Details" size="xl">
         {detailQuiz && (
           <div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 18 }}>
               <div className="employee-card" style={{ boxShadow: 'none', padding: 14 }}><strong>Title</strong><div>{detailQuiz.title}</div></div>
-              <div className="employee-card" style={{ boxShadow: 'none', padding: 14 }}><strong>Batch</strong><div>{detailQuiz.batch_number || 'Not assigned'}</div></div>
+              <div className="employee-card" style={{ boxShadow: 'none', padding: 14 }}><strong>{isAdminQuiz ? 'Audience' : 'Batches'}</strong><div>{isAdminQuiz ? (detailQuiz.audience === 'both' ? 'Students and Public Users' : detailQuiz.audience === 'public_users' ? 'Public Users' : 'All Students') : ((detailQuiz.assigned_batch_details || []).map(batch => batch.display_name).join(', ') || 'Not assigned')}</div></div>
               <div className="employee-card" style={{ boxShadow: 'none', padding: 14 }}><strong>Questions</strong><div>{detailQuiz.total_questions || 0}</div></div>
               <div className="employee-card" style={{ boxShadow: 'none', padding: 14 }}><strong>Marks</strong><div>{detailQuiz.total_marks || 0}</div></div>
               <div className="employee-card" style={{ boxShadow: 'none', padding: 14 }}><strong>Duration</strong><div>{detailQuiz.duration_minutes || 0} min</div></div>

@@ -901,6 +901,7 @@ class QuizSerializer(serializers.ModelSerializer):
     batch_code = serializers.CharField(source='batch.batch_code', read_only=True)
     created_by_name = serializers.SerializerMethodField()
     created_by_trainer_status = serializers.SerializerMethodField()
+    assigned_batch_details = serializers.SerializerMethodField()
 
     class Meta:
         model = Quiz
@@ -921,6 +922,20 @@ class QuizSerializer(serializers.ModelSerializer):
         ).exists():
             return 'Previous Trainer'
         return 'Current Trainer'
+
+    def get_assigned_batch_details(self, obj):
+        batches = list(obj.assigned_batches.all())
+        if obj.batch_id and all(batch.id != obj.batch_id for batch in batches):
+            batches.append(obj.batch)
+        return [
+            {
+                'id': batch.id,
+                'batch_number': batch.batch_number,
+                'batch_code': batch.batch_code,
+                'display_name': batch.batch_code or batch.batch_number,
+            }
+            for batch in batches
+        ]
 
 
 class QuizAttemptSerializer(serializers.ModelSerializer):

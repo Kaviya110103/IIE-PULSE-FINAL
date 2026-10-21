@@ -2707,6 +2707,7 @@ const getMaterialType = (name, contentType = '') => {
   const lowerType = String(contentType || '').toLowerCase()
   if (lowerType.includes('pdf') || lowerName.endsWith('.pdf')) return 'pdf'
   if (lowerType.includes('zip') || lowerName.endsWith('.zip')) return 'zip'
+  if (lowerType.includes('wordprocessingml') || lowerName.endsWith('.docx')) return 'document'
   if (lowerType.includes('spreadsheet') || lowerType.includes('excel') || /\.(xlsx?|csv)$/.test(lowerName)) return 'sheet'
   if (lowerType.startsWith('text/') || /\.(txt|csv|md|json|html|css|js|py|java|sql)$/.test(lowerName)) return 'text'
   if (lowerType.startsWith('image/') || /\.(png|jpe?g|webp|gif)$/.test(lowerName)) return 'image'
@@ -2852,7 +2853,7 @@ function StudentMaterialViewer({ viewer, onClose, onOpenZipEntry, onBackToZip })
   }
 
   const title = viewer?.entry?.name || viewer?.material?.title || 'Study Material'
-  const icon = viewer?.type === 'zip' ? 'fa-file-zipper' : viewer?.type === 'sheet' ? 'fa-table' : viewer?.type === 'text' ? 'fa-file-lines' : viewer?.type === 'image' ? 'fa-image' : 'fa-file-pdf'
+  const icon = viewer?.type === 'zip' ? 'fa-file-zipper' : viewer?.type === 'sheet' ? 'fa-table' : viewer?.type === 'text' ? 'fa-file-lines' : viewer?.type === 'image' ? 'fa-image' : viewer?.type === 'html' ? 'fa-file-word' : 'fa-file-pdf'
   const canBackToZip = Boolean(viewer?.entry && viewer?.zipEntries?.length)
 
   return (
@@ -2956,6 +2957,14 @@ function StudentMaterialViewer({ viewer, onClose, onOpenZipEntry, onBackToZip })
           {viewer?.type === 'image' && (
             <img src={viewer.url} alt="" style={{ display: 'block', maxWidth: '100%', margin: '0 auto', borderRadius: 12 }} />
           )}
+          {viewer?.type === 'html' && (
+            <iframe
+              title={title}
+              srcDoc={viewer.html}
+              sandbox=""
+              style={{ display: 'block', width: '100%', height: '100%', minHeight: 560, border: 0, background: '#f8f7ff' }}
+            />
+          )}
           {viewer?.type === 'zip' && (
             <div style={{ display: 'grid', gap: 10 }}>
               {viewer.entries?.length ? viewer.entries.map(entry => (
@@ -3032,6 +3041,15 @@ export function StudentMaterials() {
           material,
           entries: zipRes.data?.entries || [],
         })
+        return
+      }
+
+      if (candidateName.endsWith('.docx')) {
+        const previewRes = await api.get(`/materials/${material.id}/preview/`, {
+          headers: { Accept: 'text/html' },
+          responseType: 'text',
+        })
+        showViewer({ type: 'html', material, html: previewRes.data })
         return
       }
 

@@ -1,8 +1,7 @@
+import { getWithApiFallback } from "@/services/api";
 import { Ionicons } from "@expo/vector-icons";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as FileSystem from "expo-file-system/legacy";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   StyleSheet,
@@ -12,53 +11,67 @@ import {
 } from "react-native";
 import { WebView } from "react-native-webview";
 
-const PDF_CACHE_DIR = `${FileSystem.cacheDirectory || FileSystem.documentDirectory || ""}iie-pulse-pdf-cache/`;
-
-function safeFileName(value: string) {
-  return (value || "material")
-    .replace(/[^\w.\-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 90);
-}
-
-function hashString(value: string) {
-  let hash = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
-  }
-  return hash.toString(16);
-}
-
-async function ensureDirectory(uri: string) {
-  const info = await FileSystem.getInfoAsync(uri);
-  if (!info.exists) {
-    await FileSystem.makeDirectoryAsync(uri, { intermediates: true });
-  }
+function apiEndpointFromUrl(url: string) {
+  const marker = "/api/";
+  const markerIndex = url.indexOf(marker);
+  return markerIndex >= 0 ? url.slice(markerIndex + marker.length) : url;
 }
 
 export default function MaterialViewerScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ title?: string; uri?: string; localUri?: string; fileType?: string; returnTo?: string }>();
+  const params = useLocalSearchParams<{
+    title?: string;
+    uri?: string;
+    returnTo?: string;
+  }>();
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
-  const [authToken, setAuthToken] = useState("");
-  const [authReady, setAuthReady] = useState(false);
-  const [readerUri, setReaderUri] = useState("");
-  const Pdf = useMemo(() => {
-    try {
-      // Keep the native PDF module out of the login/startup bundle. Expo Go does
-      // not include it, while the dev/production native builds do.
-      return require("react-native-pdf").default;
-    } catch {
-      return null;
-    }
-  }, []);
-  const title = Array.isArray(params.title) ? params.title[0] : params.title || "Material";
+  const [retryKey, setRetryKey] = useState(0);
+  const [previewHtml, setPreviewHtml] = useState("");
+
+  const title = Array.isArray(params.title)
+    ? params.title[0]
+    : params.title || "Material";
   const uri = Array.isArray(params.uri) ? params.uri[0] : params.uri || "";
-  const localUri = Array.isArray(params.localUri) ? params.localUri[0] : params.localUri || "";
-  const returnTo = Array.isArray(params.returnTo) ? params.returnTo[0] : params.returnTo || "";
-  const fileType = Array.isArray(params.fileType) ? params.fileType[0] : params.fileType || "pdf";
+  const returnTo = Array.isArray(params.returnTo)
+    ? params.returnTo[0]
+    : params.returnTo || "";
+
+  useEffect(() => {
+    let active = true;
+
+    const loadPreview = async () => {
+      if (!uri) {
+        setFailed(true);
+        setLoading(false);
+        return;
+      }
+
+      setLoading(true);
+      setFailed(false);
+      setPreviewHtml("");
+      try {
+        const response = await getWithApiFallback(apiEndpointFromUrl(uri), {
+          headers: { Accept: "text/html" },
+          responseType: "text",
+          timeout: 30000,
+        });
+        if (!active) return;
+        const html = typeof response.data === "string" ? response.data : "";
+        if (!html.trim()) throw new Error("Empty material preview");
+        setPreviewHtml(html);
+      } catch {
+        if (active) setFailed(true);
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+
+    loadPreview();
+    return () => {
+      active = false;
+    };
+  }, [retryKey, uri]);
 
   const goBack = () => {
     if (returnTo) {
@@ -68,77 +81,7 @@ export default function MaterialViewerScreen() {
     router.replace("/materials" as any);
   };
 
-  useEffect(() => {
-    AsyncStorage.getItem("access_token").then((token) => {
-      setAuthToken(token || "");
-      setAuthReady(true);
-    });
-  }, []);
-
-  useEffect(() => {
-    let alive = true;
-
-    const preparePdf = async () => {
-      if (!authReady) return;
-      const sourceUri = localUri || uri;
-      if (!sourceUri) {
-        setFailed(true);
-        setLoading(false);
-        return;
-      }
-
-      setFailed(false);
-      setLoading(true);
-
-      if (localUri || sourceUri.startsWith("file://")) {
-        setReaderUri(sourceUri);
-        return;
-      }
-
-      try {
-        await ensureDirectory(PDF_CACHE_DIR);
-        const token = authToken || (await AsyncStorage.getItem("access_token")) || "";
-        const nameFromUrl = decodeURIComponent(sourceUri.split("?")[0]?.split("/").pop() || "");
-        const localFileName = `${safeFileName(title || nameFromUrl || "material")}-${hashString(sourceUri)}.pdf`;
-        const cachedUri = `${PDF_CACHE_DIR}${localFileName}`;
-        const existing = await FileSystem.getInfoAsync(cachedUri);
-
-        if (!alive) return;
-        if (existing.exists) {
-          setReaderUri(cachedUri);
-          return;
-        }
-
-        const result = await FileSystem.downloadAsync(sourceUri, cachedUri, {
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        });
-
-        if (!alive) return;
-        if (result.status < 200 || result.status >= 300) {
-          await FileSystem.deleteAsync(cachedUri, { idempotent: true });
-          throw new Error(`PDF request failed with status ${result.status}`);
-        }
-
-        setReaderUri(result.uri);
-      } catch {
-        if (alive) {
-          setFailed(true);
-          setLoading(false);
-        }
-      }
-    };
-
-    preparePdf();
-
-    return () => {
-      alive = false;
-    };
-  }, [authReady, authToken, localUri, title, uri]);
-
-  const pdfSource = useMemo(() => {
-    if (!readerUri) return null;
-    return { uri: readerUri, cache: false };
-  }, [readerUri]);
+  const retry = () => setRetryKey((value) => value + 1);
 
   return (
     <View style={styles.screen}>
@@ -146,61 +89,47 @@ export default function MaterialViewerScreen() {
         <TouchableOpacity style={styles.backButton} onPress={goBack}>
           <Ionicons name="arrow-back" size={22} color="#FFFFFF" />
         </TouchableOpacity>
-        <View style={{ flex: 1 }}>
+        <View style={styles.heading}>
           <Text style={styles.kicker}>Internal Reader</Text>
-          <Text style={styles.title} numberOfLines={1}>{title}</Text>
+          <Text style={styles.title} numberOfLines={1}>
+            {title}
+          </Text>
         </View>
       </View>
 
-      {!Pdf || !pdfSource || failed ? (
-        fileType !== "pdf" && uri ? (
-          <WebView
-            source={{
-              uri,
-              headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
-            }}
-            style={styles.webView}
-            onLoadStart={() => setLoading(true)}
-            onLoadEnd={() => setLoading(false)}
-            onError={() => setFailed(true)}
-          />
-        ) : (
+      {loading ? (
+        <View style={styles.loadingPanel}>
+          <ActivityIndicator color="#5523D2" size="large" />
+          <Text style={styles.loadingText}>Opening inside app...</Text>
+        </View>
+      ) : failed ? (
         <View style={styles.errorPanel}>
-          <Ionicons name="document-lock-outline" size={52} color="#A78BFA" />
-          <Text style={styles.errorTitle}>Unable to preview this PDF</Text>
+          <Ionicons name="document-text-outline" size={52} color="#5523D2" />
+          <Text style={styles.errorTitle}>Unable to preview this material</Text>
           <Text style={styles.errorText}>
-            {!Pdf
-              ? "The in-app PDF reader is available in the rebuilt IIE Pulse app."
-              : "This PDF cannot be opened right now. Please try again after reconnecting or reloading the material."}
+            This file is unavailable or could not be read. Please try again.
           </Text>
+          <TouchableOpacity style={styles.retryButton} onPress={retry}>
+            <Ionicons name="refresh" size={19} color="#FFFFFF" />
+            <Text style={styles.retryText}>Retry</Text>
+          </TouchableOpacity>
         </View>
-        )
       ) : (
-        <View style={styles.viewerWrap}>
-          {loading ? (
-            <View style={styles.loadingOverlay}>
-              <ActivityIndicator color="#5523D2" size="large" />
-              <Text style={styles.loadingText}>Opening inside app...</Text>
-            </View>
-          ) : null}
-          <Pdf
-            source={pdfSource}
-            trustAllCerts={false}
-            onLoadComplete={() => setLoading(false)}
-            onError={() => {
-              setLoading(false);
-              setFailed(true);
-            }}
-            style={styles.pdf}
-          />
-        </View>
+        <WebView
+          source={{ html: previewHtml }}
+          style={styles.webView}
+          originWhitelist={["*"]}
+          setSupportMultipleWindows={false}
+          javaScriptEnabled={false}
+          onError={() => setFailed(true)}
+        />
       )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#1F1930" },
+  screen: { flex: 1, backgroundColor: "#F8F7FF" },
   header: {
     paddingTop: 48,
     paddingHorizontal: 14,
@@ -218,14 +147,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  kicker: { color: "#DDD6FE", fontSize: 10, fontWeight: "900", textTransform: "uppercase" },
+  heading: { flex: 1 },
+  kicker: {
+    color: "#DDD6FE",
+    fontSize: 10,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
   title: { color: "#FFFFFF", fontSize: 16, fontWeight: "900", marginTop: 2 },
-  viewerWrap: { flex: 1, backgroundColor: "#111827" },
-  pdf: { flex: 1, width: "100%", backgroundColor: "#FFFFFF" },
-  webView: { flex: 1, backgroundColor: "#FFFFFF" },
-  loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 2,
+  webView: { flex: 1, backgroundColor: "#F8F7FF" },
+  loadingPanel: {
+    flex: 1,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#F8F7FF",
@@ -236,7 +168,26 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
+    backgroundColor: "#F8F7FF",
   },
-  errorTitle: { color: "#FFFFFF", fontSize: 18, fontWeight: "900", marginTop: 14 },
-  errorText: { color: "#DDD6FE", textAlign: "center", lineHeight: 21, marginTop: 8 },
+  errorTitle: { color: "#21183A", fontSize: 18, fontWeight: "900", marginTop: 14 },
+  errorText: {
+    color: "#5B526E",
+    textAlign: "center",
+    lineHeight: 21,
+    marginTop: 8,
+  },
+  retryButton: {
+    marginTop: 20,
+    minWidth: 120,
+    height: 46,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    backgroundColor: "#5523D2",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  retryText: { color: "#FFFFFF", fontSize: 15, fontWeight: "900" },
 });

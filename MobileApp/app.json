@@ -2,7 +2,7 @@
   "expo": {
     "name": "iiepulse",
     "slug": "iiepulse",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "myapp",
@@ -20,7 +20,7 @@
       "usesCleartextTraffic": true,
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "versionCode": 9,
+      "versionCode": 10,
       "package": "com.wingroo.iiepulse"
     },
     "web": {

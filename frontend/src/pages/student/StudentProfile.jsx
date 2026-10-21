@@ -31,7 +31,6 @@ const emptyProfile = {
 export default function StudentProfile() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [editMode, setEditMode] = useState(false)
   const [profile, setProfile] = useState(emptyProfile)
   const [photoUrl, setPhotoUrl] = useState('')
   const [photoFile, setPhotoFile] = useState(null)
@@ -88,29 +87,17 @@ export default function StudentProfile() {
 
   useEffect(() => { loadProfile() }, [])
 
-  const saveProfile = async () => {
-    const [firstName, ...rest] = profile.name.trim().split(' ')
-    const lastName = rest.join(' ')
-    const payload = {
-      first_name: firstName || '',
-      last_name: lastName || '',
-      date_of_birth: profile.dob,
-      email: profile.email.trim(),
-      mobile_no: profile.mobile.trim(),
+  const saveProfilePhoto = async () => {
+    if (!photoFile) {
+      toast.error('Choose a profile photo first')
+      return
     }
-
     setSaving(true)
     try {
-      if (photoFile) {
-        const formData = new FormData()
-        Object.entries(payload).forEach(([key, value]) => formData.append(key, value))
-        formData.append('photo', photoFile)
-        await api.put('/students/me/', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
-      } else {
-        await api.put('/students/me/', payload)
-      }
-      toast.success('Profile updated successfully')
-      setEditMode(false)
+      const formData = new FormData()
+      formData.append('photo', photoFile)
+      await api.put('/students/me/', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
+      toast.success('Profile photo updated successfully')
       await loadProfile()
     } catch (err) {
       toast.error(err.response?.data?.error || 'Could not update profile')
@@ -118,8 +105,6 @@ export default function StudentProfile() {
       setSaving(false)
     }
   }
-
-  const update = (key, value) => setProfile(prev => ({ ...prev, [key]: value }))
 
   if (loading) return <div className="student-root"><StudentStyles /><StudentSpin /></div>
 
@@ -157,32 +142,29 @@ export default function StudentProfile() {
           ) : (
             <div className="student-profile-avatar-fallback">{(profile.name || 'S').slice(0, 1).toUpperCase()}</div>
           )}
-          {editMode && (
-            <label className="student-profile-photo-btn" title="Change photo">
-              <i className="fas fa-camera" />
-              <input type="file" accept="image/*" hidden onChange={e => setPhotoFile(e.target.files?.[0] || null)} />
-            </label>
-          )}
+          <label className="student-profile-photo-btn" title="Choose profile photo">
+            <i className="fas fa-camera" />
+            <input type="file" accept="image/*" hidden onChange={e => setPhotoFile(e.target.files?.[0] || null)} />
+          </label>
         </div>
         <div>
           <h2 className="student-profile-title">{profile.name || 'Student'}</h2>
           <p className="student-profile-sub">{profile.course || 'Course'} · {profile.batch || 'Batch not assigned'}</p>
         </div>
         <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
-          {editMode && <button className="student-profile-action secondary" onClick={() => { setEditMode(false); loadProfile() }} disabled={saving}>Cancel</button>}
-          <button className="student-profile-action" onClick={editMode ? saveProfile : () => setEditMode(true)} disabled={saving}>
-            <i className={`fas ${saving ? 'fa-spinner fa-spin' : editMode ? 'fa-check' : 'fa-pen'}`} style={{ marginRight: 8 }} />
-            {saving ? 'Saving...' : editMode ? 'Done' : 'Edit'}
+          <button className="student-profile-action" onClick={saveProfilePhoto} disabled={saving || !photoFile}>
+            <i className={`fas ${saving ? 'fa-spinner fa-spin' : 'fa-camera'}`} style={{ marginRight: 8 }} />
+            {saving ? 'Saving...' : 'Save Profile Photo'}
           </button>
         </div>
       </div>
 
       <div className="student-profile-grid">
         <ProfileCard title="Personal Details" icon="fa-user">
-          <ProfileRow icon="fa-user" label="Name" value={profile.name} editable={editMode} onChange={value => update('name', value)} />
-          <ProfileRow icon="fa-calendar" label="Date of Birth" type="date" value={profile.dob} editable={editMode} onChange={value => update('dob', value)} />
-          <ProfileRow icon="fa-envelope" label="Email" type="email" value={profile.email} editable={editMode} onChange={value => update('email', value)} />
-          <ProfileRow icon="fa-phone" label="Mobile" value={profile.mobile} editable={editMode} onChange={value => update('mobile', value)} />
+          <ProfileRow icon="fa-user" label="Name" value={profile.name} />
+          <ProfileRow icon="fa-calendar" label="Date of Birth" value={profile.dob} />
+          <ProfileRow icon="fa-envelope" label="Email" value={profile.email} />
+          <ProfileRow icon="fa-phone" label="Mobile" value={profile.mobile} />
           <ProfileRow icon="fa-venus-mars" label="Gender" value={profile.gender} />
           <ProfileRow icon="fa-graduation-cap" label="Qualification" value={profile.qualification} />
         </ProfileCard>
@@ -207,15 +189,11 @@ function ProfileCard({ title, icon, children }) {
   )
 }
 
-function ProfileRow({ icon, label, value, editable = false, type = 'text', onChange }) {
+function ProfileRow({ icon, label, value }) {
   return (
     <div className="student-profile-row">
       <div className="student-profile-label"><i className={`fas ${icon}`} /> {label}</div>
-      {editable ? (
-        <input className="student-profile-input" type={type} value={value || ''} onChange={e => onChange(e.target.value)} />
-      ) : (
-        <div className="student-profile-value">{value || '—'}</div>
-      )}
+      <div className="student-profile-value">{value || '—'}</div>
     </div>
   )
 }

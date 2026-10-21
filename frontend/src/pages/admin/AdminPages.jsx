@@ -6258,6 +6258,7 @@ const publicUserTabs = [
   { key: 'users', label: 'New Users', icon: 'fa-user-plus' },
   { key: 'enrolled', label: 'Enrolled', icon: 'fa-user-check' },
   { key: 'walked_in', label: 'Walked In', icon: 'fa-walking' },
+  { key: 'follow_up', label: 'Follow Up', icon: 'fa-phone' },
 ]
 
 export function AdminPublicUsers() {
@@ -6265,13 +6266,20 @@ export function AdminPublicUsers() {
   const [items, setItems] = useState([])
   const [branches, setBranches] = useState([])
   const [branchFilter, setBranchFilter] = useState('')
-  const [tabCounts, setTabCounts] = useState({ users: 0, enrolled: 0, walked_in: 0 })
+  const [tabCounts, setTabCounts] = useState({ users: 0, enrolled: 0, walked_in: 0, follow_up: 0 })
   const [remarks, setRemarks] = useState({})
+  const [followUpUser, setFollowUpUser] = useState(null)
+  const [followUpDetailsUser, setFollowUpDetailsUser] = useState(null)
+  const [followUpForm, setFollowUpForm] = useState({ specification: '', followUpDate: '', feedback: '', remark: '' })
+  const [followUpSaving, setFollowUpSaving] = useState(false)
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
   const { user } = useAuth()
   const isCounselor = user?.designation === 'counselor'
   const addStudentPath = isCounselor ? '/counselor/add-student' : '/admin/students'
+  const visibleTabs = isCounselor
+    ? publicUserTabs
+    : publicUserTabs.filter(tab => tab.key !== 'follow_up')
 
   const load = async (tab = activeTab) => {
     setLoading(true)
@@ -6282,7 +6290,7 @@ export function AdminPublicUsers() {
       const rows = res.data.results || []
       setItems(rows)
       setBranches(res.data.branches || [])
-      setTabCounts(res.data.counts || { users: 0, enrolled: 0, walked_in: 0 })
+      setTabCounts(res.data.counts || { users: 0, enrolled: 0, walked_in: 0, follow_up: 0 })
       setRemarks(rows.reduce((next, item) => ({ ...next, [item.id]: item.remark || '' }), {}))
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to load public users')
@@ -6292,10 +6300,6 @@ export function AdminPublicUsers() {
   }
 
   useEffect(() => { load(activeTab) }, [activeTab, branchFilter])
-
-  useEffect(() => {
-    if (activeTab !== 'enrolled') setBranchFilter('')
-  }, [activeTab])
 
   const markWalkedIn = async (item) => {
     try {
@@ -6314,6 +6318,33 @@ export function AdminPublicUsers() {
         publicUser: item,
       },
     })
+  }
+
+  const openFollowUp = (item) => {
+    setFollowUpUser(item)
+    setFollowUpForm({ specification: '', followUpDate: '', feedback: '', remark: item.remark || '' })
+  }
+
+  const submitFollowUp = async (event) => {
+    event.preventDefault()
+    if (!followUpUser) return
+    setFollowUpSaving(true)
+    try {
+      await api.post(`/admin/public-users/${followUpUser.id}/status/`, {
+        status: 'follow_up',
+        follow_up_specification: followUpForm.specification.trim(),
+        follow_up_date: followUpForm.followUpDate || '',
+        follow_up_feedback: followUpForm.feedback,
+        remark: followUpForm.remark.trim(),
+      })
+      toast.success('Follow-up saved')
+      setFollowUpUser(null)
+      setActiveTab('follow_up')
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to save follow-up')
+    } finally {
+      setFollowUpSaving(false)
+    }
   }
 
   const saveRemark = async (item) => {
@@ -6335,11 +6366,12 @@ export function AdminPublicUsers() {
         'Name',
         'Contact',
         'Qualification',
-        'Location',
-        'Branch',
+        'Area of Interest',
+        isCounselor ? 'Branch' : 'Counselled By',
         ...(mode !== 'enrolled' ? ['Registered'] : []),
-        ...(mode === 'users' || mode === 'walked_in' ? ['Remark'] : []),
-        ...(mode === 'enrolled' ? [] : ['Action']),
+        ...(mode === 'follow_up' ? ['Specification', 'Follow-up Date', 'Feedback'] : []),
+        ...(mode === 'users' ? ['Remark'] : []),
+        ...((isCounselor && mode !== 'enrolled') || (!isCounselor && mode === 'walked_in') ? ['Action'] : []),
       ]}
       items={items}
       emptyMsg="No public users registered yet"
@@ -6352,47 +6384,70 @@ export function AdminPublicUsers() {
             <div style={{ fontSize: 11, color: T.slate }}>{item.email || ''}</div>
           </td>
           <td>{item.qualification || '-'}</td>
-          <td>{[item.city, item.state].filter(Boolean).join(', ') || item.location || '-'}</td>
+          <td>{item.area_of_interest || '-'}</td>
           {mode === 'enrolled' ? (
             <td>
-              <div style={{ fontWeight: 800 }}>{item.branch || '-'}</div>
+              <div style={{ fontWeight: 800 }}>{isCounselor ? (item.branch || '-') : (item.counselled_by || '-')}</div>
               <div style={{ fontSize: 11, color: T.slate }}>{item.student_code || ''}</div>
             </td>
           ) : (
             <>
-              <td>{item.branch || '-'}</td>
+              <td>{isCounselor ? (item.branch || '-') : (item.counselled_by || '-')}</td>
               <td>{formatMonitoringTime(item.created_at)}</td>
             </>
           )}
-          {(mode === 'users' || mode === 'walked_in') && (
+          {mode === 'follow_up' && (
+            <>
+              <td>{item.follow_up_specification || '-'}</td>
+              <td>{item.follow_up_date ? new Date(`${item.follow_up_date}T00:00:00`).toLocaleDateString('en-IN') : '-'}</td>
+              <td>{item.follow_up_feedback_display || '-'}</td>
+            </>
+          )}
+          {mode === 'users' && (
             <td>
-              <input
-                className="admin-input"
-                style={{ minWidth: 220, height: 38, padding: '8px 10px' }}
-                placeholder="Add remark..."
-                value={remarks[item.id] ?? ''}
-                onChange={e => setRemarks(prev => ({ ...prev, [item.id]: e.target.value }))}
-                onBlur={() => saveRemark(item)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') {
-                    e.currentTarget.blur()
-                  }
-                }}
-              />
+              {isCounselor ? (
+                <input
+                  className="admin-input"
+                  style={{ minWidth: 220, height: 38, padding: '8px 10px' }}
+                  placeholder="Add remark..."
+                  value={remarks[item.id] ?? ''}
+                  onChange={e => setRemarks(prev => ({ ...prev, [item.id]: e.target.value }))}
+                  onBlur={() => saveRemark(item)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') e.currentTarget.blur()
+                  }}
+                />
+              ) : (item.remark || '-')}
             </td>
           )}
-          {mode !== 'enrolled' && (
+          {isCounselor && mode !== 'enrolled' && (
             <td>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <button className="admin-btn admin-btn-primary admin-btn-sm" onClick={() => enrollUser(item)}>
                   <i className="fas fa-user-check" /> Enroll
                 </button>
-                {mode !== 'walked_in' && (
+                {mode === 'users' && (
                   <button className="admin-btn admin-btn-ghost admin-btn-sm" onClick={() => markWalkedIn(item)}>
                     <i className="fas fa-walking" /> Walk In
                   </button>
                 )}
+                {mode === 'walked_in' && (
+                  <button className="admin-btn admin-btn-ghost admin-btn-sm" onClick={() => openFollowUp(item)}>
+                    <i className="fas fa-phone" /> Follow Up
+                  </button>
+                )}
               </div>
+            </td>
+          )}
+          {!isCounselor && mode === 'walked_in' && (
+            <td>
+              <button
+                type="button"
+                className="admin-btn admin-btn-ghost admin-btn-sm"
+                onClick={() => setFollowUpDetailsUser(item)}
+              >
+                <i className="fas fa-eye" /> View Details
+              </button>
             </td>
           )}
         </>
@@ -6409,7 +6464,7 @@ export function AdminPublicUsers() {
       />
       <div className="admin-card">
         <div style={{ padding: 16, borderBottom: `1px solid ${T.border}`, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          {publicUserTabs.map(tab => (
+          {visibleTabs.map(tab => (
             <button
               key={tab.key}
               type="button"
@@ -6431,15 +6486,124 @@ export function AdminPublicUsers() {
               }}>{tabCounts[tab.key] || 0}</span>
             </button>
           ))}
-          {(activeTab === 'users' || activeTab === 'enrolled' || activeTab === 'walked_in') && (
+          {!isCounselor && (activeTab === 'users' || activeTab === 'enrolled' || activeTab === 'walked_in' || activeTab === 'follow_up') && (
             <select className="admin-select" style={{ width: 190, marginLeft: 'auto' }} value={branchFilter} onChange={e => setBranchFilter(e.target.value)}>
-              <option value="">All Branches</option>
+              <option value="">All Counselors</option>
               {branches.map(branch => <option key={branch.id} value={branch.id}>{branch.label}</option>)}
             </select>
           )}
         </div>
         {loading ? <AdminSpin /> : renderUsers(activeTab)}
       </div>
+
+      <AdminModal open={!!followUpUser} onClose={() => setFollowUpUser(null)} title="Public User Follow Up" size="sm">
+        <form onSubmit={submitFollowUp} style={{ padding: 18 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
+            <div>
+              <label style={{ display: 'block', marginBottom: 6, fontSize: 13, fontWeight: 800 }}>Name</label>
+              <input className="admin-input" value={followUpUser?.name || ''} readOnly />
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: 6, fontSize: 13, fontWeight: 800 }}>Mobile Number</label>
+              <input className="admin-input" value={followUpUser?.mobile || ''} readOnly />
+            </div>
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ display: 'block', marginBottom: 6, fontSize: 13, fontWeight: 800 }}>Specification</label>
+            <input
+              className="admin-input"
+              value={followUpForm.specification}
+              onChange={e => setFollowUpForm(prev => ({ ...prev, specification: e.target.value }))}
+              placeholder="Example: AWS, Networking"
+              required
+            />
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ display: 'block', marginBottom: 6, fontSize: 13, fontWeight: 800 }}>Follow-up Date <span style={{ color: T.slate, fontWeight: 600 }}>(Optional)</span></label>
+            <input
+              className="admin-input"
+              type="date"
+              min={`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`}
+              value={followUpForm.followUpDate}
+              onChange={e => setFollowUpForm(prev => ({ ...prev, followUpDate: e.target.value }))}
+            />
+          </div>
+          <div style={{ marginBottom: 18 }}>
+            <label style={{ display: 'block', marginBottom: 6, fontSize: 13, fontWeight: 800 }}>Common Feedback</label>
+            <select
+              className="admin-select"
+              style={{ width: '100%' }}
+              value={followUpForm.feedback}
+              onChange={e => setFollowUpForm(prev => ({ ...prev, feedback: e.target.value }))}
+              required
+            >
+              <option value="">Choose feedback...</option>
+              <option value="will_enroll">Will Enroll</option>
+              <option value="not_interested">Not Interested</option>
+              <option value="joined_another_institute">Joined in Another Institute</option>
+            </select>
+          </div>
+          <div style={{ marginBottom: 18 }}>
+            <label style={{ display: 'block', marginBottom: 6, fontSize: 13, fontWeight: 800 }}>Remark</label>
+            <textarea
+              className="admin-input"
+              style={{ width: '100%', minHeight: 84, resize: 'vertical' }}
+              value={followUpForm.remark}
+              onChange={e => setFollowUpForm(prev => ({ ...prev, remark: e.target.value }))}
+              placeholder="Add follow-up remark..."
+            />
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+            <button type="button" className="admin-btn admin-btn-ghost" onClick={() => setFollowUpUser(null)}>Cancel</button>
+            <button type="submit" className="admin-btn admin-btn-primary" disabled={followUpSaving}>
+              <i className="fas fa-check" /> {followUpSaving ? 'Saving...' : 'Submit Follow Up'}
+            </button>
+          </div>
+        </form>
+      </AdminModal>
+
+      <AdminModal
+        open={!!followUpDetailsUser}
+        onClose={() => setFollowUpDetailsUser(null)}
+        title="Follow Up Details"
+        size="sm"
+      >
+        <div style={{ padding: 18 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            {[
+              ['Name', followUpDetailsUser?.name],
+              ['Mobile Number', followUpDetailsUser?.mobile],
+              ['Area of Interest', followUpDetailsUser?.area_of_interest],
+              ['Counselled By', followUpDetailsUser?.counselled_by],
+              ['Specification', followUpDetailsUser?.follow_up_specification],
+              ['Follow-up Date', followUpDetailsUser?.follow_up_date
+                ? new Date(`${followUpDetailsUser.follow_up_date}T00:00:00`).toLocaleDateString('en-IN')
+                : 'Not scheduled'],
+              ['Feedback', followUpDetailsUser?.follow_up_feedback_display],
+              ['Remark', followUpDetailsUser?.remark],
+            ].map(([label, value]) => (
+              <div
+                key={label}
+                style={{
+                  border: `1px solid ${T.border}`,
+                  borderRadius: 8,
+                  padding: '12px 14px',
+                  background: 'rgba(15,27,45,0.03)',
+                  gridColumn: label === 'Remark' ? '1 / -1' : undefined,
+                }}
+              >
+                <div style={{ color: T.slate, fontSize: 11, fontWeight: 800, marginBottom: 5 }}>{label}</div>
+                <div style={{ fontWeight: 800 }}>{value || '-'}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 18 }}>
+            <button type="button" className="admin-btn admin-btn-primary" onClick={() => setFollowUpDetailsUser(null)}>
+              Close
+            </button>
+          </div>
+        </div>
+      </AdminModal>
     </div>
   )
 }
