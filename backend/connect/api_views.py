@@ -6427,7 +6427,22 @@ def admin_public_users(request):
             users = users.none()
     elif branch_filter:
         users = users.filter(branch__iexact=branch_filter)
-    serialized = [serialize_public_user(user) for user in users]
+
+    counselor_map = {}
+    for counselor in Employee.objects.filter(designation__iexact='counselor').order_by('first_name', 'last_name'):
+        branch_key = str(counselor.branch or '').strip().lower()
+        if not branch_key:
+            continue
+        counselor_name = f"{counselor.first_name} {counselor.last_name or ''}".strip()
+        if counselor_name:
+            counselor_map.setdefault(branch_key, []).append(counselor_name)
+
+    all_serialized = [serialize_public_user(user) for user in users]
+    for item in all_serialized:
+        branch_key = str(item.get('branch') or '').strip().lower()
+        item['counselled_by'] = ', '.join(counselor_map.get(branch_key, []))
+
+    serialized = list(all_serialized)
     if tab == 'enrolled':
         serialized = [item for item in serialized if item.get('status') == 'enrolled']
         if branch_filter:
@@ -6449,7 +6464,7 @@ def admin_public_users(request):
         'follow_up': 0,
     }
     branch_map = {}
-    for item in [serialize_public_user(user) for user in users]:
+    for item in all_serialized:
         item_status = item.get('status')
         branch = str(item.get('branch') or '').strip()
         if branch:
@@ -6463,15 +6478,19 @@ def admin_public_users(request):
         else:
             counts['users'] += 1
 
-    branches = [
-        {'id': branch, 'label': branch}
-        for branch in sorted(branch_map.values(), key=lambda value: value.lower())
-    ]
+    admin_view = is_admin_user(request.user)
+    branches = []
+    for branch in sorted(branch_map.values(), key=lambda value: value.lower()):
+        counselor_names = counselor_map.get(branch.lower(), [])
+        branches.append({
+            'id': branch,
+            'label': ', '.join(counselor_names) if admin_view and counselor_names else branch,
+        })
 
     batches = []
     if tab == 'enrolled':
         seen_batches = set()
-        for item in [serialize_public_user(user) for user in users]:
+        for item in all_serialized:
             if item.get('status') != 'enrolled' or not item.get('batch_id'):
                 continue
             if item['batch_id'] in seen_batches:

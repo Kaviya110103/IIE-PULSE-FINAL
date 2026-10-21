@@ -6363,11 +6363,11 @@ export function AdminPublicUsers() {
         'Contact',
         'Qualification',
         'Area of Interest',
-        'Branch',
+        isCounselor ? 'Branch' : 'Counselled By',
         ...(mode !== 'enrolled' ? ['Registered'] : []),
         ...(mode === 'follow_up' ? ['Specification', 'Follow-up Date', 'Feedback'] : []),
         ...(mode === 'users' ? ['Remark'] : []),
-        ...(mode === 'enrolled' ? [] : ['Action']),
+        ...(isCounselor && mode !== 'enrolled' ? ['Action'] : []),
       ]}
       items={items}
       emptyMsg="No public users registered yet"
@@ -6383,12 +6383,12 @@ export function AdminPublicUsers() {
           <td>{item.area_of_interest || '-'}</td>
           {mode === 'enrolled' ? (
             <td>
-              <div style={{ fontWeight: 800 }}>{item.branch || '-'}</div>
+              <div style={{ fontWeight: 800 }}>{isCounselor ? (item.branch || '-') : (item.counselled_by || '-')}</div>
               <div style={{ fontSize: 11, color: T.slate }}>{item.student_code || ''}</div>
             </td>
           ) : (
             <>
-              <td>{item.branch || '-'}</td>
+              <td>{isCounselor ? (item.branch || '-') : (item.counselled_by || '-')}</td>
               <td>{formatMonitoringTime(item.created_at)}</td>
             </>
           )}
@@ -6401,22 +6401,22 @@ export function AdminPublicUsers() {
           )}
           {mode === 'users' && (
             <td>
-              <input
-                className="admin-input"
-                style={{ minWidth: 220, height: 38, padding: '8px 10px' }}
-                placeholder="Add remark..."
-                value={remarks[item.id] ?? ''}
-                onChange={e => setRemarks(prev => ({ ...prev, [item.id]: e.target.value }))}
-                onBlur={() => saveRemark(item)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') {
-                    e.currentTarget.blur()
-                  }
-                }}
-              />
+              {isCounselor ? (
+                <input
+                  className="admin-input"
+                  style={{ minWidth: 220, height: 38, padding: '8px 10px' }}
+                  placeholder="Add remark..."
+                  value={remarks[item.id] ?? ''}
+                  onChange={e => setRemarks(prev => ({ ...prev, [item.id]: e.target.value }))}
+                  onBlur={() => saveRemark(item)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') e.currentTarget.blur()
+                  }}
+                />
+              ) : (item.remark || '-')}
             </td>
           )}
-          {mode !== 'enrolled' && (
+          {isCounselor && mode !== 'enrolled' && (
             <td>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <button className="admin-btn admin-btn-primary admin-btn-sm" onClick={() => enrollUser(item)}>
@@ -6471,9 +6471,9 @@ export function AdminPublicUsers() {
               }}>{tabCounts[tab.key] || 0}</span>
             </button>
           ))}
-          {(activeTab === 'users' || activeTab === 'enrolled' || activeTab === 'walked_in' || activeTab === 'follow_up') && (
+          {!isCounselor && (activeTab === 'users' || activeTab === 'enrolled' || activeTab === 'walked_in' || activeTab === 'follow_up') && (
             <select className="admin-select" style={{ width: 190, marginLeft: 'auto' }} value={branchFilter} onChange={e => setBranchFilter(e.target.value)}>
-              <option value="">All Branches</option>
+              <option value="">All Counselors</option>
               {branches.map(branch => <option key={branch.id} value={branch.id}>{branch.label}</option>)}
             </select>
           )}
