@@ -2836,7 +2836,7 @@ api.get(url).then(r => setEmps(r.data.results || r.data))
             </FG>
 
             {/* ── Course Fee Display ─────────────────────────────────── */}
-            {courseFee && (
+            {!counselorBranch && courseFee && (
               <div style={{
                 background: '#fef5e4',
                 borderRadius: 10,

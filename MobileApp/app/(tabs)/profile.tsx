@@ -11,14 +11,12 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 
 export default function ProfileView() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [editMode, setEditMode] = useState(false);
   const [profile, setProfile] = useState({
     name: "",
     gender: "",
@@ -28,7 +26,7 @@ export default function ProfileView() {
     course: "",
     batch: "",
     qualification: "",
-    joining: "",
+    starting: "",
     ending: "",
   });
   const [image, setImage] = useState("https://i.pravatar.cc/300");
@@ -52,6 +50,9 @@ export default function ProfileView() {
             .filter(Boolean)
             .join(", ")
         : data.assigned_batch_code || data.assigned_batch_number || "";
+      const primaryBatch = Array.isArray(data.assigned_batches) && data.assigned_batches.length
+        ? data.assigned_batches[0]
+        : null;
 
       setProfile({
         name: `${data.first_name || ""} ${data.last_name || ""}`.trim(),
@@ -62,8 +63,8 @@ export default function ProfileView() {
         course: courseNames,
         batch: batchNames,
         qualification: data.qualification || "",
-        joining: data.created_at ? data.created_at.split("T")[0] : "",
-        ending: "",
+        starting: primaryBatch?.start_date || primaryBatch?.batch_start_date || "",
+        ending: primaryBatch?.end_date || primaryBatch?.batch_end_date || "",
       });
 
       if (data.photo) {
@@ -88,35 +89,19 @@ export default function ProfileView() {
     try {
       setSaving(true);
 
-      const [first_name, ...rest] = profile.name.trim().split(" ");
-      const last_name = rest.join(" ");
+      if (!photoAsset) return;
+      const formData = new FormData();
+      const fileName = photoAsset.fileName || `student-profile-${Date.now()}.jpg`;
+      formData.append("photo", {
+        uri: photoAsset.uri,
+        name: fileName,
+        type: photoAsset.mimeType || "image/jpeg",
+      } as any);
+      await api.put("students/me/", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
 
-      const basePayload = {
-        first_name: first_name || "",
-        last_name: last_name || "",
-        date_of_birth: profile.dob,
-        email: profile.email.trim(),
-        mobile_no: profile.mobile.trim(),
-      };
-
-      if (photoAsset) {
-        const formData = new FormData();
-        Object.entries(basePayload).forEach(([key, value]) => formData.append(key, value));
-        const fileName = photoAsset.fileName || `student-profile-${Date.now()}.jpg`;
-        formData.append("photo", {
-          uri: photoAsset.uri,
-          name: fileName,
-          type: photoAsset.mimeType || "image/jpeg",
-        } as any);
-        await api.put("students/me/", formData, {
-          headers: { "Content-Type": "multipart/form-data" },
-        });
-      } else {
-        await api.put("students/me/", basePayload);
-      }
-
-      setEditMode(false);
-      Alert.alert("Success", "Profile updated successfully");
+      Alert.alert("Success", "Profile photo updated successfully");
       await loadProfile();
     } catch (error: any) {
       console.log("Profile update error:", error);
@@ -140,16 +125,7 @@ export default function ProfileView() {
     return `${serverBase}${value.startsWith("/") ? "" : "/"}${value}`;
   };
 
-  const handleEditDone = async () => {
-    if (editMode) {
-      await saveProfile();
-    } else {
-      setEditMode(true);
-    }
-  };
-
   const pickProfilePhoto = async () => {
-    if (!editMode) return;
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
       Alert.alert("Permission Needed", "Please allow photo access to update your profile picture.");
@@ -172,23 +148,14 @@ export default function ProfileView() {
   const renderRow = (
     icon: any,
     label: string,
-    key: keyof typeof profile,
-    editable: boolean = false
+    key: keyof typeof profile
   ) => (
     <View style={styles.row}>
       <View style={styles.rowLeft}>
         <Ionicons name={icon} size={18} color="#5523D2" />
         <Text style={styles.label}>{label}</Text>
       </View>
-      {editMode && editable ? (
-        <TextInput
-          value={profile[key]}
-          onChangeText={(text) => setProfile((prev) => ({ ...prev, [key]: text }))}
-          style={styles.input}
-        />
-      ) : (
-        <Text style={styles.value}>{profile[key] || "-"}</Text>
-      )}
+      <Text style={styles.value}>{profile[key] || "-"}</Text>
     </View>
   );
 
@@ -214,20 +181,18 @@ export default function ProfileView() {
       <View style={styles.profileCenter}>
         <Pressable style={styles.avatarWrap} onPress={pickProfilePhoto}>
           <Image source={{ uri: image }} style={styles.avatar} />
-          {editMode ? (
-            <View style={styles.cameraBadge}>
-              <Ionicons name="camera" size={16} color="#FFFFFF" />
-            </View>
-          ) : null}
+          <View style={styles.cameraBadge}>
+            <Ionicons name="camera" size={16} color="#FFFFFF" />
+          </View>
         </Pressable>
 
         <Pressable
           style={styles.modeBtn}
-          onPress={handleEditDone}
+          onPress={photoAsset ? saveProfile : pickProfilePhoto}
           disabled={saving}
         >
           <Text style={styles.modeText}>
-            {saving ? "Saving..." : editMode ? "Done" : "Edit"}
+            {saving ? "Saving..." : photoAsset ? "Save Profile Photo" : "Choose Profile Photo"}
           </Text>
         </Pressable>
       </View>
@@ -237,10 +202,10 @@ export default function ProfileView() {
           <Ionicons name="person-outline" size={20} color="#5523D2" />
           <Text style={styles.cardTitle}>Personal Details</Text>
         </View>
-        {renderRow("person-outline", "Name", "name", true)}
-        {renderRow("calendar-outline", "Date of Birth", "dob", true)}
-        {renderRow("mail-outline", "Email", "email", true)}
-        {renderRow("call-outline", "Mobile", "mobile", true)}
+        {renderRow("person-outline", "Name", "name")}
+        {renderRow("calendar-outline", "Date of Birth", "dob")}
+        {renderRow("mail-outline", "Email", "email")}
+        {renderRow("call-outline", "Mobile", "mobile")}
         {renderRow("male-female-outline", "Gender", "gender")}
         {renderRow("school-outline", "Qualification", "qualification")}
       </View>
@@ -252,8 +217,8 @@ export default function ProfileView() {
         </View>
         {renderRow("book-outline", "Course", "course")}
         {renderRow("time-outline", "Batch", "batch")}
-        {renderRow("log-in-outline", "Joining Date", "joining")}
-        {renderRow("log-out-outline", "Ending Date", "ending")}
+        {renderRow("calendar-outline", "Batch Start Date", "starting")}
+        {renderRow("calendar-outline", "Batch End Date", "ending")}
       </View>
 
       {Platform.OS === "android" && <View style={{ height: 30 }} />}

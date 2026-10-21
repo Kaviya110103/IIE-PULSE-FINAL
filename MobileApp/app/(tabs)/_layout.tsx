@@ -24,8 +24,6 @@ const drawerItems: Array<{
   module?: string;
 }> = [
   { key: "overview", label: "Overview", icon: "grid-outline", route: "/home" },
-  { key: "attendance", label: "Attendance", icon: "time-outline", route: "/attendance" },
-  { key: "logsheet", label: "Logsheet", icon: "document-text-outline", route: "/logsheet" },
   { key: "student-desk", label: "Student Desk", icon: "desktop-outline", route: "/studentdesk" },
   { key: "daily-activity", label: "Daily Activity", icon: "flash-outline", route: "/challenge" },
   { key: "tests", label: "Tests", icon: "school-outline", route: "/quizzes" },
@@ -33,7 +31,6 @@ const drawerItems: Array<{
   { key: "calendar", label: "Calendar", icon: "calendar-outline", module: "calendar" },
   { key: "materials", label: "Materials", icon: "book-outline", route: "/(tabs)/materials" },
   { key: "fee-status", label: "Fee Status", icon: "cash-outline", route: "/feestatus" },
-  { key: "leave", label: "Leave", icon: "calendar-outline", route: "/leaveapply" },
   { key: "support", label: "Support", icon: "help-buoy-outline", route: "/support" },
   { key: "gallery", label: "Gallery", icon: "image-outline", module: "gallery" },
   { key: "awards", label: "Awards", icon: "trophy-outline", module: "awards" },

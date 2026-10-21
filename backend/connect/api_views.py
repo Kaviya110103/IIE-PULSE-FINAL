@@ -2897,6 +2897,10 @@ class BatchCreateView(APIView):
         if logsheet_file:
             batch.course_logsheet = logsheet_file
         batch.save()
+        # Build the session sheet immediately. If the course PDF is no longer
+        # present on this server, the sync helper can reuse the same course's
+        # established session structure from an older batch.
+        sync_missing_sessions_from_logsheet(batch, prefer_course_logsheet=True)
         try:
             _sync_batch_trainers(batch, trainer_ids, trainer_timings)
         except ValueError as exc:
@@ -3354,23 +3358,11 @@ class StudentProfileView(APIView):
         except Students.DoesNotExist:
             return Response({'error': 'Not found'}, status=404)
 
-        editable_fields = ['first_name', 'last_name', 'date_of_birth', 'email', 'mobile_no', 'photo']
-        update_data = {
-            field: request.data[field]
-            for field in editable_fields
-            if field in request.data and request.data[field] not in (None, '')
-        }
+        photo = request.FILES.get('photo')
+        if not photo:
+            return Response({'error': 'Only the profile photo can be updated.'}, status=400)
 
-        new_email = str(update_data.get('email', '')).strip().lower()
-        if new_email and new_email != student.email:
-            if User.objects.filter(username=new_email).exclude(pk=student.user_id).exists():
-                return Response({'error': 'This email is already registered!'}, status=400)
-            student.user.username = new_email
-            student.user.email = new_email
-            student.user.save(update_fields=['username', 'email'])
-            update_data['email'] = new_email
-
-        serializer = StudentSerializer(student, data=update_data, partial=True, context={'request': request})
+        serializer = StudentSerializer(student, data={'photo': photo}, partial=True, context={'request': request})
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
@@ -11411,7 +11403,42 @@ def sync_missing_sessions_from_logsheet(batch, debug=False, prefer_course_logshe
         prefer_course_logsheet=prefer_course_logsheet
     )
     if not sessions_data:
-        return 0
+        source_batch = (
+            Batches.objects.filter(course_name=batch.course_name)
+            .exclude(pk=batch.pk)
+            .annotate(session_count=Count('coursesession'))
+            .filter(session_count__gt=0)
+            .order_by('-start_date', '-id')
+            .first()
+        )
+        if not source_batch:
+            return 0
+
+        template_sessions = list(
+            CourseSession.objects.filter(batch=source_batch).order_by('session_number')
+        )
+        new_sessions = []
+        for template in template_sessions:
+            session, created = CourseSession.objects.get_or_create(
+                batch=batch,
+                session_number=template.session_number,
+                defaults={
+                    'title': template.title,
+                    'topics': template.topics,
+                    'staff_completed': False,
+                    'session_enabled': template.session_enabled,
+                },
+            )
+            if created:
+                new_sessions.append(session)
+        if new_sessions:
+            _ensure_student_session_rows(batch, new_sessions)
+        if debug:
+            print(
+                f"[SESSION_SYNC] Batch {batch.id}: reused {len(new_sessions)} sessions "
+                f"from batch {source_batch.id} because the course logsheet was unavailable"
+            )
+        return len(new_sessions)
 
     title_max_length = CourseSession._meta.get_field('title').max_length or 255
     for item in sessions_data:
@@ -11586,9 +11613,11 @@ def extract_and_store_sessions(request, batch_id):
                 'error': 'No logsheet uploaded for this batch or course. Please upload a PDF logsheet first.'
             }, status=400)
 
-        sessions_data = extract_sessions_from_logsheet(batch, debug=True)
-        
-        if not sessions_data:
+        before_count = CourseSession.objects.filter(batch=batch).count()
+        added_count = sync_missing_sessions_from_logsheet(batch, debug=True)
+        sessions = CourseSession.objects.filter(batch=batch).order_by('session_number')
+
+        if not sessions.exists():
             specific_error = getattr(batch, '_logsheet_extract_error', '')
             error_msg = (
                 (specific_error + ' ') if specific_error else ''
@@ -11601,13 +11630,10 @@ def extract_and_store_sessions(request, batch_id):
             print(f"[SESSION_EXTRACT] ERROR: {error_msg}")
             return Response({'error': error_msg}, status=400)
         
-        before_count = CourseSession.objects.filter(batch=batch).count()
-        added_count = sync_missing_sessions_from_logsheet(batch, debug=True)
-        sessions = CourseSession.objects.filter(batch=batch).order_by('session_number')
         students_count = active_students_for_batch(batch).count()
         
         print(f"\n[SESSION_EXTRACT] COMPLETE:")
-        print(f"  ? PDF sessions detected: {len(sessions_data)}")
+        print(f"  ? Sessions available: {sessions.count()}")
         print(f"  ? Existing sessions before sync: {before_count}")
         print(f"  ? Missing sessions added: {added_count}")
         print(f"  ? Total sessions now: {sessions.count()}")
