@@ -4675,6 +4675,9 @@ body{{font-family:Arial,sans-serif;margin:0;padding:20px;background:#f8f7ff;colo
 h1{{font-size:20px;margin:0 0 18px;color:#5523d2}}pre{{white-space:pre-wrap;word-break:break-word;background:#fff;padding:16px;border:1px solid #ddd6fe;border-radius:8px}}
 table{{width:100%;border-collapse:collapse;background:#fff;font-size:13px}}th,td{{border:1px solid #ddd6fe;padding:8px;text-align:left;vertical-align:top}}tr:nth-child(even){{background:#faf8ff}}
 .slide,.paragraph{{background:#fff;border:1px solid #ddd6fe;border-radius:8px;padding:14px;margin:0 0 12px}}
+.pdf-page{{margin:0 auto 18px;max-width:1100px}}.pdf-page img{{display:block;width:100%;height:auto;background:#fff;box-shadow:0 8px 26px rgba(32,20,60,.14)}}
+.page-label{{font-size:12px;font-weight:700;color:#6b6280;margin:0 0 6px}}body>p,body>ul,body>ol,body>table,body>h2,body>h3{{max-width:920px;margin-left:auto;margin-right:auto}}
+body>p,body>ul,body>ol{{background:#fff;padding:10px 14px;margin-top:0;margin-bottom:8px}}img{{max-width:100%;height:auto}}
 </style></head><body><h1>{escape(title)}</h1>{body}</body></html>'''
 
 
@@ -4691,6 +4694,36 @@ def _office_xml_text(file_path, prefix, text_tag, block_class):
             if texts:
                 blocks.append(f'<div class="{block_class}">{escape(" ".join(texts))}</div>')
     return ''.join(blocks)
+
+
+def _pdf_visual_preview(file_path):
+    """Render PDF pages as images so Android WebView keeps the original layout."""
+    import fitz
+
+    document = fitz.open(file_path)
+    pages = []
+    try:
+        for index, page in enumerate(document, start=1):
+            if index > 150:
+                pages.append('<div class="paragraph">Preview limited to the first 150 pages.</div>')
+                break
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
+            encoded = base64.b64encode(pixmap.tobytes('jpeg', jpg_quality=82)).decode('ascii')
+            pages.append(
+                f'<section class="pdf-page"><div class="page-label">Page {index}</div>'
+                f'<img src="data:image/jpeg;base64,{encoded}" alt="Page {index}" /></section>'
+            )
+    finally:
+        document.close()
+    return ''.join(pages)
+
+
+def _docx_visual_preview(file_path):
+    """Convert DOCX into structured HTML while preserving its formatting."""
+    import mammoth
+
+    with open(file_path, 'rb') as source:
+        return mammoth.convert_to_html(source).value
 
 
 @api_view(['GET'])
@@ -4723,21 +4756,13 @@ def preview_material(request, pk):
                 'style="max-width:100%;height:auto" alt="Material image" /></div>'
             )
         elif suffix == '.pdf':
-            reader = PyPDF2.PdfReader(file_path)
-            pages = []
-            for index, page in enumerate(reader.pages[:300], start=1):
-                text = (page.extract_text() or '').strip()
-                pages.append(
-                    f'<div class="paragraph"><strong>Page {index}</strong><br />'
-                    f'{escape(text) if text else "No readable text found on this page."}</div>'
-                )
-            body = ''.join(pages)
+            body = _pdf_visual_preview(file_path)
         elif suffix in MATERIAL_TEXT_EXTENSIONS:
             with open(file_path, 'r', encoding='utf-8', errors='replace') as handle:
                 content = handle.read(2 * 1024 * 1024)
             body = f'<pre>{escape(content)}</pre>'
         elif suffix == '.docx':
-            body = _office_xml_text(file_path, 'word/document.xml', '}t', 'paragraph')
+            body = _docx_visual_preview(file_path)
         elif suffix == '.pptx':
             body = _office_xml_text(file_path, 'ppt/slides/slide', '}t', 'slide')
         elif suffix == '.xlsx':
@@ -4754,7 +4779,7 @@ def preview_material(request, pk):
             body = ''.join(sections)
         else:
             body = '<div class="paragraph">This file format cannot be rendered inside the app. Please upload PDF, ZIP, DOCX, PPTX, XLSX, image, or text format.</div>'
-    except (OSError, ValueError, zipfile.BadZipFile, KeyError, PyPDF2.errors.PdfReadError) as exc:
+    except (OSError, ValueError, zipfile.BadZipFile, KeyError, PyPDF2.errors.PdfReadError, ImportError) as exc:
         logger.warning('Material preview failed for %s: %s', material.id, exc)
         body = '<div class="paragraph">This file could not be read. It may be corrupted or unsupported.</div>'
 
