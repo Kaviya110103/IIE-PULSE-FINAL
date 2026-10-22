@@ -50,13 +50,31 @@ export default function StudentDeskScreen() {
   const [doubtText, setDoubtText] = useState("");
 
   const loadDesk = useCallback(async () => {
-    try {
-      const [dashboardRes, attendanceRes, sessionsRes, feeRes] = await Promise.all([
-        api.get("/dashboard/student/"),
+    const fetchDeskData = async () => {
+      // Fetch this first so an expired token is refreshed before the remaining
+      // student-specific requests begin together.
+      const dashboardRes = await api.get("dashboard/student/");
+      const [attendanceRes, sessionsRes, feeRes] = await Promise.all([
         api.get("attendance/", { params: { student: "me" } }),
         api.get("sessions/student/"),
-        api.get("/student/fee/"),
+        api.get("student/fee/"),
       ]);
+
+      return { dashboardRes, attendanceRes, sessionsRes, feeRes };
+    };
+
+    try {
+      let deskData;
+      try {
+        deskData = await fetchDeskData();
+      } catch {
+        // A just-refreshed session or waking production server can briefly
+        // reject the first request. Retry once before showing an error.
+        await new Promise((resolve) => setTimeout(resolve, 700));
+        deskData = await fetchDeskData();
+      }
+
+      const { dashboardRes, attendanceRes, sessionsRes, feeRes } = deskData;
       setDashboard(dashboardRes.data || {});
       setAttendance(Array.isArray(attendanceRes.data?.results) ? attendanceRes.data.results : []);
       setSessions(Array.isArray(sessionsRes.data?.results) ? sessionsRes.data.results : Array.isArray(sessionsRes.data) ? sessionsRes.data : []);
