@@ -1,11 +1,10 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from "@react-navigation/native";
+import { DefaultTheme, ThemeProvider } from "@react-navigation/native";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect } from "react";
 import "react-native-reanimated";
 
-import { useColorScheme } from "@/hooks/use-color-scheme";
 import { defaultTextStyle, globalFontStyle } from "@/constants/typography";
 import {
   SafeAreaProvider,
@@ -65,8 +64,6 @@ function applyGlobalTypography() {
 applyGlobalTypography();
 
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
-
   useEffect(() => {
     const timer = setTimeout(() => {
       SplashScreen.hideAsync().catch(() => {});
@@ -89,9 +86,7 @@ export default function RootLayout() {
 
           
         >
-          <ThemeProvider
-            value={colorScheme === "dark" ? DarkTheme : DefaultTheme}
-          >
+          <ThemeProvider value={DefaultTheme}>
             <Stack screenOptions={{ headerShown: false, gestureEnabled: true }}>
               <Stack.Screen name="(tabs)" />
               <Stack.Screen
