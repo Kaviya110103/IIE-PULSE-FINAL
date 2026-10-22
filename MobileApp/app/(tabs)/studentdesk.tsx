@@ -51,37 +51,49 @@ export default function StudentDeskScreen() {
 
   const loadDesk = useCallback(async () => {
     const fetchDeskData = async () => {
-      // Fetch this first so an expired token is refreshed before the remaining
-      // student-specific requests begin together.
-      const dashboardRes = await api.get("dashboard/student/");
-      const [attendanceRes, sessionsRes, feeRes] = await Promise.all([
+      const results = await Promise.allSettled([
+        // This request can refresh an expired token before the remaining
+        // requests complete, but every Student Desk section is independent.
+        api.get("dashboard/student/"),
         api.get("attendance/", { params: { student: "me" } }),
         api.get("sessions/student/"),
         api.get("student/fee/"),
       ]);
 
-      return { dashboardRes, attendanceRes, sessionsRes, feeRes };
+      const responseAt = (index: number) =>
+        results[index].status === "fulfilled" ? results[index].value : null;
+
+      return {
+        dashboardRes: responseAt(0),
+        attendanceRes: responseAt(1),
+        sessionsRes: responseAt(2),
+        feeRes: responseAt(3),
+        hasSuccess: results.some((result) => result.status === "fulfilled"),
+      };
     };
 
     try {
-      let deskData;
-      try {
-        deskData = await fetchDeskData();
-      } catch {
+      let deskData = await fetchDeskData();
+      if (!deskData.hasSuccess) {
         // A just-refreshed session or waking production server can briefly
-        // reject the first request. Retry once before showing an error.
+        // reject all initial requests. Retry once without interrupting the UI.
         await new Promise((resolve) => setTimeout(resolve, 700));
         deskData = await fetchDeskData();
       }
 
       const { dashboardRes, attendanceRes, sessionsRes, feeRes } = deskData;
-      setDashboard(dashboardRes.data || {});
-      setAttendance(Array.isArray(attendanceRes.data?.results) ? attendanceRes.data.results : []);
-      setSessions(Array.isArray(sessionsRes.data?.results) ? sessionsRes.data.results : Array.isArray(sessionsRes.data) ? sessionsRes.data : []);
-      setBatchDetails(sessionsRes.data?.batch || null);
-      setFeeData(feeRes.data || {});
-    } catch (error: any) {
-      Alert.alert("Student Desk", error?.response?.data?.error || "Unable to load student desk details.");
+      if (dashboardRes) setDashboard(dashboardRes.data || {});
+      if (attendanceRes) {
+        setAttendance(Array.isArray(attendanceRes.data?.results) ? attendanceRes.data.results : []);
+      }
+      if (sessionsRes) {
+        setSessions(Array.isArray(sessionsRes.data?.results) ? sessionsRes.data.results : Array.isArray(sessionsRes.data) ? sessionsRes.data : []);
+        setBatchDetails(sessionsRes.data?.batch || null);
+      }
+      if (feeRes) setFeeData(feeRes.data || {});
+    } catch {
+      // Keep the current desk visible. Pull-to-refresh can retry any section
+      // that is temporarily unavailable.
     } finally {
       setLoading(false);
       setRefreshing(false);
