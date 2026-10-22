@@ -158,8 +158,10 @@ def check_config(mode: str) -> list[CheckResult]:
             failures.append("Mobile app.json version is missing.")
         if not isinstance(version_code, int) or version_code <= 0:
             failures.append("Android versionCode must be a positive integer.")
-        if prod_build_type != "app-bundle":
+        if mode == "production" and prod_build_type != "app-bundle":
             failures.append("EAS production buildType must be app-bundle for Play Store AAB.")
+        if mode == "local" and prod_build_type not in {"apk", "app-bundle"}:
+            failures.append("EAS Android buildType must be apk or app-bundle.")
         if mode == "production" and not prod_api.startswith("https://"):
             failures.append("Production EAS API URL must be HTTPS.")
     except Exception as exc:

@@ -141,6 +141,7 @@ export default function ZipViewerScreen() {
         params: {
           title: entry.name,
           uri: entryUrl(entry),
+          fileType: "pdf",
         },
       } as any);
       return;

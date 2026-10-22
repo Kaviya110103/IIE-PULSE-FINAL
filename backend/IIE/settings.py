@@ -149,6 +149,9 @@ if DEBUG or DEPLOYMENT_IS_LOCAL:
         '127.0.0.1',
         '.local',
     ])
+if DEBUG and '*' not in ALLOWED_HOSTS:
+    # The development phone connects through a DHCP address that can change.
+    ALLOWED_HOSTS.append('*')
 for host in [DEPLOYMENT_DOMAIN.split(':')[0]]:
     if host and host not in ALLOWED_HOSTS:
         ALLOWED_HOSTS.append(host)

@@ -16,6 +16,11 @@ import { getFileType } from "@/utils/materialLibrary";
 
 const MATERIALS_CACHE_KEY = "iie_pulse_cached_materials";
 
+const getMaterialsCacheKey = async () => {
+  const studentPk = await AsyncStorage.getItem("student_pk");
+  return `${MATERIALS_CACHE_KEY}:${studentPk || "unknown"}`;
+};
+
 type MaterialItem = {
   id: number;
   title: string;
@@ -51,7 +56,8 @@ export default function MaterialsScreen() {
         file: item.file ? resolveMediaUrl(item.file, apiBaseUrl) : item.file,
       }));
       setMaterials(mappedItems);
-      await AsyncStorage.setItem(MATERIALS_CACHE_KEY, JSON.stringify(mappedItems));
+      const cacheKey = await getMaterialsCacheKey();
+      await AsyncStorage.setItem(cacheKey, JSON.stringify(mappedItems));
     } catch (error: any) {
       if (error?.response?.status === 401 || error?.response?.status === 403) {
         setMaterials([]);
@@ -59,7 +65,8 @@ export default function MaterialsScreen() {
         return;
       }
 
-      const cached = await AsyncStorage.getItem(MATERIALS_CACHE_KEY);
+      const cacheKey = await getMaterialsCacheKey();
+      const cached = await AsyncStorage.getItem(cacheKey);
       let cachedItems: MaterialItem[] = [];
       try {
         cachedItems = cached ? JSON.parse(cached) : [];
@@ -104,13 +111,14 @@ export default function MaterialsScreen() {
     setErrorMsg("");
     const baseUrl = item.apiBaseUrl?.replace(/\/$/, "");
     const internalReaderUrl = baseUrl
-      ? `${baseUrl}/materials/${item.id}/download/`
+      ? `${baseUrl}/materials/${item.id}/preview/`
       : item.file;
     router.push({
       pathname: "/(tabs)/material-viewer",
       params: {
         title: item.title || "Material",
         uri: internalReaderUrl,
+        fileType: "pdf",
         returnTo: "/materials",
       },
     } as any);
@@ -159,7 +167,6 @@ export default function MaterialsScreen() {
           const fileType = getFileType(fileName);
           const isZip = fileType === "zip";
           const isPdf = fileType === "pdf";
-          const isDirectPreview = fileType === "image" || fileType === "text";
 
           return (
           <View key={item.id} style={styles.card}>
@@ -211,12 +218,12 @@ export default function MaterialsScreen() {
                   } as any);
                   return;
                 }
-                if (!item.file) return;
+                const baseUrl = (item.apiBaseUrl || API_BASE_URL).replace(/\/$/, "");
                 router.push({
                   pathname: "/(tabs)/material-viewer",
                   params: {
                     title: item.title || "Material",
-                    uri: item.file,
+                    uri: `${baseUrl}/materials/${item.id}/preview/`,
                     fileType,
                     returnTo: "/materials",
                   },

@@ -78,8 +78,6 @@ const sideNavItems: Array<{
   privateOnly?: boolean;
 }> = [
   { key: "overview", label: "Overview", icon: "grid-outline", route: "/home" },
-  { key: "attendance", label: "Attendance", icon: "time-outline", route: "/attendance", privateOnly: true },
-  { key: "logsheet", label: "Logsheet", icon: "document-text-outline", route: "/logsheet", privateOnly: true },
   { key: "student-desk", label: "Student Desk", icon: "desktop-outline", route: "/studentdesk", privateOnly: true },
   { key: "daily-activity", label: "Daily Activity", icon: "flash-outline", route: "/challenge", privateOnly: true },
   { key: "tests", label: "Tests", icon: "school-outline", route: "/quizzes", privateOnly: true },
@@ -87,9 +85,7 @@ const sideNavItems: Array<{
   { key: "calendar", label: "Calendar", icon: "calendar-outline", module: "calendar" },
   { key: "announcement", label: "Announcements", icon: "megaphone-outline", module: "announcement", privateOnly: true },
   { key: "materials", label: "Materials", icon: "book-outline", route: "/(tabs)/materials", privateOnly: true },
-  { key: "library", label: "Library", icon: "library-outline", route: "/(tabs)/library", privateOnly: true },
   { key: "fee-status", label: "Fee Status", icon: "cash-outline", route: "/feestatus", privateOnly: true },
-  { key: "leave", label: "Leave", icon: "calendar-outline", route: "/leaveapply", privateOnly: true },
   { key: "support", label: "Support", icon: "help-buoy-outline", route: "/support", privateOnly: true },
   { key: "gallery", label: "Gallery", icon: "image-outline", module: "gallery" },
   { key: "awards", label: "Awards", icon: "trophy-outline", module: "awards" },

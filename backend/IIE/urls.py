@@ -111,6 +111,7 @@ urlpatterns = [
     path('api/materials/upload/', v.StudyMaterialCreateView.as_view()),
     path('api/materials/<int:pk>/', v.update_material),
     path('api/materials/<int:pk>/download/', v.download_material),
+    path('api/materials/<int:pk>/preview/', v.preview_material),
     path('api/materials/<int:pk>/zip-entries/', v.material_zip_entries),
     path('api/materials/<int:pk>/zip-file/', v.material_zip_entry_file),
     path('api/materials/<int:pk>/delete/', v.delete_material),

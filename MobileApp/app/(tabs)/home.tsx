@@ -492,10 +492,6 @@ export default function Home() {
                 icon="person-outline"
               />
             </View>
-            <View style={styles.timingPill}>
-              <Ionicons name="time-outline" size={15} color="#DDD6FE" />
-              <Text style={styles.timingPillText}>{activeContext?.timing || "Timing not assigned"}</Text>
-            </View>
           </View>
         )}
 

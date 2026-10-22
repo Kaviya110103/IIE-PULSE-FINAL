@@ -5,7 +5,7 @@ import { Platform } from "react-native";
 const PRODUCTION_API = "https://iiepulse.indrainstitute.com/api/";
 const DEV_LAN_API =
   process.env.EXPO_PUBLIC_LOCAL_API_URL ||
-  (typeof __DEV__ !== "undefined" && __DEV__ ? "http://192.168.1.6:8000/api/" : "");
+  (typeof __DEV__ !== "undefined" && __DEV__ ? "http://192.168.1.11:8000/api/" : "");
 const LOCAL_LAN_API = DEV_LAN_API || PRODUCTION_API;
 const DEFAULT_API = Platform.OS === "web" ? PRODUCTION_API : LOCAL_LAN_API;
 
@@ -871,7 +871,10 @@ export function resolveMediaUrl(url?: string, apiBaseUrl = API_BASE_URL) {
   const apiOrigin = apiBaseUrl.replace(/\/api\/?$/, "");
 
   if (url.startsWith("http://") || url.startsWith("https://")) {
-    return url.replace(/^https?:\/\/(localhost|127\.0\.0\.1):8000/i, apiOrigin);
+    return url.replace(
+      /^https?:\/\/(localhost|127\.0\.0\.1|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})(?::\d+)?/i,
+      apiOrigin
+    );
   }
 
   return `${apiOrigin}${url.startsWith("/") ? "" : "/"}${url}`;
