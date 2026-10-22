@@ -1,4 +1,4 @@
-import { getWithApiFallback } from "@/services/api";
+import api, { getWithApiFallback } from "@/services/api";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
@@ -51,11 +51,26 @@ export default function MaterialViewerScreen() {
       setFailed(false);
       setPreviewHtml("");
       try {
-        const response = await getWithApiFallback(apiEndpointFromUrl(uri), {
-          headers: { Accept: "text/html" },
-          responseType: "text",
-          timeout: 30000,
-        });
+        const endpoint = apiEndpointFromUrl(uri);
+        let response;
+
+        try {
+          // Use the shared client first so an expired student token is
+          // refreshed before opening a protected material preview.
+          response = await api.get(endpoint, {
+            headers: { Accept: "text/html" },
+            responseType: "text",
+            timeout: 45000,
+          });
+        } catch {
+          // Cached material rows can retain an old API origin. Retry through
+          // the current candidate API origins before treating it as unreadable.
+          response = await getWithApiFallback(endpoint, {
+            headers: { Accept: "text/html" },
+            responseType: "text",
+            timeout: 45000,
+          });
+        }
         if (!active) return;
         const html = typeof response.data === "string" ? response.data : "";
         if (!html.trim()) throw new Error("Empty material preview");
