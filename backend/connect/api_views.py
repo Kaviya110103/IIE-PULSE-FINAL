@@ -4702,13 +4702,28 @@ def _pdf_visual_preview(file_path):
 
     document = fitz.open(file_path)
     pages = []
+    rendered_bytes = 0
+    max_pages = 24
+    max_rendered_bytes = 18 * 1024 * 1024
     try:
         for index, page in enumerate(document, start=1):
-            if index > 150:
-                pages.append('<div class="paragraph">Preview limited to the first 150 pages.</div>')
+            if index > max_pages:
+                pages.append(
+                    f'<div class="paragraph">Preview limited to the first {max_pages} pages.</div>'
+                )
                 break
-            pixmap = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
-            encoded = base64.b64encode(pixmap.tobytes('jpeg', jpg_quality=82)).decode('ascii')
+            # Keep the HTML payload comfortably below Android WebView's
+            # practical data-URL limit. Large PDFs previously caused the
+            # preview request to time out before the first page could open.
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(1, 1), alpha=False)
+            image_bytes = pixmap.tobytes('jpeg', jpg_quality=72)
+            if rendered_bytes + len(image_bytes) > max_rendered_bytes:
+                pages.append(
+                    '<div class="paragraph">Preview stopped here to keep this material fast to open.</div>'
+                )
+                break
+            rendered_bytes += len(image_bytes)
+            encoded = base64.b64encode(image_bytes).decode('ascii')
             pages.append(
                 f'<section class="pdf-page"><div class="page-label">Page {index}</div>'
                 f'<img src="data:image/jpeg;base64,{encoded}" alt="Page {index}" /></section>'

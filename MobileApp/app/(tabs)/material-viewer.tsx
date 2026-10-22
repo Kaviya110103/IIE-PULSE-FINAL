@@ -136,7 +136,15 @@ export default function MaterialViewerScreen() {
           originWhitelist={["*"]}
           setSupportMultipleWindows={false}
           javaScriptEnabled={false}
-          onError={() => setFailed(true)}
+          // The document is already fetched by Axios with the student's
+          // authorization. Android can still emit a transient WebView error
+          // while decoding large inline images, so do not replace usable HTML
+          // with the generic error state after it has been loaded.
+          onError={() => {
+            if (!previewHtml.trim()) {
+              setFailed(true);
+            }
+          }}
         />
       )}
     </View>

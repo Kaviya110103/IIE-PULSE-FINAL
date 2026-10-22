@@ -1,8 +1,10 @@
 import json
+import tempfile
 from datetime import date, timedelta
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -836,6 +838,22 @@ class StudentChallengePhaseOneTests(TestCase):
         self.assertNotIn(old_material.id, material_ids)
         denied = self.client.get(f'/api/materials/{old_material.id}/preview/')
         self.assertEqual(denied.status_code, 403)
+
+    def test_student_can_preview_an_assigned_material(self):
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                material = StudyMaterial.objects.create(
+                    batch=self.batch,
+                    uploaded_by=self.staff,
+                    title='Student notes',
+                    file=SimpleUploadedFile('student-notes.txt', b'Python variables are used to store values.'),
+                )
+                self.client.force_authenticate(user=self.student_user)
+
+                response = self.client.get(f'/api/materials/{material.id}/preview/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'Python variables are used to store values.', response.content)
 
     def test_admin_and_staff_quiz_management_are_separate(self):
         admin_user = User.objects.create_superuser(
