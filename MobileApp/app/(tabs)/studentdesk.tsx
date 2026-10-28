@@ -51,10 +51,12 @@ export default function StudentDeskScreen() {
 
   const loadDesk = useCallback(async () => {
     const fetchDeskData = async () => {
-      const results = await Promise.allSettled([
-        // This request can refresh an expired token before the remaining
-        // requests complete, but every Student Desk section is independent.
+      // Load the account endpoint first. If the access token needs a refresh,
+      // this avoids four simultaneous refresh attempts when Student Desk opens.
+      const dashboardResult = await Promise.allSettled([
         api.get("dashboard/student/"),
+      ]);
+      const results = await Promise.allSettled([
         api.get("attendance/", { params: { student: "me" } }),
         api.get("sessions/student/"),
         api.get("student/fee/"),
@@ -64,11 +66,13 @@ export default function StudentDeskScreen() {
         results[index].status === "fulfilled" ? results[index].value : null;
 
       return {
-        dashboardRes: responseAt(0),
-        attendanceRes: responseAt(1),
-        sessionsRes: responseAt(2),
-        feeRes: responseAt(3),
-        hasSuccess: results.some((result) => result.status === "fulfilled"),
+        dashboardRes: dashboardResult[0].status === "fulfilled" ? dashboardResult[0].value : null,
+        attendanceRes: responseAt(0),
+        sessionsRes: responseAt(1),
+        feeRes: responseAt(2),
+        hasSuccess:
+          dashboardResult[0].status === "fulfilled" ||
+          results.some((result) => result.status === "fulfilled"),
       };
     };
 

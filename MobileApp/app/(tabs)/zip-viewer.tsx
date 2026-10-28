@@ -17,7 +17,7 @@ import api, { API_BASE_URL } from "@/services/api";
 type ZipEntry = {
   name: string;
   path: string;
-  file_type: "pdf" | "image" | "text" | "other";
+  file_type: "pdf" | "image" | "text" | "sheet" | "document" | "other";
   size: number;
 };
 
@@ -162,7 +162,7 @@ export default function ZipViewerScreen() {
           ? `${routeApiBaseUrl.replace(/\/$/, "")}/materials/${materialId}/zip-file/`
           : `materials/${materialId}/zip-file/`;
         const response = await api.get(zipFileEndpoint, {
-          params: { path: entry.path },
+          params: { path: entry.path, raw: 1 },
           responseType: "text",
         });
         setActiveText({ name: entry.name, content: String(response.data || "").slice(0, 16000) });
@@ -171,6 +171,29 @@ export default function ZipViewerScreen() {
       } finally {
         setPreviewLoading(false);
       }
+    }
+
+    if (entry.file_type === "sheet") {
+      router.push({
+        pathname: "/(tabs)/material-viewer",
+        params: {
+          title: entry.name,
+          uri: entryUrl(entry),
+          fileType: "sheet",
+        },
+      } as any);
+      return;
+    }
+
+    if (entry.file_type === "document") {
+      router.push({
+        pathname: "/(tabs)/material-viewer",
+        params: {
+          title: entry.name,
+          uri: entryUrl(entry),
+          fileType: "document",
+        },
+      } as any);
     }
   };
 
@@ -281,6 +304,8 @@ function ReaderHeader({ title, onBack }: { title: string; onBack: () => void }) 
 function iconForEntry(type: ZipEntry["file_type"]) {
   if (type === "pdf") return "document-attach-outline";
   if (type === "image") return "image-outline";
+  if (type === "sheet") return "grid-outline";
+  if (type === "document") return "documents-outline";
   if (type === "text") return "document-text-outline";
   return "document-outline";
 }

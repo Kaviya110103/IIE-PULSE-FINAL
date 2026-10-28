@@ -1435,7 +1435,7 @@ export function StudentSectionHeader({ title, count, actions }) {
   )
 }
 
-function IIEProudCarousel({ activeIndex }) {
+export function IIEProudCarousel({ activeIndex }) {
   const slide = IIE_PROUD_SLIDES[activeIndex] || IIE_PROUD_SLIDES[0]
 
   return (
@@ -2707,18 +2707,71 @@ const getMaterialType = (name, contentType = '') => {
   const lowerType = String(contentType || '').toLowerCase()
   if (lowerType.includes('pdf') || lowerName.endsWith('.pdf')) return 'pdf'
   if (lowerType.includes('zip') || lowerName.endsWith('.zip')) return 'zip'
-  if (lowerType.includes('wordprocessingml') || lowerName.endsWith('.docx')) return 'document'
+  if (lowerType.includes('wordprocessingml') || lowerType.includes('presentationml') || /\.(docx?|pptx?)$/.test(lowerName)) return 'document'
   if (lowerType.includes('spreadsheet') || lowerType.includes('excel') || /\.(xlsx?|csv)$/.test(lowerName)) return 'sheet'
-  if (lowerType.startsWith('text/') || /\.(txt|csv|md|json|html|css|js|py|java|sql)$/.test(lowerName)) return 'text'
+  if (lowerType.startsWith('text/') || /\.(txt|csv|md|json|html|css|js|ts|tsx|jsx|py|java|sql|xml|yaml|yml|c|cpp|cs|php|go|rb|sh)$/.test(lowerName)) return 'text'
   if (lowerType.startsWith('image/') || /\.(png|jpe?g|webp|gif)$/.test(lowerName)) return 'image'
   return 'unknown'
 }
 
-const parseSheetRows = (data) => {
-  const workbook = XLSX.read(data, { type: 'array' })
-  const sheetName = workbook.SheetNames[0]
-  const rows = sheetName ? XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, blankrows: false }) : []
-  return { sheetName, rows: rows.slice(0, 120).map(row => row.slice(0, 12)) }
+const excelColumnLabel = index => {
+  let label = ''
+  let current = index + 1
+  while (current > 0) {
+    const remainder = (current - 1) % 26
+    label = String.fromCharCode(65 + remainder) + label
+    current = Math.floor((current - 1) / 26)
+  }
+  return label
+}
+
+const parseSheetRows = data => {
+  const workbook = XLSX.read(data, { type: 'array', cellNF: true, cellText: true })
+  const sheets = workbook.SheetNames.slice(0, 25).map(sheetName => {
+    const worksheet = workbook.Sheets[sheetName]
+    const range = XLSX.utils.decode_range(worksheet?.['!ref'] || 'A1')
+    const lastRow = Math.min(range.e.r, range.s.r + 499)
+    const lastColumn = Math.min(range.e.c, range.s.c + 59)
+    const mergeStarts = new Map()
+    const coveredCells = new Set()
+
+    ;(worksheet?.['!merges'] || []).forEach(merge => {
+      if (merge.s.r > lastRow || merge.s.c > lastColumn) return
+      const rowSpan = Math.min(merge.e.r, lastRow) - merge.s.r + 1
+      const colSpan = Math.min(merge.e.c, lastColumn) - merge.s.c + 1
+      mergeStarts.set(`${merge.s.r}:${merge.s.c}`, { rowSpan, colSpan })
+      for (let row = merge.s.r; row <= Math.min(merge.e.r, lastRow); row += 1) {
+        for (let col = merge.s.c; col <= Math.min(merge.e.c, lastColumn); col += 1) {
+          if (row !== merge.s.r || col !== merge.s.c) coveredCells.add(`${row}:${col}`)
+        }
+      }
+    })
+
+    const rows = []
+    for (let row = range.s.r; row <= lastRow; row += 1) {
+      const cells = []
+      for (let col = range.s.c; col <= lastColumn; col += 1) {
+        const key = `${row}:${col}`
+        if (coveredCells.has(key)) {
+          cells.push({ skip: true })
+          continue
+        }
+        const cell = worksheet?.[XLSX.utils.encode_cell({ r: row, c: col })]
+        const merge = mergeStarts.get(key)
+        cells.push({
+          address: XLSX.utils.encode_cell({ r: row, c: col }),
+          value: cell?.w ?? (cell?.v == null ? '' : String(cell.v)),
+          formula: cell?.f ? `=${cell.f}` : '',
+          isNumber: cell?.t === 'n',
+          rowSpan: merge?.rowSpan || 1,
+          colSpan: merge?.colSpan || 1,
+        })
+      }
+      rows.push({ rowNumber: row + 1, cells })
+    }
+    return { sheetName, rows, startColumn: range.s.c, columnCount: lastColumn - range.s.c + 1 }
+  })
+  return { sheets }
 }
 
 function PdfCanvasViewer({ pdfData }) {
@@ -2797,20 +2850,48 @@ function PdfCanvasViewer({ pdfData }) {
 }
 
 function SheetPreview({ sheet }) {
-  if (!sheet?.rows?.length) {
+  const [activeSheet, setActiveSheet] = useState(0)
+  const [selectedCell, setSelectedCell] = useState(null)
+  const sheets = sheet?.sheets || []
+  const selectedSheet = sheets[activeSheet]
+  if (!selectedSheet?.rows?.length) {
     return <StudentEmpty msg="No spreadsheet rows available to preview" icon="fa-table" />
   }
 
   return (
     <div style={{ overflow: 'auto', maxHeight: 'calc(100vh - 230px)' }}>
-      {sheet.sheetName && <div style={{ fontWeight: 900, color: T.navy, marginBottom: 10 }}>Sheet: {sheet.sheetName}</div>}
-      <table className="student-table" style={{ minWidth: 720 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, overflowX: 'auto', paddingBottom: 2 }}>
+        {sheets.map((item, index) => (
+          <button key={item.sheetName} type="button" className={`student-btn student-btn-sm ${index === activeSheet ? 'student-btn-primary' : 'student-btn-ghost'}`} onClick={() => { setActiveSheet(index); setSelectedCell(null) }} style={{ whiteSpace: 'nowrap' }}>
+            {item.sheetName}
+          </button>
+        ))}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '72px minmax(0, 1fr)', alignItems: 'center', minWidth: 720, marginBottom: 12, border: `1px solid ${T.border}`, borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
+        <div style={{ padding: '9px 10px', borderRight: `1px solid ${T.border}`, color: T.primary, fontSize: 12, fontWeight: 900, textAlign: 'center' }}>{selectedCell?.address || 'Cell'}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0, padding: '8px 12px' }}>
+          <span style={{ color: T.primary, fontWeight: 900, fontStyle: 'italic' }}>fx</span>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'Consolas, monospace', fontSize: 12, color: selectedCell?.formula ? T.navy : T.slate }}>
+            {selectedCell ? (selectedCell.formula || selectedCell.value || 'Empty cell') : 'Select a cell to view its value or formula'}
+          </span>
+        </div>
+      </div>
+      <table className="student-table" style={{ minWidth: Math.max(720, selectedSheet.columnCount * 112) }}>
+        <thead>
+          <tr>
+            <th style={{ width: 54, textAlign: 'center', position: 'sticky', left: 0, zIndex: 3 }}>#</th>
+            {Array.from({ length: selectedSheet.columnCount }, (_, index) => (
+              <th key={index} style={{ minWidth: 110, textAlign: 'center' }}>{excelColumnLabel(selectedSheet.startColumn + index)}</th>
+            ))}
+          </tr>
+        </thead>
         <tbody>
-          {sheet.rows.map((row, rowIndex) => (
-            <tr key={rowIndex}>
-              {row.map((cell, cellIndex) => (
-                <td key={cellIndex} style={{ fontWeight: rowIndex === 0 ? 900 : 600, background: rowIndex === 0 ? '#f5f3ff' : undefined }}>
-                  {cell == null || cell === '' ? '-' : String(cell)}
+          {selectedSheet.rows.map((row, rowIndex) => (
+            <tr key={row.rowNumber}>
+              <td style={{ width: 54, textAlign: 'center', fontWeight: 800, color: T.slate, background: '#f5f3ff', position: 'sticky', left: 0, zIndex: 2 }}>{row.rowNumber}</td>
+              {row.cells.map((cell, cellIndex) => cell.skip ? null : (
+                <td key={cellIndex} rowSpan={cell.rowSpan} colSpan={cell.colSpan} onClick={() => setSelectedCell(cell)} title={cell.formula || cell.value || 'Empty cell'} style={{ minWidth: 110, fontWeight: rowIndex === 0 ? 800 : 500, textAlign: cell.isNumber ? 'right' : 'left', background: selectedCell?.address === cell.address ? '#e9ddff' : (rowIndex === 0 ? '#fbfaff' : undefined), outline: selectedCell?.address === cell.address ? `2px solid ${T.primary}` : 'none', outlineOffset: -2, cursor: 'cell' }}>
+                  {cell.value || ''}
                 </td>
               ))}
             </tr>
@@ -2975,7 +3056,7 @@ function StudentMaterialViewer({ viewer, onClose, onOpenZipEntry, onBackToZip })
                   onClick={() => onOpenZipEntry(entry)}
                   style={{ justifyContent: 'flex-start', width: '100%', textAlign: 'left' }}
                 >
-                  <i className={`fas ${entry.file_type === 'pdf' ? 'fa-file-pdf' : entry.file_type === 'image' ? 'fa-image' : entry.file_type === 'text' ? 'fa-file-lines' : 'fa-file'}`} />
+                  <i className={`fas ${entry.file_type === 'pdf' ? 'fa-file-pdf' : entry.file_type === 'image' ? 'fa-image' : entry.file_type === 'sheet' ? 'fa-file-excel' : entry.file_type === 'document' ? 'fa-file-word' : entry.file_type === 'text' ? 'fa-file-code' : 'fa-file'}`} />
                   <span style={{ overflowWrap: 'anywhere' }}>{entry.name || entry.path}</span>
                 </button>
               )) : <StudentEmpty msg="No readable files found inside this ZIP" icon="fa-file-zipper" />}
@@ -3044,13 +3125,24 @@ export function StudentMaterials() {
         return
       }
 
-      if (candidateName.endsWith('.docx')) {
+      if (/\.(docx?|pptx?)$/.test(candidateName)) {
         const previewRes = await api.get(`/materials/${material.id}/preview/`, {
           headers: { Accept: 'text/html' },
           responseType: 'text',
         })
         showViewer({ type: 'html', material, html: previewRes.data })
         return
+      }
+
+      if (/\.(xlsx|xlsm)$/.test(candidateName)) {
+        const previewRes = await api.get(`/materials/${material.id}/preview/`, {
+          headers: { Accept: 'text/html' },
+          responseType: 'text',
+        })
+        if (previewRes.headers?.['x-workbook-preview'] === 'visual') {
+          showViewer({ type: 'html', material, html: previewRes.data })
+          return
+        }
       }
 
       const res = await api.get(`/materials/${material.id}/download/`, { responseType: 'arraybuffer' })
@@ -3099,8 +3191,24 @@ export function StudentMaterials() {
     if (!viewer?.material) return
     try {
       setOpeningId(viewer.material.id)
+      if (entry.file_type === 'document') {
+        const response = await api.get(`/materials/${viewer.material.id}/zip-file/`, {
+          params: { path: entry.path },
+          headers: { Accept: 'text/html' },
+          responseType: 'text',
+        })
+        showViewer({
+          type: 'html',
+          material: viewer.material,
+          entry,
+          html: response.data,
+          zipEntries: viewer.entries || viewer.zipEntries || [],
+          zipTitle: viewer.material?.title || 'ZIP Material',
+        })
+        return
+      }
       const response = await api.get(`/materials/${viewer.material.id}/zip-file/`, {
-        params: { path: entry.path },
+        params: { path: entry.path, raw: entry.file_type === 'text' || entry.file_type === 'sheet' ? '1' : undefined },
         responseType: 'arraybuffer',
       })
       const nextViewer = buildViewerFromResponse(viewer.material, response, entry)

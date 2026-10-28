@@ -6,7 +6,7 @@ const PRODUCTION_API = "https://iiepulse.indrainstitute.com/api/";
 const LOCAL_WEB_API = "http://127.0.0.1:8000/api/";
 const DEV_LAN_API =
   process.env.EXPO_PUBLIC_LOCAL_API_URL ||
-  (typeof __DEV__ !== "undefined" && __DEV__ ? "http://192.168.1.11:8000/api/" : "");
+  (typeof __DEV__ !== "undefined" && __DEV__ ? "http://192.168.1.34:8000/api/" : "");
 const LOCAL_LAN_API = DEV_LAN_API || PRODUCTION_API;
 const DEFAULT_API =
   Platform.OS === "web" && typeof __DEV__ !== "undefined" && __DEV__
@@ -253,8 +253,9 @@ export type GuestRegistrationPayload = {
   city?: string;
   state?: string;
   branch: string;
-  username: string;
-  password: string;
+  source: string;
+  username?: string;
+  password?: string;
 };
 
 export type GalleryItem = {
@@ -728,12 +729,12 @@ export async function registerGuest(payload: GuestRegistrationPayload) {
     }
 
     const users = await getGuestUsers();
-    const username = payload.username.trim().toLowerCase();
+    const username = (payload.username || payload.email).trim().toLowerCase();
     const email = payload.email.trim().toLowerCase();
 
     const alreadyExists = users.some(
       (user) =>
-        user.username.trim().toLowerCase() === username ||
+        (user.username || user.email || "").trim().toLowerCase() === username ||
         user.email.trim().toLowerCase() === email
     );
 
@@ -748,6 +749,7 @@ export async function registerGuest(payload: GuestRegistrationPayload) {
       ...payload,
       username,
       email,
+      password: payload.password || payload.mobile,
     };
 
     await AsyncStorage.setItem(
@@ -818,9 +820,9 @@ export async function loginGuest(usernameInput: string, passwordInput: string) {
 
     const guestUser = users.find(
       (user) =>
-        (user.username.trim().toLowerCase() === loginId ||
+        ((user.username || user.email || "").trim().toLowerCase() === loginId ||
           user.email.trim().toLowerCase() === loginId) &&
-        user.password === password
+        (user.password || user.mobile) === password
     );
 
     if (!guestUser) {

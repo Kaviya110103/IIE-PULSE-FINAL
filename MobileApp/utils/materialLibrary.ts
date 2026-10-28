@@ -4,7 +4,7 @@ import { unzipSync, strFromU8 } from "fflate";
 import { Buffer } from "buffer";
 import { API_BASE_URL } from "@/services/api";
 
-export type LibraryFileType = "image" | "text" | "pdf" | "zip" | "document" | "other";
+export type LibraryFileType = "image" | "text" | "pdf" | "zip" | "sheet" | "document" | "other";
 
 export type LibraryChildFile = {
   id: string;
@@ -90,16 +90,17 @@ function getFileName(material: DownloadableMaterial) {
 export function getFileType(fileName: string): LibraryFileType {
   const lower = fileName.toLowerCase();
   if (/\.(png|jpe?g|webp|gif)$/.test(lower)) return "image";
-  if (/\.(txt|csv|md|json|html|css|js|py|java|sql)$/.test(lower)) return "text";
+  if (/\.(txt|csv|md|json|html|css|js|ts|tsx|jsx|py|java|sql|xml|yaml|yml|c|cpp|cs|php|go|rb|sh)$/.test(lower)) return "text";
   if (lower.endsWith(".pdf")) return "pdf";
   if (lower.endsWith(".zip")) return "zip";
-  if (/\.(docx?|pptx?|xlsx?)$/.test(lower)) return "document";
+  if (/\.(xlsx?|xlsm)$/.test(lower)) return "sheet";
+  if (/\.(docx?|pptx?)$/.test(lower)) return "document";
   return "other";
 }
 
 function isReadableZipEntry(fileName: string) {
   const type = getFileType(fileName);
-  return type === "pdf" || type === "image" || type === "text";
+  return type === "pdf" || type === "image" || type === "text" || type === "sheet";
 }
 
 function shouldSkipZipPath(fileName: string) {

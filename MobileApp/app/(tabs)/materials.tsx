@@ -219,11 +219,14 @@ export default function MaterialsScreen() {
                   return;
                 }
                 const baseUrl = (item.apiBaseUrl || API_BASE_URL).replace(/\/$/, "");
+                const isCodeOrText = fileType === "text";
                 router.push({
                   pathname: "/(tabs)/material-viewer",
                   params: {
                     title: item.title || "Material",
-                    uri: `${baseUrl}/materials/${item.id}/preview/`,
+                    uri: isCodeOrText
+                      ? `${baseUrl}/materials/${item.id}/download/`
+                      : `${baseUrl}/materials/${item.id}/preview/`,
                     fileType,
                     returnTo: "/materials",
                   },

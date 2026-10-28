@@ -27,6 +27,7 @@ export default function Login() {
       const d = result.data
       toast.success(`Welcome, ${d.name || d.username}!`)
       if (d.user_type === 'student') navigate('/dashboard')
+      else if (d.user_type === 'public') navigate('/public')
       else if (d.user_type === 'admin') navigate('/admin')
       else if (d.designation === 'counselor') navigate('/counselor')
       else navigate('/employee')
@@ -596,6 +597,17 @@ export default function Login() {
                 {loading ? 'Signing in…' : 'Sign In'}
               </button>
             </form>
+
+            <div style={{ marginTop: 16, textAlign: 'center', fontSize: 12, color: '#8099b3' }}>
+              New to IIE Pulse?{' '}
+              <button
+                type="button"
+                onClick={() => navigate('/register')}
+                style={{ border: 0, background: 'none', padding: 0, color: '#f4a940', font: '600 12px DM Sans', cursor: 'pointer' }}
+              >
+                Register to Join
+              </button>
+            </div>
 
             <div className="iie-footer">IIE Pulse © 2025 — All rights reserved</div>
           </div>

@@ -7,6 +7,8 @@ def ensure_counselor_announcement_schema(apps, schema_editor):
     connection = schema_editor.connection
 
     def table_exists(table_name):
+        if connection.vendor == 'sqlite':
+            return table_name in connection.introspection.table_names()
         with connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -21,6 +23,10 @@ def ensure_counselor_announcement_schema(apps, schema_editor):
 
     def column_exists(table_name, column_name):
         with connection.cursor() as cursor:
+            if connection.vendor == 'sqlite':
+                return column_name in {
+                    column.name for column in connection.introspection.get_table_description(cursor, table_name)
+                }
             cursor.execute(
                 """
                 SELECT 1
@@ -56,17 +62,36 @@ def ensure_counselor_announcement_schema(apps, schema_editor):
                 "ADD COLUMN views_count integer UNSIGNED NOT NULL DEFAULT 0"
             )
         if not table_exists('counselor_announcement_specific_students'):
-            cursor.execute(
-                """
-                CREATE TABLE counselor_announcement_specific_students (
-                    id bigint AUTO_INCREMENT NOT NULL PRIMARY KEY,
-                    announcement_id bigint NOT NULL,
-                    students_id bigint NOT NULL,
-                    INDEX counselor_ann_student_announcement_idx (announcement_id),
-                    INDEX counselor_ann_student_student_idx (students_id)
+            if connection.vendor == 'sqlite':
+                cursor.execute(
+                    """
+                    CREATE TABLE counselor_announcement_specific_students (
+                        id integer NOT NULL PRIMARY KEY AUTOINCREMENT,
+                        announcement_id bigint NOT NULL,
+                        students_id bigint NOT NULL
+                    )
+                    """
                 )
-                """
-            )
+                cursor.execute(
+                    "CREATE INDEX counselor_ann_student_announcement_idx "
+                    "ON counselor_announcement_specific_students (announcement_id)"
+                )
+                cursor.execute(
+                    "CREATE INDEX counselor_ann_student_student_idx "
+                    "ON counselor_announcement_specific_students (students_id)"
+                )
+            else:
+                cursor.execute(
+                    """
+                    CREATE TABLE counselor_announcement_specific_students (
+                        id bigint AUTO_INCREMENT NOT NULL PRIMARY KEY,
+                        announcement_id bigint NOT NULL,
+                        students_id bigint NOT NULL,
+                        INDEX counselor_ann_student_announcement_idx (announcement_id),
+                        INDEX counselor_ann_student_student_idx (students_id)
+                    )
+                    """
+                )
 
 
 class Migration(migrations.Migration):

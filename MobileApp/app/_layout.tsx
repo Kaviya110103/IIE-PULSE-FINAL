@@ -95,7 +95,7 @@ export default function RootLayout() {
               />
             </Stack>
 
-            <StatusBar style="auto" />
+            <StatusBar style="dark" backgroundColor="#F6F3FF" translucent={false} />
           </ThemeProvider>
         </View>
       </SafeAreaView>

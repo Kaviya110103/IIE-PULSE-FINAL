@@ -57,7 +57,7 @@ export const logoutSession = async ({ redirect = true, keepalive = false } = {})
   } finally {
     localStorage.clear()
     if (inactivityTimer) clearTimeout(inactivityTimer)
-    if (redirect) window.location.href = '/'
+    if (redirect) window.location.href = '/login'
     logoutInProgress = false
   }
 }
@@ -93,7 +93,8 @@ api.interceptors.response.use(
     const isAuthRequest =
       requestUrl.includes('/auth/login/') ||
       requestUrl.includes('/auth/refresh/') ||
-      requestUrl.includes('/auth/logout/')
+      requestUrl.includes('/auth/logout/') ||
+      requestUrl.includes('/public-users/login/')
 
     if (err.response?.status === 401 && orig && !orig._retry && !isAuthRequest) {
       orig._retry = true
@@ -103,7 +104,7 @@ api.interceptors.response.use(
 
         if (!refresh) {
           localStorage.clear()
-          window.location.href = '/'
+          window.location.href = '/login'
           return Promise.reject(err)
         }
 
@@ -115,7 +116,7 @@ api.interceptors.response.use(
         return api(orig)
       } catch {
         localStorage.clear()
-        window.location.href = '/'
+        window.location.href = '/login'
       }
     }
 
