@@ -3,11 +3,11 @@ import { ThemedView } from "@/components/themed-view";
 import { registerGuest } from "@/services/api";
 import { Ionicons } from "@expo/vector-icons";
 import { Picker } from "@react-native-picker/picker";
-import { useRouter } from "expo-router";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -29,9 +29,7 @@ type RegisterForm = {
   city: string;
   state: string;
   branch: string;
-  username: string;
-  password: string;
-  confirmPassword: string;
+  source: string;
 };
 
 const initialForm: RegisterForm = {
@@ -45,20 +43,15 @@ const initialForm: RegisterForm = {
   city: "",
   state: "",
   branch: "",
-  username: "",
-  password: "",
-  confirmPassword: "",
+  source: "",
 };
 
 export default function RegisterScreen() {
-  const router = useRouter();
   const [form, setForm] = useState(initialForm);
   const [errorMsg, setErrorMsg] = useState("");
   const [locationHint, setLocationHint] = useState("");
   const [loading, setLoading] = useState(false);
   const [fetchingLocation, setFetchingLocation] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const updateField = (key: keyof RegisterForm, value: string) => {
     setForm((current) => ({ ...current, [key]: value }));
@@ -140,9 +133,7 @@ export default function RegisterScreen() {
       city: form.city.trim(),
       state: form.state.trim(),
       branch: form.branch.trim(),
-      username: form.username.trim().toLowerCase(),
-      password: form.password.trim(),
-      confirmPassword: form.confirmPassword.trim(),
+      source: form.source.trim(),
     };
 
     if (
@@ -154,9 +145,7 @@ export default function RegisterScreen() {
       !cleaned.pincode ||
       !cleaned.location ||
       !cleaned.branch ||
-      !cleaned.username ||
-      !cleaned.password ||
-      !cleaned.confirmPassword
+      !cleaned.source
     ) {
       setErrorMsg("Please fill all fields.");
       return;
@@ -177,16 +166,6 @@ export default function RegisterScreen() {
       return;
     }
 
-    if (cleaned.password.length < 6) {
-      setErrorMsg("Password must be at least 6 characters.");
-      return;
-    }
-
-    if (cleaned.password !== cleaned.confirmPassword) {
-      setErrorMsg("Password and Confirm Password do not match.");
-      return;
-    }
-
     setLoading(true);
 
     const result = await registerGuest({
@@ -200,8 +179,9 @@ export default function RegisterScreen() {
       city: cleaned.city,
       state: cleaned.state,
       branch: cleaned.branch,
-      username: cleaned.username,
-      password: cleaned.password,
+      source: cleaned.source,
+      username: cleaned.email,
+      password: cleaned.mobile,
     });
 
     setLoading(false);
@@ -211,7 +191,11 @@ export default function RegisterScreen() {
       return;
     }
 
-    router.replace("/loginform" as any);
+    setForm(initialForm);
+    Alert.alert(
+      "Registration successful",
+      "Use your Email ID as username and Mobile Number as password when you login."
+    );
   };
 
   return (
@@ -288,6 +272,24 @@ export default function RegisterScreen() {
                 <Picker.Item label="Kuniyamuthur" value="kuniyamuthur" />
               </Picker>
             </View>
+            <Text style={styles.fieldLabel}>How did you hear about us?</Text>
+            <View style={styles.pickerWrapper}>
+              <Ionicons name="megaphone-outline" size={18} color="#5523D2" />
+              <Picker
+                selectedValue={form.source}
+                onValueChange={(value) => updateField("source", value)}
+                enabled={!loading}
+                style={styles.picker}
+              >
+                <Picker.Item label="Choose Source" value="" />
+                <Picker.Item label="Google" value="google" />
+                <Picker.Item label="Facebook" value="facebook" />
+                <Picker.Item label="Instagram" value="instagram" />
+                <Picker.Item label="LinkedIn" value="linkedin" />
+                <Picker.Item label="Friends" value="friends" />
+                <Picker.Item label="Others" value="others" />
+              </Picker>
+            </View>
             <InputRow
               label="Pincode"
               icon="location-outline"
@@ -321,55 +323,12 @@ export default function RegisterScreen() {
               editable={!loading}
             />
 
-            <InputRow
-              label="Username"
-              icon="at-outline"
-              placeholder="Username"
-              value={form.username}
-              onChangeText={(value) => updateField("username", value)}
-              autoCapitalize="none"
-              editable={!loading}
-            />
-            <InputRow
-              label="Password"
-              icon="lock-closed-outline"
-              placeholder="Password"
-              value={form.password}
-              onChangeText={(value) => updateField("password", value)}
-              secureTextEntry={!showPassword}
-              autoCapitalize="none"
-              editable={!loading}
-              trailing={
-                <Pressable onPress={() => setShowPassword((value) => !value)}>
-                  <Ionicons
-                    name={showPassword ? "eye-off-outline" : "eye-outline"}
-                    size={20}
-                    color="#5523D2"
-                  />
-                </Pressable>
-              }
-            />
-            <InputRow
-              label="Confirm Password"
-              icon="shield-checkmark-outline"
-              placeholder="Confirm Password"
-              value={form.confirmPassword}
-              onChangeText={(value) => updateField("confirmPassword", value)}
-              secureTextEntry={!showConfirmPassword}
-              autoCapitalize="none"
-              editable={!loading}
-              trailing={
-                <Pressable
-                  onPress={() => setShowConfirmPassword((value) => !value)}
-                >
-                  <Ionicons
-                    name={showConfirmPassword ? "eye-off-outline" : "eye-outline"}
-                    size={20}
-                    color="#5523D2"
-                  />
-                </Pressable>
-              }
-            />
+            <View style={styles.loginInfo}>
+              <Ionicons name="information-circle-outline" size={19} color="#5523D2" />
+              <ThemedText style={styles.loginInfoText}>
+                Login details: use your Email ID as username and Mobile Number as password.
+              </ThemedText>
+            </View>
 
             {errorMsg ? (
               <ThemedText style={styles.errorText}>{errorMsg}</ThemedText>
@@ -562,6 +521,24 @@ const styles = StyleSheet.create({
     color: "#4B5563",
     fontSize: 13,
     fontWeight: "700",
+  },
+  loginInfo: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    backgroundColor: "#F5F3FF",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    marginBottom: 12,
+  },
+  loginInfoText: {
+    flex: 1,
+    color: "#4B5563",
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
   },
   errorText: {
     color: "#DC2626",

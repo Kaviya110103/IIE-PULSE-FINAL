@@ -2,11 +2,11 @@
   "expo": {
     "name": "iiepulse",
     "slug": "iiepulse",
-    "version": "1.0.6",
+    "version": "1.0.7",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "myapp",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true
@@ -20,7 +20,7 @@
       "usesCleartextTraffic": true,
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "versionCode": 10,
+      "versionCode": 11,
       "package": "com.wingroo.iiepulse"
     },
     "web": {

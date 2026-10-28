@@ -17,7 +17,7 @@ import api, { API_BASE_URL } from "@/services/api";
 type ZipEntry = {
   name: string;
   path: string;
-  file_type: "pdf" | "image" | "text" | "other";
+  file_type: "pdf" | "image" | "text" | "sheet" | "document" | "other";
   size: number;
 };
 
@@ -162,7 +162,7 @@ export default function ZipViewerScreen() {
           ? `${routeApiBaseUrl.replace(/\/$/, "")}/materials/${materialId}/zip-file/`
           : `materials/${materialId}/zip-file/`;
         const response = await api.get(zipFileEndpoint, {
-          params: { path: entry.path },
+          params: { path: entry.path, raw: 1 },
           responseType: "text",
         });
         setActiveText({ name: entry.name, content: String(response.data || "").slice(0, 16000) });
@@ -171,6 +171,29 @@ export default function ZipViewerScreen() {
       } finally {
         setPreviewLoading(false);
       }
+    }
+
+    if (entry.file_type === "sheet") {
+      router.push({
+        pathname: "/(tabs)/material-viewer",
+        params: {
+          title: entry.name,
+          uri: entryUrl(entry),
+          fileType: "sheet",
+        },
+      } as any);
+      return;
+    }
+
+    if (entry.file_type === "document") {
+      router.push({
+        pathname: "/(tabs)/material-viewer",
+        params: {
+          title: entry.name,
+          uri: entryUrl(entry),
+          fileType: "document",
+        },
+      } as any);
     }
   };
 
@@ -281,12 +304,14 @@ function ReaderHeader({ title, onBack }: { title: string; onBack: () => void }) 
 function iconForEntry(type: ZipEntry["file_type"]) {
   if (type === "pdf") return "document-attach-outline";
   if (type === "image") return "image-outline";
+  if (type === "sheet") return "grid-outline";
+  if (type === "document") return "documents-outline";
   if (type === "text") return "document-text-outline";
   return "document-outline";
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#1F1930" },
+  screen: { flex: 1, backgroundColor: "#F6F3FF" },
   content: { paddingBottom: 28 },
   header: {
     paddingTop: 48,
@@ -308,20 +333,20 @@ const styles = StyleSheet.create({
   kicker: { color: "#DDD6FE", fontSize: 10, fontWeight: "900", textTransform: "uppercase" },
   title: { color: "#FFFFFF", fontSize: 16, fontWeight: "900", marginTop: 2 },
   centerPanel: { padding: 28, alignItems: "center", justifyContent: "center", minHeight: 360 },
-  helper: { color: "#DDD6FE", textAlign: "center", marginTop: 10, lineHeight: 20 },
-  errorText: { color: "#FCA5A5", textAlign: "center", marginTop: 12, lineHeight: 21, fontWeight: "800" },
-  emptyTitle: { color: "#FFFFFF", fontSize: 18, fontWeight: "900", marginTop: 12 },
+  helper: { color: "#667085", textAlign: "center", marginTop: 10, lineHeight: 20 },
+  errorText: { color: "#DC2626", textAlign: "center", marginTop: 12, lineHeight: 21, fontWeight: "800" },
+  emptyTitle: { color: "#1F1335", fontSize: 18, fontWeight: "900", marginTop: 12 },
   listCard: {
     margin: 16,
     padding: 12,
     borderRadius: 20,
-    backgroundColor: "#171420",
+    backgroundColor: "#FFFFFF",
     borderWidth: 1,
-    borderColor: "#3B216A",
+    borderColor: "#E9D5FF",
   },
-  countText: { color: "#DDD6FE", fontSize: 12, fontWeight: "900", marginBottom: 10, paddingHorizontal: 4 },
+  countText: { color: "#5B21B6", fontSize: 12, fontWeight: "900", marginBottom: 10, paddingHorizontal: 4 },
   noticeText: {
-    color: "#FDE68A",
+    color: "#92400E",
     fontSize: 12,
     fontWeight: "800",
     lineHeight: 18,
@@ -334,21 +359,21 @@ const styles = StyleSheet.create({
     gap: 10,
     padding: 12,
     borderRadius: 15,
-    backgroundColor: "#221B33",
+    backgroundColor: "#F8F5FF",
     borderWidth: 1,
-    borderColor: "#3B216A",
+    borderColor: "#E9D5FF",
     marginBottom: 10,
   },
   entryIcon: {
     width: 42,
     height: 42,
     borderRadius: 14,
-    backgroundColor: "#2D2144",
+    backgroundColor: "#EDE9FE",
     alignItems: "center",
     justifyContent: "center",
   },
-  entryName: { color: "#FFFFFF", fontSize: 14, fontWeight: "900" },
-  entryPath: { color: "#A78BFA", fontSize: 11, marginTop: 3 },
+  entryName: { color: "#1F1335", fontSize: 14, fontWeight: "900" },
+  entryPath: { color: "#6D28D9", fontSize: 11, marginTop: 3 },
   imagePreview: { flex: 1, width: "100%" },
   textReader: { flex: 1, backgroundColor: "#FFFFFF" },
   previewText: { color: "#111827", fontSize: 13, lineHeight: 21 },

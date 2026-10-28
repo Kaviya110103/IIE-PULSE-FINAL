@@ -14,36 +14,36 @@ const S = {
     display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0,
     borderBottom: '3px solid #1572e8',
   },
-  logoText: { fontWeight: 800, fontSize: 16, color: '#1a2035', lineHeight: 1.1 },
-  logoSub: { fontSize: 10, color: '#888', marginTop: 2 },
+  logoText: { fontWeight: 800, fontSize: 15, color: '#1a2035', lineHeight: 1.1 },
+  logoSub: { fontSize: 9, color: '#888', marginTop: 2 },
   userBox: {
     padding: '10px 16px', background: 'rgba(255,255,255,.05)',
     borderBottom: '1px solid rgba(255,255,255,.07)', flexShrink: 0,
   },
-  userName: { color: '#fff', fontWeight: 600, fontSize: 13 },
-  userRole: { color: 'rgba(255,255,255,.4)', fontSize: 11, textTransform: 'capitalize' },
+  userName: { color: '#fff', fontWeight: 600, fontSize: 12 },
+  userRole: { color: 'rgba(255,255,255,.4)', fontSize: 10, textTransform: 'capitalize' },
   sectionLabel: {
     padding: '14px 16px 4px', fontSize: 10, fontWeight: 700,
     color: 'rgba(255,255,255,.3)', textTransform: 'uppercase', letterSpacing: '.12em',
   },
   navLink: (active) => ({
-    display: 'flex', alignItems: 'center', gap: 11, padding: '9px 16px',
+    display: 'flex', alignItems: 'center', gap: 10, padding: '7px 16px',
     color: active ? '#fff' : 'rgba(255,255,255,.65)',
-    textDecoration: 'none', fontSize: 13.5, fontWeight: active ? 600 : 400,
+    textDecoration: 'none', fontSize: 12.5, fontWeight: active ? 600 : 400,
     background: active ? 'rgba(21,114,232,.25)' : 'transparent',
     borderLeft: active ? '3px solid #1572e8' : '3px solid transparent',
     transition: 'all .15s', cursor: 'pointer',
   }),
   groupHeader: (open) => ({
-    display: 'flex', alignItems: 'center', gap: 11, padding: '9px 16px',
+    display: 'flex', alignItems: 'center', gap: 10, padding: '7px 16px',
     color: open ? '#fff' : 'rgba(255,255,255,.65)',
-    cursor: 'pointer', fontSize: 13.5, fontWeight: open ? 600 : 400,
+    cursor: 'pointer', fontSize: 12.5, fontWeight: open ? 600 : 400,
     background: open ? 'rgba(21,114,232,.15)' : 'transparent',
     borderLeft: open ? '3px solid #1572e8' : '3px solid transparent',
     transition: 'all .15s', userSelect: 'none',
   }),
   subItem: (active) => ({
-    display: 'block', padding: '7px 16px 7px 46px', fontSize: 13,
+    display: 'block', padding: '6px 16px 6px 44px', fontSize: 12,
     color: active ? '#fff' : 'rgba(255,255,255,.55)',
     textDecoration: 'none', fontWeight: active ? 600 : 400,
     background: active ? 'rgba(21,114,232,.2)' : 'transparent',
@@ -53,7 +53,7 @@ const S = {
   logoutBtn: {
     display: 'flex', alignItems: 'center', gap: 11, padding: '10px 16px',
     width: '100%', background: 'none', border: 'none',
-    color: 'rgba(255,255,255,.55)', cursor: 'pointer', fontSize: 13.5,
+    color: 'rgba(255,255,255,.55)', cursor: 'pointer', fontSize: 12.5,
     borderTop: '1px solid rgba(255,255,255,.07)', marginTop: 'auto',
   },
 }
@@ -289,17 +289,54 @@ function StudentNav() {
   )
 }
 
-// ── MAIN EXPORT ────────────────────────────────────────────────────────────
-export default function Sidebar({ role }) {
-  const { user, logout } = useAuth()
-
-  const navMap = { admin: AdminNav, counselor: CounselorNav, employee: EmployeeNav, student: StudentNav }
-  const Nav = navMap[role] || AdminNav
-
-  const roleIcon = { admin: 'fa-user-shield', counselor: 'fa-user-tie', employee: 'fa-chalkboard-teacher', student: 'fa-user-graduate' }
+// ── PUBLIC LEARNER NAV ────────────────────────────────────────────────────
+function PublicNav() {
+  const restricted = module => `/public/restricted?module=${encodeURIComponent(module)}`
 
   return (
-    <div style={S.sidebar}>
+    <>
+      <NavItem to="/public" icon="fa-home" label="Dashboard" />
+      <SectionLabel label="My Learning" />
+      <NavItem to={restricted('Profile')} icon="fa-user-circle" label="Profile" />
+      <NavItem to="/public/news" icon="fa-bullhorn" label="Announcements" />
+      <NavItem to={restricted('Attendance')} icon="fa-user-check" label="Attendance" />
+      <NavItem to={restricted('Student Desk')} icon="fa-desktop" label="Student Desk" />
+      <NavItem to={restricted('My Batches')} icon="fa-layer-group" label="My Batches" />
+      <NavItem to="/public/skillset" icon="fa-bolt" label="Skillset" />
+      <NavGroup icon="fa-flask" label="Tests & Quizzes">
+        <SubLink to="/public/skillset" label="Skillset Quizzes" />
+        <SubLink to={restricted('Technical Tests')} label="Technical Tests" />
+      </NavGroup>
+      <NavItem to={restricted('Study Materials')} icon="fa-book" label="Study Materials" />
+      <NavGroup icon="fa-calendar-plus" label="Leave Request">
+        <SubLink to={restricted('Leave Request')} label="Apply Leave" />
+      </NavGroup>
+      <NavGroup icon="fa-headset" label="Support Request">
+        <SubLink to={restricted('Support Request')} label="New Request" />
+      </NavGroup>
+      <NavItem to={restricted('Fee Details')} icon="fa-rupee-sign" label="Fee Details" />
+      <SectionLabel label="Explore" />
+      <NavItem to="/public/gallery" icon="fa-images" label="Gallery" />
+      <NavItem to="/public/contact" icon="fa-phone-alt" label="Contact Us" />
+    </>
+  )
+}
+
+// ── MAIN EXPORT ────────────────────────────────────────────────────────────
+export default function Sidebar({ role, isOpen = true }) {
+  const { user, logout } = useAuth()
+
+  const navMap = { admin: AdminNav, counselor: CounselorNav, employee: EmployeeNav, student: StudentNav, public: PublicNav }
+  const Nav = navMap[role] || AdminNav
+
+  const roleIcon = { admin: 'fa-user-shield', counselor: 'fa-user-tie', employee: 'fa-chalkboard-teacher', student: 'fa-user-graduate', public: 'fa-user' }
+
+  return (
+    <div style={{
+      ...S.sidebar,
+      transform: isOpen ? 'translateX(0)' : 'translateX(-100%)',
+      transition: 'transform .2s ease',
+    }}>
       {/* Logo */}
       <div style={S.logoBox}>
         <div style={{

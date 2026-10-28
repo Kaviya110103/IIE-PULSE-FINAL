@@ -99,13 +99,72 @@ export function AdminStyles() {
         font-family: 'Playfair Display', serif;
       }
 
+      .public-users-page .admin-page-header { margin-bottom: 12px; padding: 12px 16px; border: 1px solid ${T.border}; border-radius: 10px; }
+      .public-users-page .admin-page-header > div { display: flex; align-items: center; min-height: 34px; }
+      .public-users-page .admin-page-header h3 { font-size: 21px; }
+      .public-users-page .admin-page-header p { font-size: 12px; }
+      .public-users-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
+      .public-users-tab {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 66px;
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid ${T.border};
+        border-radius: 12px;
+        color: inherit;
+        background: inherit;
+        cursor: pointer;
+        text-align: left;
+        transition: transform .18s ease, box-shadow .18s ease;
+      }
+      .public-users-tab:hover, .public-users-tab.is-active { transform: translateY(-2px); box-shadow: ${T.shadow}; }
+      .public-users-tab-icon { width: 38px; height: 38px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 9px; font-size: 16px; }
+      .public-users-tab-copy { flex: 1; }
+      .public-users-tab-label { display: block; margin-bottom: 2px; font-size: 12px; font-weight: 800; }
+      .public-users-tab-count { display: block; font-size: 20px; font-weight: 900; line-height: 1; }
+      .public-users-tab-arrow { font-size: 13px; }
+      .public-users-filter-card { margin-bottom: 12px; padding: 12px 14px; }
+      .public-users-table-card { border-radius: 12px; }
+      .public-users-table-wrap { overflow-x: auto; }
+      .public-users-table { width: 100%; min-width: 1180px; table-layout: fixed; border-collapse: collapse; }
+      .public-users-table th { height: 40px; padding: 0 10px; white-space: nowrap; vertical-align: middle; font-size: 11px; }
+      .public-users-table td { height: 64px; padding: 0 10px; vertical-align: middle; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+      .public-users-table tbody tr { height: 64px; }
+      .public-users-table tbody tr:hover { filter: brightness(1.03); }
+      .public-users-table .public-user-contact { display: grid; gap: 3px; line-height: 16px; overflow: hidden; }
+      .public-users-table .public-user-contact > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .public-users-table .public-user-email { font-size: 11px; color: ${T.slate}; }
+      .public-users-table td.public-user-remark-cell {
+        white-space: normal;
+      }
+      .public-users-table .public-user-remark-text {
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        overflow: hidden;
+        line-height: 16px;
+        max-height: 32px;
+      }
+      .public-users-table .public-user-remark-input {
+        height: 40px;
+        min-height: 40px;
+        padding: 4px 7px;
+        line-height: 15px;
+        resize: none;
+      }
+      .public-users-table .public-user-actions { display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 6px; }
+      .public-users-table .public-user-actions .admin-btn { width: 100%; min-width: 80px; height: 26px; justify-content: center; padding: 0 7px; font-size: 11px; white-space: nowrap; }
+      @media (max-width: 920px) { .public-users-tabs { grid-template-columns: 1fr; } }
+
       .admin-card {
         background: #fff;
-        border-radius: 16px;
+        border-radius: 12px;
         box-shadow: ${T.shadow};
         border: 1px solid ${T.border};
         overflow: hidden;
-        margin-bottom: 24px;
+        margin-bottom: 16px;
         transition: box-shadow .25s, transform .25s;
       }
       .admin-card:hover {
@@ -113,7 +172,7 @@ export function AdminStyles() {
       }
 
       .admin-card-header {
-        padding: 16px 22px;
+        padding: 12px 16px;
         border-bottom: 1px solid ${T.border};
         display: flex;
         align-items: center;
@@ -124,13 +183,13 @@ export function AdminStyles() {
       .admin-card-header h5 {
         margin: 0;
         font-family: 'Playfair Display';
-        font-size: 17px;
+        font-size: 15px;
         font-weight: 600;
       }
 
       .admin-page-header {
-        margin-bottom: 24px;
-        padding-bottom: 18px;
+        margin-bottom: 16px;
+        padding-bottom: 12px;
         border-bottom: 2px solid ${T.border};
         display: flex;
         align-items: flex-start;
@@ -140,7 +199,7 @@ export function AdminStyles() {
       }
       .admin-page-header h3 {
         margin: 0 0 4px;
-        font-size: 24px;
+        font-size: 21px;
         background: linear-gradient(135deg, ${T.navy}, ${T.navyLight});
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
@@ -184,12 +243,12 @@ export function AdminStyles() {
         display: inline-flex;
         align-items: center;
         gap: 7px;
-        padding: 9px 18px;
-        border-radius: 10px;
+        padding: 7px 13px;
+        border-radius: 8px;
         border: none;
         font-family: 'DM Sans';
         font-weight: 600;
-        font-size: 13px;
+        font-size: 12px;
         cursor: pointer;
         transition: all .18s;
         white-space: nowrap;
@@ -223,17 +282,17 @@ export function AdminStyles() {
         color: white;
       }
       .admin-btn-sm {
-        padding: 5px 12px;
-        font-size: 12px;
+        padding: 4px 10px;
+        font-size: 11px;
         border-radius: 8px;
       }
 
       .admin-input {
-        padding: 9px 13px;
+        padding: 8px 11px;
         border: 1.5px solid ${T.border};
-        border-radius: 10px;
+        border-radius: 8px;
         font-family: 'DM Sans';
-        font-size: 13px;
+        font-size: 12px;
         outline: none;
         background: ${T.white};
         width: 100%;
@@ -245,11 +304,11 @@ export function AdminStyles() {
         box-shadow: 0 0 0 3px rgba(244,169,64,.15);
       }
       .admin-select {
-        padding: 9px 13px;
+        padding: 8px 11px;
         border: 1.5px solid ${T.border};
-        border-radius: 10px;
+        border-radius: 8px;
         font-family: 'DM Sans';
-        font-size: 13px;
+        font-size: 12px;
         outline: none;
         background: ${T.white};
         width: 100%;
@@ -666,7 +725,16 @@ function UserMonitoringPage({ type }) {
         btn={<button className="admin-btn admin-btn-primary" type="button" onClick={handleDownload} disabled={downloading}><i className="fas fa-file-pdf" /> {downloading ? 'Downloading...' : 'Download PDF'}</button>}
       />
       <MonitoringFilters type={type} filters={filters} setFilters={setFilters} options={filterOptions} onApply={load} onClear={clearFilters} />
-      <div className="admin-card">
+      <div
+        className="admin-card"
+        style={activeTab === 'walked_in' ? {
+          display: 'flex',
+          flexDirection: 'column',
+          height: 'calc(100vh - 210px)',
+          minHeight: 520,
+          overflow: 'hidden',
+        } : undefined}
+      >
         <AdminSectionHeader title={isEmployee ? 'Employee Login Records' : 'Student Login Records'} count={records.length} />
         {loading ? <AdminSpin /> : records.length === 0 ? (
           <AdminEmpty msg="No monitoring records found" icon="fa-user-clock" />
@@ -6256,42 +6324,60 @@ export function AdminReferrals() {
 
 const publicUserTabs = [
   { key: 'users', label: 'New Users', icon: 'fa-user-plus' },
-  { key: 'enrolled', label: 'Enrolled', icon: 'fa-user-check' },
   { key: 'walked_in', label: 'Walked In', icon: 'fa-walking' },
-  { key: 'follow_up', label: 'Follow Up', icon: 'fa-phone' },
+  { key: 'enrolled', label: 'Enrolled', icon: 'fa-user-check' },
 ]
 
 export function AdminPublicUsers() {
   const [activeTab, setActiveTab] = useState('users')
   const [items, setItems] = useState([])
   const [branches, setBranches] = useState([])
-  const [branchFilter, setBranchFilter] = useState('')
-  const [tabCounts, setTabCounts] = useState({ users: 0, enrolled: 0, walked_in: 0, follow_up: 0 })
+  const [counselors, setCounselors] = useState([])
+  const [interests, setInterests] = useState([])
+  const [draftFilters, setDraftFilters] = useState({ dateFrom: '', dateTo: '', branch: '', counselor: '', interest: '', source: '', feedback: '' })
+  const [appliedFilters, setAppliedFilters] = useState({ dateFrom: '', dateTo: '', branch: '', counselor: '', interest: '', source: '', feedback: '' })
+  const [tabCounts, setTabCounts] = useState({ users: 0, enrolled: 0, walked_in: 0 })
   const [remarks, setRemarks] = useState({})
+  const [courses, setCourses] = useState({})
   const [followUpUser, setFollowUpUser] = useState(null)
-  const [followUpDetailsUser, setFollowUpDetailsUser] = useState(null)
-  const [followUpForm, setFollowUpForm] = useState({ specification: '', followUpDate: '', feedback: '', remark: '' })
+  const [followUpForm, setFollowUpForm] = useState({ followUpDate: '', feedback: '', remark: '' })
   const [followUpSaving, setFollowUpSaving] = useState(false)
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
   const { user } = useAuth()
   const isCounselor = user?.designation === 'counselor'
   const addStudentPath = isCounselor ? '/counselor/add-student' : '/admin/students'
-  const visibleTabs = isCounselor
-    ? publicUserTabs
-    : publicUserTabs.filter(tab => tab.key !== 'follow_up')
+  const visibleTabs = publicUserTabs
 
   const load = async (tab = activeTab) => {
     setLoading(true)
     try {
       const params = new URLSearchParams({ tab })
-      if (branchFilter) params.set('branch', branchFilter)
+      const filterParams = {
+        date_from: appliedFilters.dateFrom,
+        date_to: appliedFilters.dateTo,
+        branch: appliedFilters.branch,
+        counselor: appliedFilters.counselor,
+        interest: appliedFilters.interest,
+        source: appliedFilters.source,
+        feedback: appliedFilters.feedback,
+      }
+      Object.entries(filterParams).forEach(([key, value]) => {
+        if (value) params.set(key, value)
+      })
       const res = await api.get(`/admin/public-users/?${params.toString()}`)
-      const rows = res.data.results || []
+      // Keep the visible rows in sync even if an already-running backend has not
+      // reloaded its latest query-filter changes yet.
+      const rows = (res.data.results || []).filter(item => (
+        !appliedFilters.source || String(item.source || '').toLowerCase() === appliedFilters.source
+      ))
       setItems(rows)
       setBranches(res.data.branches || [])
-      setTabCounts(res.data.counts || { users: 0, enrolled: 0, walked_in: 0, follow_up: 0 })
+      setCounselors(res.data.counselors || [])
+      setInterests(res.data.interests || [])
+      setTabCounts(res.data.counts || { users: 0, enrolled: 0, walked_in: 0 })
       setRemarks(rows.reduce((next, item) => ({ ...next, [item.id]: item.remark || '' }), {}))
+      setCourses(rows.reduce((next, item) => ({ ...next, [item.id]: item.area_of_interest || '' }), {}))
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to load public users')
     } finally {
@@ -6299,13 +6385,23 @@ export function AdminPublicUsers() {
     }
   }
 
-  useEffect(() => { load(activeTab) }, [activeTab, branchFilter])
+  useEffect(() => { load(activeTab) }, [activeTab, appliedFilters])
+
+  const selectTab = (tab) => {
+    if (!isCounselor) {
+      const empty = { dateFrom: '', dateTo: '', branch: '', counselor: '', interest: '', source: '', feedback: '' }
+      setDraftFilters(empty)
+      setAppliedFilters(empty)
+    }
+    setActiveTab(tab)
+  }
 
   const markWalkedIn = async (item) => {
     try {
       await api.post(`/admin/public-users/${item.id}/status/`, { status: 'walked_in' })
       toast.success('Moved to walked in')
-      load(activeTab)
+      setActiveTab('walked_in')
+      load('walked_in')
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to update public user')
     }
@@ -6322,7 +6418,7 @@ export function AdminPublicUsers() {
 
   const openFollowUp = (item) => {
     setFollowUpUser(item)
-    setFollowUpForm({ specification: '', followUpDate: '', feedback: '', remark: item.remark || '' })
+    setFollowUpForm({ followUpDate: '', feedback: '', remark: item.remark || '' })
   }
 
   const submitFollowUp = async (event) => {
@@ -6332,14 +6428,14 @@ export function AdminPublicUsers() {
     try {
       await api.post(`/admin/public-users/${followUpUser.id}/status/`, {
         status: 'follow_up',
-        follow_up_specification: followUpForm.specification.trim(),
         follow_up_date: followUpForm.followUpDate || '',
         follow_up_feedback: followUpForm.feedback,
         remark: followUpForm.remark.trim(),
       })
       toast.success('Follow-up saved')
       setFollowUpUser(null)
-      setActiveTab('follow_up')
+      setActiveTab('walked_in')
+      load('walked_in')
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to save follow-up')
     } finally {
@@ -6360,47 +6456,94 @@ export function AdminPublicUsers() {
     }
   }
 
+  const saveCourse = async (item) => {
+    const nextCourse = courses[item.id] || ''
+    if (nextCourse === (item.area_of_interest || '')) return
+    try {
+      const res = await api.post(`/admin/public-users/${item.id}/status/`, { area_of_interest: nextCourse })
+      const updated = res.data?.data || {}
+      setItems(prev => prev.map(row => row.id === item.id ? { ...row, area_of_interest: updated.area_of_interest ?? nextCourse } : row))
+      toast.success('Course saved')
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to save course')
+    }
+  }
+
   const renderUsers = (mode = activeTab) => (
     <PublicUsersTable
       columns={[
         'Name',
         'Contact',
         'Qualification',
-        'Area of Interest',
+        'Course',
+        'Source',
         isCounselor ? 'Branch' : 'Counselled By',
-        ...(mode !== 'enrolled' ? ['Registered'] : []),
-        ...(mode === 'follow_up' ? ['Specification', 'Follow-up Date', 'Feedback'] : []),
+        ...(mode === 'walked_in' ? ['Follow-up Date', 'Feedback', 'Remark'] : []),
         ...(mode === 'users' ? ['Remark'] : []),
-        ...((isCounselor && mode !== 'enrolled') || (!isCounselor && mode === 'walked_in') ? ['Action'] : []),
+        ...(isCounselor && mode !== 'enrolled' ? ['Action'] : []),
       ]}
       items={items}
       emptyMsg="No public users registered yet"
       emptyIcon="fa-user-plus"
       renderRow={(item) => (
         <>
-          <td style={{ fontWeight: 700 }}>{item.name || '-'}</td>
-          <td>
-            <div>{item.mobile || '-'}</div>
-            <div style={{ fontSize: 11, color: T.slate }}>{item.email || ''}</div>
+          <td title={item.name || '-'} style={{ fontWeight: 700 }}>{item.name || '-'}</td>
+          <td title={[item.mobile, item.email].filter(Boolean).join(' | ')}>
+            <div className="public-user-contact">
+              <div>{item.mobile || '-'}</div>
+              <div className="public-user-email">{item.email || ''}</div>
+            </div>
           </td>
-          <td>{item.qualification || '-'}</td>
-          <td>{item.area_of_interest || '-'}</td>
+          <td title={item.qualification || '-'}>{item.qualification || '-'}</td>
+          <td title={isCounselor ? 'Edit course' : (item.area_of_interest || '-')}>
+            {isCounselor ? (
+              <input
+                className="admin-input"
+                style={{ minWidth: 130, height: 38, padding: '8px 10px' }}
+                value={courses[item.id] ?? item.area_of_interest ?? ''}
+                onChange={e => setCourses(prev => ({ ...prev, [item.id]: e.target.value }))}
+                onBlur={() => saveCourse(item)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    e.currentTarget.blur()
+                  }
+                }}
+                placeholder="Add course..."
+              />
+            ) : (item.area_of_interest || '-')}
+          </td>
+          <td title={item.source_display || '-'}>{item.source_display || '-'}</td>
           {mode === 'enrolled' ? (
             <td>
-              <div style={{ fontWeight: 800 }}>{isCounselor ? (item.branch || '-') : (item.counselled_by || '-')}</div>
+              <div title={isCounselor ? (item.branch || '-') : (item.counselled_by || '-')} style={{ fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis' }}>{isCounselor ? (item.branch || '-') : (item.counselled_by || '-')}</div>
               <div style={{ fontSize: 11, color: T.slate }}>{item.student_code || ''}</div>
             </td>
           ) : (
-            <>
-              <td>{isCounselor ? (item.branch || '-') : (item.counselled_by || '-')}</td>
-              <td>{formatMonitoringTime(item.created_at)}</td>
-            </>
+            <td title={isCounselor ? (item.branch || '-') : (item.counselled_by || '-')}>{isCounselor ? (item.branch || '-') : (item.counselled_by || '-')}</td>
           )}
-          {mode === 'follow_up' && (
+          {mode === 'walked_in' && (
             <>
-              <td>{item.follow_up_specification || '-'}</td>
               <td>{item.follow_up_date ? new Date(`${item.follow_up_date}T00:00:00`).toLocaleDateString('en-IN') : '-'}</td>
-              <td>{item.follow_up_feedback_display || '-'}</td>
+              <td title={item.follow_up_feedback_display || '-'}>{item.follow_up_feedback_display || '-'}</td>
+              <td className={isCounselor ? 'public-user-remark-cell' : ''} title={isCounselor ? 'Edit remark' : (item.remark || '-')}>
+                {isCounselor ? (
+                  <textarea
+                    className="admin-input public-user-remark-input"
+                    rows="2"
+                    value={remarks[item.id] ?? item.remark ?? ''}
+                    onChange={e => setRemarks(prev => ({ ...prev, [item.id]: e.target.value }))}
+                    onBlur={() => saveRemark(item)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        e.currentTarget.blur()
+                      }
+                    }}
+                    placeholder="Add remark..."
+                  />
+                ) : <div className="public-user-remark-text">{item.remark || '-'}</div>}
+              </td>
             </>
           )}
           {mode === 'users' && (
@@ -6422,7 +6565,7 @@ export function AdminPublicUsers() {
           )}
           {isCounselor && mode !== 'enrolled' && (
             <td>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <div className="public-user-actions">
                 <button className="admin-btn admin-btn-primary admin-btn-sm" onClick={() => enrollUser(item)}>
                   <i className="fas fa-user-check" /> Enroll
                 </button>
@@ -6439,60 +6582,47 @@ export function AdminPublicUsers() {
               </div>
             </td>
           )}
-          {!isCounselor && mode === 'walked_in' && (
-            <td>
-              <button
-                type="button"
-                className="admin-btn admin-btn-ghost admin-btn-sm"
-                onClick={() => setFollowUpDetailsUser(item)}
-              >
-                <i className="fas fa-eye" /> View Details
-              </button>
-            </td>
-          )}
         </>
       )}
     />
   )
 
   return (
-    <div className="admin-root admin-fade">
+    <div className="admin-root admin-fade public-users-page">
       <AdminStyles />
-      <AdminPageHeader
-        title="Public Users"
-        sub="Track public registrations, enrolled users, and walked-in leads"
-      />
-      <div className="admin-card">
-        <div style={{ padding: 16, borderBottom: `1px solid ${T.border}`, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          {visibleTabs.map(tab => (
-            <button
-              key={tab.key}
-              type="button"
-              className={`admin-btn ${activeTab === tab.key ? 'admin-btn-primary' : 'admin-btn-ghost'}`}
-              onClick={() => setActiveTab(tab.key)}
-            >
-              <i className={`fas ${tab.icon}`} /> {tab.label}
-              <span style={{
-                marginLeft: 6,
-                minWidth: 22,
-                height: 22,
-                borderRadius: 999,
-                display: 'inline-grid',
-                placeItems: 'center',
-                padding: '0 7px',
-                background: activeTab === tab.key ? 'rgba(255,255,255,.22)' : 'rgba(15,23,42,.08)',
-                fontSize: 12,
-                fontWeight: 900,
-              }}>{tabCounts[tab.key] || 0}</span>
-            </button>
-          ))}
-          {!isCounselor && (activeTab === 'users' || activeTab === 'enrolled' || activeTab === 'walked_in' || activeTab === 'follow_up') && (
-            <select className="admin-select" style={{ width: 190, marginLeft: 'auto' }} value={branchFilter} onChange={e => setBranchFilter(e.target.value)}>
-              <option value="">All Counselors</option>
-              {branches.map(branch => <option key={branch.id} value={branch.id}>{branch.label}</option>)}
-            </select>
-          )}
+      <AdminPageHeader title="Public Users" sub="Track public registrations, enrolled users, and walked-in leads" />
+
+      <div className="public-users-tabs">
+        {visibleTabs.map(tab => (
+          <button key={tab.key} type="button" className={`public-users-tab ${activeTab === tab.key ? 'is-active' : ''}`} onClick={() => selectTab(tab.key)}>
+            <span className="public-users-tab-icon"><i className={`fas ${tab.icon}`} /></span>
+            <span className="public-users-tab-copy"><span className="public-users-tab-label">{tab.label}</span><span className="public-users-tab-count">{tabCounts[tab.key] || 0}</span></span>
+            <i className="fas fa-chevron-right public-users-tab-arrow" />
+          </button>
+        ))}
+      </div>
+
+      {(!isCounselor || activeTab === 'walked_in') && (
+        <div className="admin-card public-users-filter-card">
+          <PublicUserFilters
+            mode={activeTab}
+            filters={draftFilters}
+            branches={branches}
+            counselors={counselors}
+            interests={interests}
+            isCounselor={isCounselor}
+            onChange={(key, value) => setDraftFilters(prev => ({ ...prev, [key]: value }))}
+            onSearch={(filtersToApply = draftFilters) => setAppliedFilters({ ...filtersToApply })}
+            onClear={() => {
+              const empty = { dateFrom: '', dateTo: '', branch: '', counselor: '', interest: '', source: '', feedback: '' }
+              setDraftFilters(empty)
+              setAppliedFilters(empty)
+            }}
+          />
         </div>
+      )}
+
+      <div className="admin-card public-users-table-card">
         {loading ? <AdminSpin /> : renderUsers(activeTab)}
       </div>
 
@@ -6507,16 +6637,6 @@ export function AdminPublicUsers() {
               <label style={{ display: 'block', marginBottom: 6, fontSize: 13, fontWeight: 800 }}>Mobile Number</label>
               <input className="admin-input" value={followUpUser?.mobile || ''} readOnly />
             </div>
-          </div>
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ display: 'block', marginBottom: 6, fontSize: 13, fontWeight: 800 }}>Specification</label>
-            <input
-              className="admin-input"
-              value={followUpForm.specification}
-              onChange={e => setFollowUpForm(prev => ({ ...prev, specification: e.target.value }))}
-              placeholder="Example: AWS, Networking"
-              required
-            />
           </div>
           <div style={{ marginBottom: 14 }}>
             <label style={{ display: 'block', marginBottom: 6, fontSize: 13, fontWeight: 800 }}>Follow-up Date <span style={{ color: T.slate, fontWeight: 600 }}>(Optional)</span></label>
@@ -6562,48 +6682,6 @@ export function AdminPublicUsers() {
         </form>
       </AdminModal>
 
-      <AdminModal
-        open={!!followUpDetailsUser}
-        onClose={() => setFollowUpDetailsUser(null)}
-        title="Follow Up Details"
-        size="sm"
-      >
-        <div style={{ padding: 18 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            {[
-              ['Name', followUpDetailsUser?.name],
-              ['Mobile Number', followUpDetailsUser?.mobile],
-              ['Area of Interest', followUpDetailsUser?.area_of_interest],
-              ['Counselled By', followUpDetailsUser?.counselled_by],
-              ['Specification', followUpDetailsUser?.follow_up_specification],
-              ['Follow-up Date', followUpDetailsUser?.follow_up_date
-                ? new Date(`${followUpDetailsUser.follow_up_date}T00:00:00`).toLocaleDateString('en-IN')
-                : 'Not scheduled'],
-              ['Feedback', followUpDetailsUser?.follow_up_feedback_display],
-              ['Remark', followUpDetailsUser?.remark],
-            ].map(([label, value]) => (
-              <div
-                key={label}
-                style={{
-                  border: `1px solid ${T.border}`,
-                  borderRadius: 8,
-                  padding: '12px 14px',
-                  background: 'rgba(15,27,45,0.03)',
-                  gridColumn: label === 'Remark' ? '1 / -1' : undefined,
-                }}
-              >
-                <div style={{ color: T.slate, fontSize: 11, fontWeight: 800, marginBottom: 5 }}>{label}</div>
-                <div style={{ fontWeight: 800 }}>{value || '-'}</div>
-              </div>
-            ))}
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 18 }}>
-            <button type="button" className="admin-btn admin-btn-primary" onClick={() => setFollowUpDetailsUser(null)}>
-              Close
-            </button>
-          </div>
-        </div>
-      </AdminModal>
     </div>
   )
 }
@@ -6614,8 +6692,18 @@ function PublicUsersTable({ columns, items, emptyMsg, emptyIcon, renderRow }) {
   }
 
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <table className="admin-table">
+    <div className="public-users-table-wrap">
+      <table className="admin-table public-users-table">
+        <colgroup>
+          {columns.map(column => {
+            const widths = {
+              Name: '9%', Contact: '15%', Qualification: '9%', Course: '11%', Source: '6%',
+              Branch: '6%', 'Counselled By': '8%', 'Follow-up Date': '9%',
+              Feedback: '8%', Remark: '8%', Action: '9%',
+            }
+            return <col key={column} style={{ width: widths[column] || '8%' }} />
+          })}
+        </colgroup>
         <thead>
           <tr>{columns.map(col => <th key={col}>{col}</th>)}</tr>
         </thead>
@@ -6623,6 +6711,96 @@ function PublicUsersTable({ columns, items, emptyMsg, emptyIcon, renderRow }) {
           {items.map(item => <tr key={item.id}>{renderRow(item)}</tr>)}
         </tbody>
       </table>
+    </div>
+  )
+}
+
+function PublicUserFilters({ mode, filters, branches, counselors, interests, isCounselor, onChange, onSearch, onClear }) {
+  const fieldStyle = { width: 148, minWidth: 132, height: 38, padding: '0 10px', fontSize: 12 }
+  const labelStyle = { display: 'block', marginBottom: 6, color: T.slate, fontSize: 11, fontWeight: 800, whiteSpace: 'nowrap' }
+  const showWalkedInFields = mode === 'walked_in'
+  const applyCallDate = (offset) => {
+    const date = new Date()
+    date.setDate(date.getDate() + offset)
+    const targetDate = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+    const next = { ...filters, dateFrom: targetDate, dateTo: targetDate }
+    onChange('dateFrom', targetDate)
+    onChange('dateTo', targetDate)
+    onSearch(next)
+  }
+
+  return (
+    <div style={{ display: 'flex', flex: 1, minWidth: 280, justifyContent: 'flex-start', alignItems: 'end', gap: 12, flexWrap: 'wrap', padding: '4px 6px' }}>
+      <i className="fas fa-filter" title="Public User Filters" style={{ color: T.primary, marginBottom: 11 }} />
+      <div style={{ display: 'flex', gap: 14, alignItems: 'end', flexWrap: 'wrap', justifyContent: 'flex-start' }}>
+        {showWalkedInFields && <>
+          <label>
+            <span style={labelStyle}>From Date</span>
+            <input className="admin-input" style={fieldStyle} type="date" value={filters.dateFrom} onChange={e => onChange('dateFrom', e.target.value)} />
+          </label>
+          <label>
+            <span style={labelStyle}>To Date</span>
+            <input className="admin-input" style={fieldStyle} type="date" value={filters.dateTo} onChange={e => onChange('dateTo', e.target.value)} />
+          </label>
+        </>}
+        {!isCounselor && (
+          <label>
+            <span style={labelStyle}>Branch</span>
+            <select className="admin-select" style={fieldStyle} value={filters.branch} onChange={e => onChange('branch', e.target.value)}>
+              <option value="">All Branches</option>
+              {branches.map(branch => <option key={branch.id} value={branch.id}>{branch.label}</option>)}
+            </select>
+          </label>
+        )}
+        {!isCounselor && (
+          <label>
+            <span style={labelStyle}>Counsellor</span>
+            <select className="admin-select" style={fieldStyle} value={filters.counselor} onChange={e => onChange('counselor', e.target.value)}>
+              <option value="">All Counsellors</option>
+              {counselors.map(counselor => <option key={counselor.id} value={counselor.id}>{counselor.label}</option>)}
+            </select>
+          </label>
+        )}
+        <label>
+          <span style={labelStyle}>Course</span>
+          <select className="admin-select" style={fieldStyle} value={filters.interest} onChange={e => onChange('interest', e.target.value)}>
+            <option value="">All Courses</option>
+            {interests.map(interest => <option key={interest} value={interest}>{interest}</option>)}
+          </select>
+        </label>
+        <label>
+          <span style={labelStyle}>Source</span>
+          <select className="admin-select" style={fieldStyle} value={filters.source} onChange={e => onChange('source', e.target.value)}>
+            <option value="">All Sources</option>
+            <option value="google">Google</option>
+            <option value="facebook">Facebook</option>
+            <option value="instagram">Instagram</option>
+            <option value="linkedin">LinkedIn</option>
+            <option value="friends">Friends</option>
+            <option value="others">Others</option>
+          </select>
+        </label>
+        {showWalkedInFields && (
+          <label>
+            <span style={labelStyle}>Feedback</span>
+            <select className="admin-select" style={fieldStyle} value={filters.feedback} onChange={e => onChange('feedback', e.target.value)}>
+              <option value="">All Feedback</option>
+              <option value="will_enroll">Will Enroll</option>
+              <option value="not_interested">Not Interested</option>
+              <option value="joined_another_institute">Joined in Another Institute</option>
+            </select>
+          </label>
+        )}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'end', paddingBottom: 0 }}>
+          {isCounselor && showWalkedInFields && <>
+            <button type="button" className="admin-btn admin-btn-ghost" style={{ height: 38, padding: '0 12px', fontSize: 12 }} onClick={() => applyCallDate(-1)}>Yesterday Calls</button>
+            <button type="button" className="admin-btn admin-btn-ghost" style={{ height: 38, padding: '0 12px', fontSize: 12 }} onClick={() => applyCallDate(0)}>Call Today</button>
+            <button type="button" className="admin-btn admin-btn-ghost" style={{ height: 38, padding: '0 12px', fontSize: 12 }} onClick={() => applyCallDate(1)}>Tomorrow Calls</button>
+          </>}
+          <button type="button" className="admin-btn admin-btn-ghost" style={{ height: 38, padding: '0 12px', fontSize: 12 }} onClick={onClear}>Clear</button>
+          <button type="button" className="admin-btn admin-btn-primary" style={{ height: 38, padding: '0 12px', fontSize: 12 }} onClick={() => onSearch()}><i className="fas fa-search" /> Search</button>
+        </div>
+      </div>
     </div>
   )
 }

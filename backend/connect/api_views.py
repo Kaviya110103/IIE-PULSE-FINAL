@@ -54,6 +54,9 @@ import random
 import logging
 import threading
 import requests
+import shutil
+import subprocess
+import tempfile
 from decimal import Decimal, InvalidOperation
 
 # Logger for exception capture
@@ -1506,17 +1509,15 @@ class StudentDashboardView(APIView):
         # Match the student web modules: count assigned items, not only submitted results.
         if student.assigned_batch:
             assigned_test_ids = set(AssignedTest.objects.filter(
-                batch=student.assigned_batch
+                batch=student.assigned_batch,
+                test__created_by=student.assigned_staff,
             ).values_list('test_id', flat=True))
-            if student.assigned_staff:
-                mentor_test_ids = Question.objects.filter(
-                    test__created_by=student.assigned_staff,
-                ).values_list('test_id', flat=True).distinct()
-                assigned_test_ids.update(mentor_test_ids)
             tests_count = len(assigned_test_ids)
             quizzes_count = Quiz.objects.filter(
-                Q(quiz_scope='staff_batch', assigned_batches=student.assigned_batch) |
-                Q(quiz_scope='staff_batch', batch=student.assigned_batch) |
+                (
+                    Q(quiz_scope='staff_batch', created_by=student.assigned_staff) &
+                    (Q(assigned_batches=student.assigned_batch) | Q(batch=student.assigned_batch))
+                ) |
                 Q(quiz_scope='admin_global', audience__in=['students', 'both']),
                 is_published=True,
             ).distinct().count()
@@ -1524,9 +1525,11 @@ class StudentDashboardView(APIView):
             tests_count = 0
             quizzes_count = 0
         materials_count = StudyMaterial.objects.filter(
+            uploaded_by=student.assigned_staff,
+        ).filter(
             Q(batch=student.assigned_batch) |
             Q(assignments__batch=student.assigned_batch)
-        ).distinct().count() if student.assigned_batch else 0
+        ).distinct().count() if student.assigned_batch and student.assigned_staff else 0
         # -------------------------------------------------------------
 
 
@@ -2663,6 +2666,27 @@ def _student_accessible_batches(student):
             batches.append(batch)
             seen.add(batch.id)
     return batches
+
+
+def _student_current_content_batches(student):
+    """Return only the student's currently assigned batch for staff content.
+
+    Reassignment history is useful for attendance history, but must never make
+    another trainer's tests, quizzes, or materials visible to a student.
+    """
+    return [student.assigned_batch] if student and student.assigned_batch_id else []
+
+
+def _student_can_access_material(student, material):
+    """Keep staff materials limited to the student's current batch and trainer."""
+    if not student or not student.assigned_batch_id or not student.assigned_staff_id:
+        return False
+    if material.uploaded_by_id != student.assigned_staff_id:
+        return False
+    material_batch_ids = set(material.assignments.values_list('batch_id', flat=True))
+    if material.batch_id:
+        material_batch_ids.add(material.batch_id)
+    return student.assigned_batch_id in material_batch_ids
 
 
 def _is_batch_trainer(batch, employee):
@@ -4268,6 +4292,15 @@ def mark_attendance(request):
     if not _has_active_batch_control(batch, selected_staff):
         return Response({'error': 'This batch was reassigned. Previous trainers can view history but cannot mark new attendance.'}, status=403)
 
+    # Attendance is recorded once per trainer, batch, and day. Do not silently
+    # overwrite the first mark or create session-based duplicates on the same day.
+    if StudentAttendance.objects.filter(
+        batch=batch,
+        staff=selected_staff,
+        date=attendance_date,
+    ).exists():
+        return Response({'error': 'You have already marked your attendance for this day.'}, status=status.HTTP_400_BAD_REQUEST)
+
     selected_session = None
     if session_id:
         try:
@@ -4282,19 +4315,14 @@ def mark_attendance(request):
         try:
             student = Students.objects.get(id=item['student_id'])
             status_value = item.get('status', 'Present')
-            att, _ = StudentAttendance.objects.update_or_create(
+            att = StudentAttendance.objects.create(
                 student=student,
                 batch=batch,
                 staff=selected_staff,
                 date=attendance_date,
                 session=selected_session,
-                defaults={
-                    'batch': batch,
-                    'staff': selected_staff,
-                    'session': selected_session,
-                    'status': status_value,
-                    'remarks': item.get('remarks', ''),
-                }
+                status=status_value,
+                remarks=item.get('remarks', ''),
             )
             created.append(AttendanceSerializer(att).data)
             if str(status_value).lower() == 'absent':
@@ -4383,12 +4411,15 @@ class StudyMaterialListView(generics.ListAPIView):
         except Employee.DoesNotExist:
             try:
                 student = Students.objects.get(user=user)
-                student_batches_list = _student_enrolled_batches(student)
-                student_batch_ids = [batch.id for batch in student_batches_list if batch]
-                if student_batch_ids:
+                if student.assigned_batch_id and student.assigned_staff_id:
+                    # Materials uploaded through the staff library are marked
+                    # is_library=True. Students must see those files once the
+                    # trainer assigns them to their current batch.
                     return qs.filter(
-                        Q(batch_id__in=student_batch_ids, is_library=False) |
-                        Q(assignments__batch_id__in=student_batch_ids)
+                        uploaded_by_id=student.assigned_staff_id,
+                    ).filter(
+                        Q(batch_id=student.assigned_batch_id) |
+                        Q(assignments__batch_id=student.assigned_batch_id)
                     ).distinct()
                 return qs.none()
             except Students.DoesNotExist:
@@ -4499,20 +4530,33 @@ def material_library_assign(request):
         batch_ids.append(single_batch_id)
     batch_ids = [str(batch_id).strip() for batch_id in batch_ids if str(batch_id).strip()]
 
+    remove_batch_ids = []
+    if hasattr(request.data, 'getlist'):
+        remove_batch_ids.extend(request.data.getlist('remove_batch_ids'))
+    raw_remove_batch_ids = request.data.get('remove_batch_ids')
+    if isinstance(raw_remove_batch_ids, list):
+        remove_batch_ids.extend(raw_remove_batch_ids)
+    elif raw_remove_batch_ids:
+        remove_batch_ids.extend(str(raw_remove_batch_ids).split(','))
+    remove_batch_ids = [str(batch_id).strip() for batch_id in remove_batch_ids if str(batch_id).strip()]
+    replace_assignments = str(request.data.get('replace_assignments', '')).lower() in {'1', 'true', 'yes', 'on'}
+
     if not material_id:
         return Response({'material': ['Library material is required.']}, status=status.HTTP_400_BAD_REQUEST)
-    if not batch_ids:
-        return Response({'batch': ['At least one target batch is required.']}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
         material = StudyMaterial.objects.get(id=material_id, is_library=True, uploaded_by=emp)
     except StudyMaterial.DoesNotExist:
         return Response({'error': 'Library material not found.'}, status=status.HTTP_404_NOT_FOUND)
 
+    if not batch_ids and not remove_batch_ids and not replace_assignments:
+        return Response({'batch': ['Choose at least one batch to add or remove.']}, status=status.HTTP_400_BAD_REQUEST)
+
     batches = []
     invalid_batches = []
     unauthorized_batches = []
-    for batch_id in dict.fromkeys(batch_ids):
+    batches_by_id = {}
+    for batch_id in dict.fromkeys(batch_ids + remove_batch_ids):
         try:
             batch = Batches.objects.get(id=batch_id)
         except (Batches.DoesNotExist, ValueError, TypeError):
@@ -4521,22 +4565,39 @@ def material_library_assign(request):
         if not (_is_batch_trainer(batch, emp) or _is_previous_trainer_for_batch(batch, emp)):
             unauthorized_batches.append(batch.batch_number)
             continue
-        batches.append(batch)
+        batches_by_id[batch.id] = batch
 
     if invalid_batches:
         return Response({'error': 'One or more selected batches are invalid.'}, status=status.HTTP_400_BAD_REQUEST)
     if unauthorized_batches:
         return Response({'error': f"You are not allowed to assign materials for: {', '.join(unauthorized_batches)}"}, status=status.HTTP_403_FORBIDDEN)
 
+    batches = [batches_by_id[int(batch_id)] for batch_id in dict.fromkeys(batch_ids) if int(batch_id) in batches_by_id]
+    remove_ids = [int(batch_id) for batch_id in dict.fromkeys(remove_batch_ids) if int(batch_id) in batches_by_id]
+
     created_count = 0
     assignment_ids = []
-    for batch in batches:
-        try:
-            assignment, created = _assign_material_to_batch(material, batch.id, emp)
-            created_count += 1 if created else 0
-            assignment_ids.append(assignment.id)
-        except ValueError as exc:
-            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    with transaction.atomic():
+        if replace_assignments:
+            selected_batch_ids = [batch.id for batch in batches]
+            material.assignments.exclude(batch_id__in=selected_batch_ids).delete()
+            # Library uploads use assignments, but clear the legacy primary-batch
+            # field too when a previously selected batch is unchecked.
+            if material.batch_id and material.batch_id not in selected_batch_ids:
+                material.batch = None
+                material.save(update_fields=['batch'])
+        elif remove_ids:
+            material.assignments.filter(batch_id__in=remove_ids).delete()
+            if material.batch_id in remove_ids:
+                material.batch = None
+                material.save(update_fields=['batch'])
+        for batch in batches:
+            try:
+                assignment, created = _assign_material_to_batch(material, batch.id, emp)
+                created_count += 1 if created else 0
+                assignment_ids.append(assignment.id)
+            except ValueError as exc:
+                return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
     return Response({
         'message': f'Material assigned to {len(batches)} batch(es).',
@@ -4559,11 +4620,8 @@ def material_library_delete(request, pk):
     except StudyMaterial.DoesNotExist:
         return Response({'error': 'Library material not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-    if material.assignments.exists():
-        return Response({'error': 'Cannot delete a library material that is assigned to batches.'}, status=status.HTTP_400_BAD_REQUEST)
-
     material.delete()
-    return Response({'message': 'Deleted.'}, status=204)
+    return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 @api_view(['PATCH', 'PUT'])
@@ -4609,21 +4667,11 @@ def download_material(request, pk):
         return Response({'error': 'Material not found.'}, status=404)
 
     student = Students.objects.filter(user=request.user).first()
-    if student:
-        student_batch_ids = {
-            batch.id
-            for batch in _student_enrolled_batches(student)
-            if batch
-        }
-        material_batch_ids = set()
-        if material.batch_id:
-            material_batch_ids.add(material.batch_id)
-        material_batch_ids.update(material.assignments.values_list('batch_id', flat=True))
-        if not student_batch_ids.intersection(material_batch_ids):
-            return Response(
-                {'error': 'You are not allowed to download this material.'},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+    if student and not _student_can_access_material(student, material):
+        return Response(
+            {'error': 'You are not allowed to download this material.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
     # Use persistent storage if uploaded files must survive deploys, restarts,
     # or rebuilds.
@@ -4665,6 +4713,7 @@ MATERIAL_TEXT_EXTENSIONS = {
     '.ts', '.tsx', '.jsx', '.py', '.java', '.sql', '.xml', '.yaml', '.yml',
 }
 MATERIAL_IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'}
+MATERIAL_DOCUMENT_EXTENSIONS = {'.doc', '.docx', '.ppt', '.pptx'}
 
 
 def _material_preview_page(title, body):
@@ -4673,11 +4722,12 @@ def _material_preview_page(title, body):
 <style>
 body{{font-family:Arial,sans-serif;margin:0;padding:20px;background:#f8f7ff;color:#21183a;line-height:1.55}}
 h1{{font-size:20px;margin:0 0 18px;color:#5523d2}}pre{{white-space:pre-wrap;word-break:break-word;background:#fff;padding:16px;border:1px solid #ddd6fe;border-radius:8px}}
-table{{width:100%;border-collapse:collapse;background:#fff;font-size:13px}}th,td{{border:1px solid #ddd6fe;padding:8px;text-align:left;vertical-align:top}}tr:nth-child(even){{background:#faf8ff}}
+table{{border-collapse:collapse;background:#fff;font-size:13px}}th,td{{border:1px solid #ddd6fe;padding:8px;text-align:left;vertical-align:top;white-space:nowrap}}tr:nth-child(even){{background:#faf8ff}}
 .slide,.paragraph{{background:#fff;border:1px solid #ddd6fe;border-radius:8px;padding:14px;margin:0 0 12px}}
 .pdf-page{{margin:0 auto 18px;max-width:1100px}}.pdf-page img{{display:block;width:100%;height:auto;background:#fff;box-shadow:0 8px 26px rgba(32,20,60,.14)}}
 .page-label{{font-size:12px;font-weight:700;color:#6b6280;margin:0 0 6px}}body>p,body>ul,body>ol,body>table,body>h2,body>h3{{max-width:920px;margin-left:auto;margin-right:auto}}
 body>p,body>ul,body>ol{{background:#fff;padding:10px 14px;margin-top:0;margin-bottom:8px}}img{{max-width:100%;height:auto}}
+.sheet-section{{margin:0 0 22px}}.sheet-section h2{{position:sticky;left:0;margin:0;padding:10px 12px;background:#5523d2;color:#fff;font-size:15px;border-radius:7px 7px 0 0}}.sheet-scroll{{overflow-x:auto;border:1px solid #ddd6fe;border-top:0;border-radius:0 0 7px 7px}}.sheet-scroll table{{min-width:720px}}
 </style></head><body><h1>{escape(title)}</h1>{body}</body></html>'''
 
 
@@ -4702,13 +4752,31 @@ def _pdf_visual_preview(file_path):
 
     document = fitz.open(file_path)
     pages = []
+    rendered_bytes = 0
+    # Mobile WebView receives this preview as HTML. A smaller first chunk
+    # opens reliably on normal student connections while keeping the page
+    # visual rather than turning the PDF into plain text.
+    max_pages = 12
+    max_rendered_bytes = 6 * 1024 * 1024
     try:
         for index, page in enumerate(document, start=1):
-            if index > 150:
-                pages.append('<div class="paragraph">Preview limited to the first 150 pages.</div>')
+            if index > max_pages:
+                pages.append(
+                    f'<div class="paragraph">Preview limited to the first {max_pages} pages.</div>'
+                )
                 break
-            pixmap = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
-            encoded = base64.b64encode(pixmap.tobytes('jpeg', jpg_quality=82)).decode('ascii')
+            # Keep the HTML payload comfortably below Android WebView's
+            # practical data-URL limit. Large PDFs previously caused the
+            # preview request to time out before the first page could open.
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(0.85, 0.85), alpha=False)
+            image_bytes = pixmap.tobytes('jpeg', jpg_quality=65)
+            if rendered_bytes + len(image_bytes) > max_rendered_bytes:
+                pages.append(
+                    '<div class="paragraph">Preview stopped here to keep this material fast to open.</div>'
+                )
+                break
+            rendered_bytes += len(image_bytes)
+            encoded = base64.b64encode(image_bytes).decode('ascii')
             pages.append(
                 f'<section class="pdf-page"><div class="page-label">Page {index}</div>'
                 f'<img src="data:image/jpeg;base64,{encoded}" alt="Page {index}" /></section>'
@@ -4719,11 +4787,245 @@ def _pdf_visual_preview(file_path):
 
 
 def _docx_visual_preview(file_path):
-    """Convert DOCX into structured HTML while preserving its formatting."""
+    """Convert DOCX to compact, in-app HTML without external resources."""
     import mammoth
 
     with open(file_path, 'rb') as source:
-        return mammoth.convert_to_html(source).value
+        result = mammoth.convert_to_html(source)
+
+    # Some DOCX files contain large inline assets. Keeping only structural
+    # document HTML prevents an oversized response from timing out in Android.
+    html = result.value or ''
+    html = re.sub(r'<img[^>]*>', '', html, flags=re.IGNORECASE)
+    return html
+
+
+def _xlsx_visual_preview(source):
+    """Render every workbook sheet into a compact, internal HTML preview."""
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(source, read_only=True, data_only=True)
+    sections = []
+    try:
+        for sheet in workbook.worksheets[:25]:
+            rows = []
+            for row in sheet.iter_rows(max_row=500, max_col=60, values_only=True):
+                cells = ''.join(
+                    f'<td>{escape(str(value)) if value is not None else ""}</td>'
+                    for value in row
+                )
+                rows.append(f'<tr>{cells}</tr>')
+            table = ''.join(rows) or '<tr><td>No data in this sheet.</td></tr>'
+            sections.append(
+                f'<section class="sheet-section"><h2>{escape(sheet.title)}</h2>'
+                f'<div class="sheet-scroll"><table>{table}</table></div></section>'
+            )
+        if len(workbook.worksheets) > 25:
+            sections.append('<div class="paragraph">Only the first 25 sheets are shown.</div>')
+    finally:
+        workbook.close()
+    return ''.join(sections)
+
+
+def _office_converter_path():
+    """Return the configured LibreOffice executable when the host provides it."""
+    configured_path = getattr(settings, 'OFFICE_CONVERTER_PATH', '').strip()
+    if configured_path and os.path.isfile(configured_path):
+        return configured_path
+
+    # `soffice` is used on both Windows and Linux LibreOffice installations.
+    return shutil.which('soffice') or shutil.which('libreoffice')
+
+
+def _microsoft_excel_path():
+    """Find Excel on Windows so local previews retain workbook dashboards."""
+    if os.name != 'nt':
+        return None
+
+    configured_path = getattr(settings, 'EXCEL_CONVERTER_PATH', '').strip()
+    candidates = [configured_path] if configured_path else []
+    candidates.extend([
+        r'C:\Program Files\Microsoft Office\root\Office16\EXCEL.EXE',
+        r'C:\Program Files (x86)\Microsoft Office\root\Office16\EXCEL.EXE',
+    ])
+    return next((path for path in candidates if path and os.path.isfile(path)), None)
+
+
+def _microsoft_office_document_pdf_preview(file_path, suffix):
+    """Render Word and PowerPoint documents through their installed apps."""
+    if os.name != 'nt':
+        return None
+
+    office_paths = {
+        '.doc': r'C:\Program Files\Microsoft Office\root\Office16\WINWORD.EXE',
+        '.docx': r'C:\Program Files\Microsoft Office\root\Office16\WINWORD.EXE',
+        '.ppt': r'C:\Program Files\Microsoft Office\root\Office16\POWERPNT.EXE',
+        '.pptx': r'C:\Program Files\Microsoft Office\root\Office16\POWERPNT.EXE',
+    }
+    if not os.path.isfile(office_paths.get(suffix, '')):
+        return None
+
+    if suffix in {'.doc', '.docx'}:
+        script = r'''
+$ErrorActionPreference = 'Stop'
+$word = $null
+$document = $null
+try {
+  $word = New-Object -ComObject Word.Application
+  $word.Visible = $false
+  $word.DisplayAlerts = 0
+  $document = $word.Documents.Open($env:IIE_OFFICE_SOURCE, $false, $true)
+  # 17 is Word's PDF export format.
+  $document.ExportAsFixedFormat($env:IIE_OFFICE_PDF, 17)
+}
+finally {
+  if ($document) { $document.Close($false) }
+  if ($word) { $word.Quit() }
+}
+'''
+    else:
+        script = r'''
+$ErrorActionPreference = 'Stop'
+$powerpoint = $null
+$presentation = $null
+try {
+  $powerpoint = New-Object -ComObject PowerPoint.Application
+  $presentation = $powerpoint.Presentations.Open($env:IIE_OFFICE_SOURCE, $true, $false, $false)
+  # 32 is PowerPoint's PDF export format.
+  $presentation.SaveAs($env:IIE_OFFICE_PDF, 32)
+}
+finally {
+  if ($presentation) { $presentation.Close() }
+  if ($powerpoint) { $powerpoint.Quit() }
+}
+'''
+
+    try:
+        with tempfile.TemporaryDirectory(prefix='iie-pulse-office-') as output_dir:
+            pdf_path = os.path.join(output_dir, 'office-preview.pdf')
+            environment = {
+                **os.environ,
+                'IIE_OFFICE_SOURCE': file_path,
+                'IIE_OFFICE_PDF': pdf_path,
+            }
+            result = subprocess.run(
+                [
+                    'powershell', '-NoProfile', '-NonInteractive',
+                    '-ExecutionPolicy', 'Bypass', '-Command', script,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=90,
+                check=False,
+                env=environment,
+            )
+            if result.returncode != 0 or not os.path.isfile(pdf_path):
+                logger.warning(
+                    'Office document preview failed for %s: %s',
+                    file_path,
+                    (result.stderr or result.stdout or 'no output').strip(),
+                )
+                return None
+            return _pdf_visual_preview(pdf_path)
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning('Office document preview failed for %s: %s', file_path, exc)
+        return None
+
+
+def _excel_visual_pdf_preview(file_path):
+    """Use the installed Windows Excel renderer for an exact workbook visual."""
+    if not _microsoft_excel_path():
+        return None
+
+    script = r'''
+$ErrorActionPreference = 'Stop'
+$excel = $null
+$workbook = $null
+try {
+  $excel = New-Object -ComObject Excel.Application
+  $excel.Visible = $false
+  $excel.DisplayAlerts = $false
+  $workbook = $excel.Workbooks.Open($env:IIE_WORKBOOK_SOURCE, 0, $true)
+  # 0 is Excel's PDF fixed-format export. It preserves workbook charts,
+  # drawings, merged cells, page setup, and calculated cell values.
+  $workbook.ExportAsFixedFormat(0, $env:IIE_WORKBOOK_PDF)
+}
+finally {
+  if ($workbook) { $workbook.Close($false) }
+  if ($excel) { $excel.Quit() }
+}
+'''
+    try:
+        with tempfile.TemporaryDirectory(prefix='iie-pulse-excel-') as output_dir:
+            pdf_path = os.path.join(output_dir, 'workbook-preview.pdf')
+            environment = {
+                **os.environ,
+                'IIE_WORKBOOK_SOURCE': file_path,
+                'IIE_WORKBOOK_PDF': pdf_path,
+            }
+            result = subprocess.run(
+                [
+                    'powershell', '-NoProfile', '-NonInteractive',
+                    '-ExecutionPolicy', 'Bypass', '-Command', script,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=90,
+                check=False,
+                env=environment,
+            )
+            if result.returncode != 0 or not os.path.isfile(pdf_path):
+                logger.warning(
+                    'Excel workbook preview failed for %s: %s',
+                    file_path,
+                    (result.stderr or result.stdout or 'no output').strip(),
+                )
+                return None
+            return _pdf_visual_preview(pdf_path)
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning('Excel workbook preview failed for %s: %s', file_path, exc)
+        return None
+
+
+def _xlsx_visual_pdf_preview(file_path):
+    """Render a workbook through LibreOffice so charts and formatting remain intact.
+
+    SheetJS/openpyxl can read workbook data but cannot render Excel charts,
+    drawings, or every formatting rule. LibreOffice's Calc renderer exports the
+    actual workbook layout to PDF, which our existing in-app PDF renderer then
+    shows without exposing a download action.
+    """
+    converter = _office_converter_path()
+    if not converter:
+        return _excel_visual_pdf_preview(file_path)
+
+    try:
+        with tempfile.TemporaryDirectory(prefix='iie-pulse-xlsx-') as output_dir:
+            result = subprocess.run(
+                [
+                    converter,
+                    '--headless',
+                    '--convert-to', 'pdf:calc_pdf_Export',
+                    '--outdir', output_dir,
+                    file_path,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=75,
+                check=False,
+            )
+            pdf_path = os.path.join(output_dir, f'{Path(file_path).stem}.pdf')
+            if result.returncode != 0 or not os.path.isfile(pdf_path):
+                logger.warning(
+                    'LibreOffice workbook preview failed for %s: %s',
+                    file_path,
+                    (result.stderr or result.stdout or 'no output').strip(),
+                )
+                return _excel_visual_pdf_preview(file_path)
+            return _pdf_visual_preview(pdf_path)
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning('LibreOffice workbook preview failed for %s: %s', file_path, exc)
+        return _excel_visual_pdf_preview(file_path)
 
 
 @api_view(['GET'])
@@ -4745,6 +5047,7 @@ def preview_material(request, pk):
     filename = os.path.basename(material.file.name)
     suffix = Path(filename).suffix.lower()
     content_type = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
+    workbook_preview_mode = ''
 
     try:
         if suffix in MATERIAL_IMAGE_EXTENSIONS:
@@ -4760,23 +5063,23 @@ def preview_material(request, pk):
         elif suffix in MATERIAL_TEXT_EXTENSIONS:
             with open(file_path, 'r', encoding='utf-8', errors='replace') as handle:
                 content = handle.read(2 * 1024 * 1024)
-            body = f'<pre>{escape(content)}</pre>'
-        elif suffix == '.docx':
-            body = _docx_visual_preview(file_path)
-        elif suffix == '.pptx':
-            body = _office_xml_text(file_path, 'ppt/slides/slide', '}t', 'slide')
-        elif suffix == '.xlsx':
-            from openpyxl import load_workbook
-            workbook = load_workbook(file_path, read_only=True, data_only=True)
-            sections = []
-            for sheet in workbook.worksheets[:10]:
-                rows = []
-                for row in sheet.iter_rows(max_row=250, max_col=40, values_only=True):
-                    cells = ''.join(f'<td>{escape(str(value)) if value is not None else ""}</td>' for value in row)
-                    rows.append(f'<tr>{cells}</tr>')
-                sections.append(f'<h2>{escape(sheet.title)}</h2><table>{"".join(rows)}</table>')
-            workbook.close()
-            body = ''.join(sections)
+            body = f'<pre class="code-preview">{escape(content)}</pre>'
+        elif suffix in MATERIAL_DOCUMENT_EXTENSIONS:
+            # Office's own renderer keeps legacy DOC/PPT and modern DOCX/PPTX
+            # layouts, images, charts, and slides intact when available.
+            body = _microsoft_office_document_pdf_preview(file_path, suffix)
+            if not body and suffix == '.docx':
+                body = _docx_visual_preview(file_path)
+            elif not body and suffix == '.pptx':
+                body = _office_xml_text(file_path, 'ppt/slides/slide', '}t', 'slide')
+            elif not body:
+                body = '<div class="paragraph">This Office file cannot be rendered on this server yet.</div>'
+        elif suffix in {'.xlsx', '.xlsm'}:
+            # Prefer a true Calc render so workbook dashboards, charts,
+            # formulas, images, and sheet layout match the uploaded file.
+            body = _xlsx_visual_pdf_preview(file_path)
+            workbook_preview_mode = 'visual' if body else 'grid'
+            body = body or _xlsx_visual_preview(file_path)
         else:
             body = '<div class="paragraph">This file format cannot be rendered inside the app. Please upload PDF, ZIP, DOCX, PPTX, XLSX, image, or text format.</div>'
     except (OSError, ValueError, zipfile.BadZipFile, KeyError, PyPDF2.errors.PdfReadError, ImportError) as exc:
@@ -4785,13 +5088,17 @@ def preview_material(request, pk):
 
     if not body:
         body = '<div class="paragraph">No readable content was found in this file.</div>'
-    return HttpResponse(_material_preview_page(material.title or filename, body), content_type='text/html; charset=utf-8')
+    response = HttpResponse(_material_preview_page(material.title or filename, body), content_type='text/html; charset=utf-8')
+    if workbook_preview_mode:
+        response['X-Workbook-Preview'] = workbook_preview_mode
+    return response
 
 
 READABLE_ZIP_EXTENSIONS = {
     '.pdf', '.png', '.jpg', '.jpeg', '.webp', '.gif',
     '.txt', '.csv', '.md', '.json', '.html', '.css', '.js',
-    '.py', '.java', '.sql',
+    '.ts', '.tsx', '.jsx', '.py', '.java', '.sql', '.xml', '.yaml', '.yml',
+    '.xlsx', '.xlsm', '.doc', '.docx', '.ppt', '.pptx',
 }
 SKIPPED_ZIP_PARTS = {
     '__macosx', '.git', 'node_modules', 'android', 'ios', 'build', 'dist', '.expo',
@@ -4875,17 +5182,7 @@ def _material_access_error(request, material):
     student = Students.objects.filter(user=request.user).first()
     if not student:
         return None
-
-    student_batch_ids = {
-        batch.id
-        for batch in _student_enrolled_batches(student)
-        if batch
-    }
-    material_batch_ids = set()
-    if material.batch_id:
-        material_batch_ids.add(material.batch_id)
-    material_batch_ids.update(material.assignments.values_list('batch_id', flat=True))
-    if not student_batch_ids.intersection(material_batch_ids):
+    if not _student_can_access_material(student, material):
         return Response(
             {'error': 'You are not allowed to view this material.'},
             status=status.HTTP_403_FORBIDDEN,
@@ -4912,7 +5209,11 @@ def _zip_entry_payload(info):
         file_type = 'pdf'
     elif suffix in {'.png', '.jpg', '.jpeg', '.webp', '.gif'}:
         file_type = 'image'
-    elif suffix in {'.txt', '.csv', '.md', '.json', '.html', '.css', '.js', '.py', '.java', '.sql'}:
+    elif suffix in {'.xlsx', '.xlsm'}:
+        file_type = 'sheet'
+    elif suffix in MATERIAL_DOCUMENT_EXTENSIONS:
+        file_type = 'document'
+    elif suffix in MATERIAL_TEXT_EXTENSIONS:
         file_type = 'text'
     else:
         file_type = 'other'
@@ -5002,6 +5303,13 @@ def material_zip_entry_file(request, pk):
     filename = os.path.basename(entry_path)
     content_type = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
     suffix = Path(filename).suffix.lower()
+    if request.query_params.get('raw') == '1':
+        if suffix in MATERIAL_TEXT_EXTENSIONS:
+            content_type = 'text/plain; charset=utf-8'
+        response = HttpResponse(content, content_type=content_type)
+        response['Content-Disposition'] = f'inline; filename="{filename}"'
+        response['Content-Length'] = str(len(content))
+        return response
     if suffix == '.pdf':
         try:
             reader = PyPDF2.PdfReader(io.BytesIO(content))
@@ -5029,9 +5337,35 @@ def material_zip_entry_file(request, pk):
     if suffix in MATERIAL_TEXT_EXTENSIONS:
         text = content.decode('utf-8', errors='replace')
         return HttpResponse(
-            _material_preview_page(filename, f'<pre>{escape(text)}</pre>'),
+            _material_preview_page(filename, f'<pre class="code-preview">{escape(text)}</pre>'),
             content_type='text/html; charset=utf-8',
         )
+    if suffix in {'.xlsx', '.xlsm'}:
+        try:
+            body = _xlsx_visual_preview(io.BytesIO(content))
+            return HttpResponse(_material_preview_page(filename, body), content_type='text/html; charset=utf-8')
+        except (ValueError, KeyError, zipfile.BadZipFile, ImportError):
+            return Response({'error': 'This spreadsheet could not be read.'}, status=status.HTTP_400_BAD_REQUEST)
+    if suffix in MATERIAL_DOCUMENT_EXTENSIONS:
+        temporary_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temporary_file:
+                temporary_file.write(content)
+                temporary_path = temporary_file.name
+            body = _microsoft_office_document_pdf_preview(temporary_path, suffix)
+            if not body and suffix == '.docx':
+                body = _docx_visual_preview(temporary_path)
+            elif not body and suffix == '.pptx':
+                body = _office_xml_text(temporary_path, 'ppt/slides/slide', '}t', 'slide')
+            if not body:
+                return Response({'error': 'This Office file could not be rendered on this server.'}, status=status.HTTP_400_BAD_REQUEST)
+            return HttpResponse(_material_preview_page(filename, body), content_type='text/html; charset=utf-8')
+        finally:
+            if temporary_path:
+                try:
+                    os.unlink(temporary_path)
+                except OSError:
+                    pass
     response = HttpResponse(content, content_type=content_type)
     response['Content-Disposition'] = f'inline; filename="{filename}"'
     response['Content-Length'] = str(len(content))
@@ -5041,11 +5375,15 @@ def material_zip_entry_file(request, pk):
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
 def delete_material(request, pk):
+    emp = _get_employee_for_request(request)
     try:
-        StudyMaterial.objects.get(id=pk).delete()
-        return Response({'message': 'Deleted.'}, status=204)
+        material = StudyMaterial.objects.get(id=pk)
     except StudyMaterial.DoesNotExist:
         return Response({'error': 'Not found'}, status=404)
+    if not (request.user.is_superuser or request.user.is_staff) and (not emp or material.uploaded_by_id != emp.id):
+        return Response({'error': 'You can delete only your uploaded materials.'}, status=status.HTTP_403_FORBIDDEN)
+    material.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 # -- TESTS ---------------------------------------------------------------------
@@ -5189,9 +5527,12 @@ class AssignedTestListView(generics.ListCreateAPIView):
 @permission_classes([IsAuthenticated])
 def student_tests(request):
     try:
-        student = Students.objects.get(user=request.user)
-        if student.assigned_batch:
-            assigned = AssignedTest.objects.filter(batch=student.assigned_batch)
+        student = Students.objects.select_related('assigned_batch', 'assigned_staff').get(user=request.user)
+        if student.assigned_batch_id and student.assigned_staff_id:
+            assigned = AssignedTest.objects.filter(
+                batch=student.assigned_batch,
+                test__created_by=student.assigned_staff,
+            )
             return Response(AssignedTestSerializer(assigned, many=True).data)
     except Students.DoesNotExist:
         pass
@@ -5734,10 +6075,12 @@ class QuizListView(generics.ListAPIView):
         except Employee.DoesNotExist:
             try:
                 student = Students.objects.get(user=user)
-                batch_ids = [batch.id for batch in _student_enrolled_batches(student)]
+                batch_ids = [batch.id for batch in _student_current_content_batches(student)]
                 return Quiz.objects.filter(
-                    Q(quiz_scope='staff_batch', assigned_batches__id__in=batch_ids) |
-                    Q(quiz_scope='staff_batch', batch_id__in=batch_ids) |
+                    (
+                        Q(quiz_scope='staff_batch', created_by=student.assigned_staff) &
+                        (Q(assigned_batches__id__in=batch_ids) | Q(batch_id__in=batch_ids))
+                    ) |
                     Q(quiz_scope='admin_global', audience__in=['students', 'both']),
                     is_published=True,
                 ).distinct().order_by('-created_at')
@@ -5944,12 +6287,12 @@ def take_quiz(request, quiz_id):
         quiz = Quiz.objects.get(id=quiz_id)
     except (Students.DoesNotExist, Quiz.DoesNotExist):
         return Response({'error': 'Not found'}, status=404)
-    student_batch_ids = [batch.id for batch in _student_accessible_batches(student)]
+    student_batch_ids = [batch.id for batch in _student_current_content_batches(student)]
     has_access = (
         quiz.is_published and (
             (quiz.quiz_scope == 'admin_global' and quiz.audience in ('students', 'both')) or
             (
-                quiz.quiz_scope == 'staff_batch' and (
+                quiz.quiz_scope == 'staff_batch' and quiz.created_by_id == student.assigned_staff_id and (
                     quiz.batch_id in student_batch_ids or
                     quiz.assigned_batches.filter(id__in=student_batch_ids).exists()
                 )
@@ -6152,6 +6495,8 @@ def serialize_public_user(user):
         'city': user.city,
         'state': user.state,
         'branch': getattr(user, 'branch', '') or '',
+        'source': getattr(user, 'source', '') or '',
+        'source_display': user.get_source_display() if getattr(user, 'source', '') else '',
         'username': user.username,
         'status': status_value,
         'raw_status': getattr(user, 'status', 'new'),
@@ -6193,15 +6538,23 @@ def can_view_public_users(user):
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def public_user_register(request):
-    username = str(request.data.get('username', '')).strip().lower()
-    password = str(request.data.get('password', '')).strip()
     email = str(request.data.get('email', '')).strip().lower()
+    mobile = str(request.data.get('mobile', '')).strip()
+    # New public registrations use email and mobile as their sign-in credentials.
+    # Keep supplied values as a fallback so existing mobile clients remain compatible.
+    username = str(request.data.get('username', '')).strip().lower() or email
+    password = str(request.data.get('password', '')).strip() or mobile
     branch = str(request.data.get('branch', '')).strip().lower()
+    source = str(request.data.get('source', '')).strip().lower()
     if branch not in {'100ft', 'hopes', 'kuniyamuthur'}:
         return Response({'error': 'Please choose a valid branch.'}, status=400)
+    if source not in {choice[0] for choice in PublicUser.SOURCE_CHOICES}:
+        return Response({'error': 'Please choose a valid source.'}, status=400)
 
+    if not email or not mobile:
+        return Response({'error': 'Email and mobile number are required.'}, status=400)
     if not username or not password:
-        return Response({'error': 'Username and password are required.'}, status=400)
+        return Response({'error': 'Unable to create login credentials.'}, status=400)
 
     existing_user = PublicUser.objects.filter(username__iexact=username)
     if email:
@@ -6213,13 +6566,14 @@ def public_user_register(request):
     public_user = PublicUser.objects.create(
         name=str(request.data.get('name', '')).strip() or username,
         email=email,
-        mobile=str(request.data.get('mobile', '')).strip(),
+        mobile=mobile,
         qualification=str(request.data.get('qualification', '')).strip(),
         area_of_interest=str(request.data.get('area_of_interest', '')).strip(),
         location=str(request.data.get('location', '')).strip(),
         city=str(request.data.get('city', '')).strip(),
         state=str(request.data.get('state', '')).strip(),
         branch=branch,
+        source=source,
         username=username,
         password=make_password(password),
     )
@@ -6382,6 +6736,7 @@ def admin_public_users(request):
 
     users = PublicUser.objects.all().order_by('-created_at')
     branch_filter = str(request.query_params.get('branch', '')).strip().lower()
+    counselor_filter = str(request.query_params.get('counselor', '')).strip()
     if not is_admin_user(request.user):
         try:
             employee = Employee.objects.get(user=request.user)
@@ -6391,14 +6746,41 @@ def admin_public_users(request):
     elif branch_filter:
         users = users.filter(branch__iexact=branch_filter)
 
+    counselor_qs = Employee.objects.filter(designation__iexact='counselor').order_by('first_name', 'last_name')
+    if is_admin_user(request.user) and counselor_filter:
+        counselor = counselor_qs.filter(id=counselor_filter).first()
+        if counselor:
+            users = users.filter(branch__iexact=str(counselor.branch or '').strip())
+
+    date_from = parse_date(str(request.query_params.get('date_from', '')).strip())
+    date_to = parse_date(str(request.query_params.get('date_to', '')).strip())
+    interest_filter = str(request.query_params.get('interest', '')).strip()
+    feedback_filter = str(request.query_params.get('feedback', '')).strip()
+    source_filter = str(request.query_params.get('source', '')).strip().lower()
+    if date_from:
+        users = users.filter(follow_up_date__gte=date_from)
+    if date_to:
+        users = users.filter(follow_up_date__lte=date_to)
+    if interest_filter:
+        users = users.filter(area_of_interest__iexact=interest_filter)
+    if feedback_filter:
+        users = users.filter(follow_up_feedback=feedback_filter)
+    if source_filter:
+        users = users.filter(source=source_filter)
     counselor_map = {}
-    for counselor in Employee.objects.filter(designation__iexact='counselor').order_by('first_name', 'last_name'):
+    counselors = []
+    for counselor in counselor_qs:
         branch_key = str(counselor.branch or '').strip().lower()
         if not branch_key:
             continue
         counselor_name = f"{counselor.first_name} {counselor.last_name or ''}".strip()
         if counselor_name:
             counselor_map.setdefault(branch_key, []).append(counselor_name)
+            counselors.append({
+                'id': str(counselor.id),
+                'label': counselor_name,
+                'branch': str(counselor.branch or '').strip(),
+            })
 
     all_serialized = [serialize_public_user(user) for user in users]
     for item in all_serialized:
@@ -6414,7 +6796,9 @@ def admin_public_users(request):
                 if str(item.get('branch') or '').strip().lower() == branch_filter.lower()
             ]
     elif tab in ('walked_in', 'walked'):
-        visible_statuses = {'walked_in', 'follow_up'} if is_admin_user(request.user) else {'walked_in'}
+        # A follow-up is still a walked-in lead. Keep it on this tab so the
+        # counselor can see and update the entire lead history in one place.
+        visible_statuses = {'walked_in', 'follow_up'}
         serialized = [item for item in serialized if item.get('status') in visible_statuses]
     elif tab in ('follow_up', 'followup'):
         serialized = [item for item in serialized if item.get('status') == 'follow_up']
@@ -6435,20 +6819,17 @@ def admin_public_users(request):
             branch_map[branch.lower()] = branch
         if item_status == 'enrolled':
             counts['enrolled'] += 1
-        elif item_status == 'walked_in':
+        elif item_status in {'walked_in', 'follow_up'}:
             counts['walked_in'] += 1
-        elif item_status == 'follow_up':
-            counts['follow_up'] += 1
         else:
             counts['users'] += 1
 
     admin_view = is_admin_user(request.user)
     branches = []
     for branch in sorted(branch_map.values(), key=lambda value: value.lower()):
-        counselor_names = counselor_map.get(branch.lower(), [])
         branches.append({
             'id': branch,
-            'label': ', '.join(counselor_names) if admin_view and counselor_names else branch,
+            'label': branch,
         })
 
     batches = []
@@ -6465,7 +6846,15 @@ def admin_public_users(request):
                 'label': item.get('batch_code') or item.get('batch_number') or f"Batch {item['batch_id']}",
             })
 
-    return Response({'results': serialized, 'batches': batches, 'branches': branches, 'counts': counts})
+    interests = sorted({item.get('area_of_interest', '').strip() for item in all_serialized if item.get('area_of_interest', '').strip()}, key=str.lower)
+    return Response({
+        'results': serialized,
+        'batches': batches,
+        'branches': branches,
+        'counselors': counselors if admin_view else [],
+        'interests': interests,
+        'counts': counts,
+    })
 
 
 @api_view(['POST'])
@@ -6474,14 +6863,18 @@ def admin_public_user_status(request, pk):
     if not can_view_public_users(request.user):
         return Response({'error': 'Admin or counselor access required.'}, status=status.HTTP_403_FORBIDDEN)
 
+    # Administrators have report-only access to public users. Lead actions
+    # belong to the counselor of the selected branch.
+    employee = Employee.objects.filter(user=request.user).first()
+    if not employee or str(employee.designation or '').lower() != 'counselor':
+        return Response({'error': 'Only counselors can update public user records.'}, status=403)
+
     public_user = PublicUser.objects.filter(pk=pk).first()
     if not public_user:
         return Response({'error': 'Public user not found.'}, status=404)
 
-    if not is_admin_user(request.user):
-        employee = Employee.objects.filter(user=request.user).first()
-        if not employee or str(employee.branch or '').strip().lower() != str(public_user.branch or '').strip().lower():
-            return Response({'error': 'You can update public users from your branch only.'}, status=403)
+    if str(employee.branch or '').strip().lower() != str(public_user.branch or '').strip().lower():
+        return Response({'error': 'You can update public users from your branch only.'}, status=403)
 
     has_status = 'status' in request.data
     next_status = str(request.data.get('status', '')).strip() if has_status else ''
@@ -6496,13 +6889,13 @@ def admin_public_user_status(request, pk):
     if 'remark' in request.data:
         public_user.remark = str(request.data.get('remark', '')).strip()
         update_fields.append('remark')
+    if 'area_of_interest' in request.data:
+        public_user.area_of_interest = str(request.data.get('area_of_interest', '')).strip()
+        update_fields.append('area_of_interest')
     if next_status == 'follow_up':
-        specification = str(request.data.get('follow_up_specification', '')).strip()
         feedback = str(request.data.get('follow_up_feedback', '')).strip()
         date_value = str(request.data.get('follow_up_date', '')).strip()
         allowed_feedback = {choice[0] for choice in PublicUser.FOLLOW_UP_FEEDBACK_CHOICES}
-        if not specification:
-            return Response({'error': 'Specification is required.'}, status=400)
         if feedback not in allowed_feedback:
             return Response({'error': 'Please choose a valid feedback.'}, status=400)
         follow_up_date = parse_date(date_value) if date_value else None
@@ -6510,12 +6903,11 @@ def admin_public_user_status(request, pk):
             return Response({'error': 'Please choose a valid follow-up date.'}, status=400)
         if follow_up_date and follow_up_date < timezone.localdate():
             return Response({'error': 'Previous dates cannot be selected.'}, status=400)
-        public_user.follow_up_specification = specification
         public_user.follow_up_feedback = feedback
         public_user.follow_up_date = follow_up_date
         public_user.follow_up_created_at = timezone.now()
         update_fields.extend([
-            'follow_up_specification', 'follow_up_feedback', 'follow_up_date',
+            'follow_up_feedback', 'follow_up_date',
             'follow_up_created_at',
         ])
     if update_fields == ['updated_at']:
@@ -6709,7 +7101,9 @@ def student_sessions(request):
             if not course_batches:
                 return Response({'error': 'You are not assigned to this course.'}, status=403)
             for item in course_batches:
-                sync_missing_sessions_from_logsheet(item)
+                # Session extraction belongs to the staff batch workflow.
+                # Re-parsing a PDF on every student app open can make one
+                # student's desk time out while another student's works.
                 _sync_reassigned_student_progress_for_batch(item)
             raw_sessions = CourseSession.objects.filter(batch__in=course_batches).order_by('session_number', 'batch_id')
             by_number = {}
@@ -6727,12 +7121,10 @@ def student_sessions(request):
             batch = next((item for item in accessible_batches if str(item.id) == str(requested_batch_id)), None)
             if not batch:
                 return Response({'error': 'You are not assigned to this batch.'}, status=403)
-            sync_missing_sessions_from_logsheet(batch)
             _sync_reassigned_student_progress_for_batch(batch)
             sessions = CourseSession.objects.filter(batch=batch).order_by('session_number')
         else:
             batch = student.assigned_batch if student.assigned_batch in batches else batches[0]
-            sync_missing_sessions_from_logsheet(batch)
             _sync_reassigned_student_progress_for_batch(batch)
             sessions = CourseSession.objects.filter(batch=batch).order_by('session_number')
         data = []
@@ -7923,8 +8315,8 @@ def _student_detail_payload(student):
     test_qs = list(TestResult.objects.filter(student=student).select_related('test').order_by('-submitted_at'))
     quiz_qs = list(QuizAttempt.objects.filter(student=student).select_related('quiz').order_by('-submitted_at'))
     assigned_quiz_qs = Quiz.objects.filter(
-        Q(quiz_scope='staff_batch', assigned_batches=student.assigned_batch) |
-        Q(quiz_scope='staff_batch', batch=student.assigned_batch) |
+        Q(quiz_scope='staff_batch', created_by=student.assigned_staff, assigned_batches=student.assigned_batch) |
+        Q(quiz_scope='staff_batch', created_by=student.assigned_staff, batch=student.assigned_batch) |
         Q(quiz_scope='admin_global', audience__in=['students', 'both']),
         is_published=True
     ).distinct().prefetch_related('questions').order_by('-created_at') if student.assigned_batch_id else Quiz.objects.none()
@@ -9341,7 +9733,8 @@ def staff_batch_detail_report(request, batch_id):
     for student in batch_students_qs.order_by('first_name', 'last_name'):
         att = attendance_counts.get(student.id, {})
         progress = progress_counts.get(student.id, {})
-        progress_done = progress.get('completed', 0) or progress.get('staff_completed', 0) or 0
+        # Keep this student-specific: trainer completion is reported separately.
+        progress_done = progress.get('completed', 0) or 0
         progress_total = progress.get('total', 0) or total_sessions
         assigned_at = enrollment_dates.get(student.id)
         if student.id in completed_ids or student.student_id in completed_codes:
@@ -11744,13 +12137,15 @@ def student_quizzes(request):
     try:
         _publish_due_quizzes()
         student = Students.objects.get(user=request.user)
-        student_batches_list = _student_accessible_batches(student)
+        student_batches_list = _student_current_content_batches(student)
         if not student_batches_list:
             return Response({'results': []})
         
         quizzes = Quiz.objects.filter(
-            Q(quiz_scope='staff_batch', assigned_batches__in=student_batches_list) |
-            Q(quiz_scope='staff_batch', batch__in=student_batches_list) |
+            (
+                Q(quiz_scope='staff_batch', created_by=student.assigned_staff) &
+                (Q(assigned_batches__in=student_batches_list) | Q(batch__in=student_batches_list))
+            ) |
             Q(quiz_scope='admin_global', audience__in=['students', 'both']),
             is_published=True
         ).select_related('batch', 'batch__course_name').prefetch_related('assigned_batches').distinct().order_by('-created_at')
@@ -11813,9 +12208,9 @@ def student_take_quiz(request, quiz_id):
         student = Students.objects.get(user=request.user)
         quiz = Quiz.objects.get(id=quiz_id, is_published=True)
         
-        assigned_batch_ids = [batch.id for batch in _student_accessible_batches(student)]
+        assigned_batch_ids = [batch.id for batch in _student_current_content_batches(student)]
         assigned_to_batch = (
-            quiz.quiz_scope == 'staff_batch' and (
+            quiz.quiz_scope == 'staff_batch' and quiz.created_by_id == student.assigned_staff_id and (
                 quiz.batch_id in assigned_batch_ids or
                 quiz.assigned_batches.filter(id__in=assigned_batch_ids).exists()
             )
@@ -12063,13 +12458,14 @@ def student_assigned_tests(request):
     except Students.DoesNotExist:
         return Response([])
 
-    student_batches_list = _student_accessible_batches(student)
-    if not student_batches_list:
+    student_batches_list = _student_current_content_batches(student)
+    if not student_batches_list or not student.assigned_staff_id:
         return Response([])
 
     # Only tests assigned to this student's active batches.
     assigned = AssignedTest.objects.filter(
-        batch__in=student_batches_list
+        batch__in=student_batches_list,
+        test__created_by=student.assigned_staff,
     ).select_related('test', 'batch', 'batch__course_name').order_by('-assigned_date')
 
     def test_status(test):
@@ -12111,34 +12507,6 @@ def student_assigned_tests(request):
             'batch_number': a.batch.batch_number if a.batch else '',
             'course_name': test.course.course_name if test.course else (a.batch.course_name.course_name if a.batch and a.batch.course_name else ''),
         })
-
-    # Legacy safety: older mentor-created tests sometimes exist without an
-    # AssignedTest row, so include mentor-owned tests without duplicates.
-    if student.assigned_staff:
-        mentor_tests = QuizTest.objects.filter(
-            created_by=student.assigned_staff
-        ).exclude(id__in=assigned_test_ids).order_by('-created_at')
-        for test in mentor_tests:
-            questions = Question.objects.filter(test=test)
-            if not questions.exists() and not test.question_paper:
-                continue
-            data.append({
-                'id': -test.id,
-                'test_id': test.id,
-                'test_title': test.title,
-                'test_description': test.description,
-                'test_type': test.test_type,
-                'creation_method': test.creation_method,
-                'instructions': test.instructions,
-                'test_date': test.test_date,
-                'start_time': test.start_time,
-                'duration_minutes': test.duration_minutes,
-                'question_paper_url': request.build_absolute_uri(test.question_paper.url) if test.question_paper else None,
-                'total_questions': questions.count(),
-                'status': test_status(test),
-                'trainer': f"{test.created_by.first_name} {test.created_by.last_name or ''}".strip() if test.created_by else '',
-                'assigned_date': test.created_at,
-            })
 
     return Response(data)
 
@@ -12191,17 +12559,17 @@ def student_take_test(request, test_id):
         test = QuizTest.objects.get(id=test_id)
         
         # Check if student is in a batch that has this test assigned
-        student_batches_list = _student_accessible_batches(student)
-        if not student_batches_list:
+        student_batches_list = _student_current_content_batches(student)
+        if not student_batches_list or not student.assigned_staff_id:
             return Response({'error': 'You are not assigned to any batch'}, status=400)
         
         assigned_exists = AssignedTest.objects.filter(
             test=test,
-            batch__in=student_batches_list
+            batch__in=student_batches_list,
+            test__created_by=student.assigned_staff,
         ).exists()
-        mentor_owned_test = bool(student.assigned_staff_id and test.created_by_id == student.assigned_staff_id)
-        
-        if not assigned_exists and not mentor_owned_test:
+
+        if not assigned_exists:
             return Response({'error': 'This test is not assigned to your batch'}, status=400)
         
         # ? ONE TIME ATTEMPT - Check if already taken

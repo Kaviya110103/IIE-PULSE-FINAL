@@ -4,6 +4,7 @@ import { ArrowRight, LogOut, ShieldCheck } from 'lucide-react'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import AppLayout from './components/layout/AppLayout'
 import Login from './pages/auth/Login'
+import { PublicLanding, PublicRegistration, PublicRestrictedPage, PublicUserPortal } from './pages/public/PublicAccess'
 import logo from './assets/IIE.png'
 import UserNotifications from './pages/common/UserNotifications'
 import './styles/global.css'
@@ -53,7 +54,7 @@ import StudentProfile from './pages/student/StudentProfile'
 
 function ProtectedRoute({ children, allowedRoles }) {
   const { user } = useAuth()
-  if (!user) return <Navigate to="/" replace />
+  if (!user) return <Navigate to="/login" replace />
   const role = (user.user_type === 'employee' && user.designation === 'counselor') ? 'counselor' : user.user_type
   if (allowedRoles && !allowedRoles.includes(role)) return <Navigate to="/" replace />
   return children
@@ -62,6 +63,7 @@ function ProtectedRoute({ children, allowedRoles }) {
 function getDashboardPath(user) {
   if (user?.user_type === 'admin') return '/admin'
   if (user?.user_type === 'student') return '/student'
+  if (user?.user_type === 'public') return '/public'
   if (user?.designation === 'counselor') return '/counselor'
   return '/employee'
 }
@@ -177,14 +179,24 @@ function AppRoutes() {
 
   if (!user) return (
     <Routes>
-      <Route path="/" element={<Login />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="/" element={<PublicLanding />} />
+      <Route path="/login" element={<Login />} />
+      <Route path="/register" element={<PublicRegistration />} />
+      <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>
   )
   return (
     <Routes>
       <Route path="/" element={user.user_type === 'student' ? <DashboardLanding /> : <Navigate to={getDashboardPath(user)} replace />} />
       <Route path="/dashboard" element={<DashboardLanding />} />
+      <Route path="/public" element={<ProtectedRoute allowedRoles={['public']}><AppLayout role="public" /></ProtectedRoute>}>
+        <Route index element={<PublicUserPortal />} />
+        <Route path="skillset" element={<PublicUserPortal />} />
+        <Route path="news" element={<PublicUserPortal />} />
+        <Route path="gallery" element={<PublicUserPortal />} />
+        <Route path="contact" element={<PublicUserPortal />} />
+        <Route path="restricted" element={<PublicRestrictedPage />} />
+      </Route>
 
       {/* ── ADMIN ─────────────────────────────────────────────────── */}
       <Route path="/admin" element={<ProtectedRoute allowedRoles={['admin']}><AppLayout role="admin" /></ProtectedRoute>}>
