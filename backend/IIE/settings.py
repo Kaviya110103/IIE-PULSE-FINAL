@@ -8,6 +8,13 @@ import dj_database_url
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 
+# mysqlclient can fail to open a local Windows socket even when the MySQL
+# service is healthy. Keep the portable PyMySQL fallback opt-in so production
+# continues using its existing database driver.
+if os.getenv('USE_PYMYSQL', '').strip().lower() in ('1', 'true', 'yes', 'on'):
+    import pymysql
+    pymysql.install_as_MySQLdb()
+
 def getenv_bool(key, default=False):
     value = os.getenv(key, str(default))
     return str(value).strip().lower() in ('1', 'true', 'yes', 'on')

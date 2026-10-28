@@ -799,7 +799,6 @@ export function StaffBatchDetails() {
   const navigate = useNavigate()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [loginModal, setLoginModal] = useState(null)
   const [expandedStudents, setExpandedStudents] = useState({})
 
   useEffect(() => {
@@ -813,7 +812,7 @@ export function StaffBatchDetails() {
 
   const batch = data?.batch || {}
   const summary = data?.summary || {}
-  const staffLogin = data?.staff_login || {}
+  const sessionCompletionRows = data?.students || []
   const trainerText = (batch.trainers || [])
     .map(trainer => `${trainer.name}${trainer.timing ? ` - ${trainer.timing}` : ''}`)
     .join(', ')
@@ -859,57 +858,13 @@ export function StaffBatchDetails() {
     </button>
   )
 
-  const loginDateKey = (value) => {
-    const date = new Date(value)
-    if (Number.isNaN(date.getTime())) return 'Unknown'
-    return date.toISOString().slice(0, 10)
-  }
-
-  const groupLoginRecords = (records, keyBuilder, rowBuilder) => {
-    const grouped = new Map()
-    ;(records || []).forEach(record => {
-      const key = keyBuilder(record)
-      if (!grouped.has(key)) grouped.set(key, { ...rowBuilder(record), records: [] })
-      grouped.get(key).records.push(record)
-    })
-    return Array.from(grouped.values()).map(row => ({ ...row, login_count: row.records.length }))
-  }
-
-  const studentLoginRows = groupLoginRecords(
-    data?.student_login_records || [],
-    record => `${record.student_id || '-'}|${loginDateKey(record.login_time)}`,
-    record => ({
-      student_id: record.student_id || '-',
-      student_name: record.student_name || '-',
-      date: loginDateKey(record.login_time),
-      title: `${record.student_name || 'Student'} - ${formatSimpleDate(record.login_time)}`,
-    })
-  )
-
-  const studentLoginTotal = (data?.student_login_records || []).length
-  const staffLoginTotal = (staffLogin.records || []).length
-
-  const staffLoginRows = groupLoginRecords(
-    staffLogin.records || [],
-    record => loginDateKey(record.login_time),
-    record => ({
-      staff_name: trainerText || 'Staff',
-      date: loginDateKey(record.login_time),
-      title: `Staff Login - ${formatSimpleDate(record.login_time)}`,
-    })
-  )
-
-  const showHistory = (title, records) => {
-    setLoginModal({ title, records: records || [] })
-  }
-
   return (
     <div className="employee-root">
       <Styles />
       <div className="employee-page-header">
         <div>
           <h3><i className="fas fa-chart-line" /> Batch Details</h3>
-          <p>Clear last 30 days view for attendance and login activity</p>
+          <p>View attendance, session completion, and student result records</p>
         </div>
         <button className="employee-btn employee-btn-ghost" onClick={() => navigate('/employee/batches')}>
           <i className="fas fa-arrow-left" /> Back
@@ -943,8 +898,6 @@ export function StaffBatchDetails() {
             <span><strong>{summary.tests_uploaded || 0}</strong> Tests</span>
             <span>|</span>
             <span><strong>{summary.quizzes_uploaded || 0}</strong> Quizzes</span>
-            <span>|</span>
-            <span>Staff login: <strong>{staffLogin.login_usage_count || 0}/{staffLogin.login_usage_target || 7}</strong> ({staffLogin.login_usage_percentage || 0}%)</span>
           </div>
 
           <section style={{ marginBottom: 26 }}>
@@ -995,6 +948,29 @@ export function StaffBatchDetails() {
                       </Fragment>
                     )
                   })}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section style={{ marginBottom: 26 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 10, flexWrap: 'wrap' }}>
+              <h4 style={{ margin: 0, fontSize: 18, color: T.navy }}>Session Completion</h4>
+              <span style={{ color: T.slate, fontSize: 13 }}>Trainer and student completion by batch session</span>
+            </div>
+            <div style={{ overflowX: 'auto', border: `1px solid ${T.border}`, borderRadius: 10 }}>
+              <table className="employee-table">
+                <thead><tr><th>Name</th><th>Trainer Completion</th><th>Student Completion</th></tr></thead>
+                <tbody>
+                  {sessionCompletionRows.length === 0 ? (
+                    <tr><td colSpan="3" style={{ textAlign: 'center', color: T.slate }}>No students found for this batch.</td></tr>
+                  ) : sessionCompletionRows.map(student => (
+                    <tr key={`session-completion-${student.id}`}>
+                      <td style={{ fontWeight: 800 }}>{student.name || '-'}</td>
+                      <td><strong>{summary.staff_completed_sessions || 0}</strong> / {summary.total_sessions || 0}</td>
+                      <td><strong>{student.sessions_completed || 0}</strong> / {student.total_sessions || summary.total_sessions || 0}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -1104,74 +1080,7 @@ export function StaffBatchDetails() {
             </div>
           </section>
 
-          <section style={{ marginBottom: 26 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 10, flexWrap: 'wrap' }}>
-              <h4 style={{ margin: 0, fontSize: 18, color: T.navy }}>Student Login History ({studentLoginTotal})</h4>
-              <span style={{ color: T.slate, fontSize: 13 }}>Per day login count</span>
-            </div>
-            <div style={{ overflowX: 'auto', border: `1px solid ${T.border}`, borderRadius: 10 }}>
-              <table className="employee-table">
-                <thead><tr><th>Student ID</th><th>Name</th><th>Date</th><th>Login Count</th><th>History</th></tr></thead>
-                <tbody>
-                  {studentLoginRows.length === 0 ? (
-                    <tr><td colSpan="5" style={{ textAlign: 'center', color: T.slate }}>No student login records in the last month.</td></tr>
-                  ) : studentLoginRows.map(row => (
-                    <tr key={`${row.student_id}-${row.date}`}>
-                      <td>{row.student_id}</td>
-                      <td>{row.student_name}</td>
-                      <td>{formatSimpleDate(row.date)}</td>
-                      <td>{row.login_count}</td>
-                      <td><button className="employee-btn employee-btn-sm employee-btn-ghost" onClick={() => showHistory(row.title, row.records)}><i className="fas fa-eye" /> View</button></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          <section>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 10, flexWrap: 'wrap' }}>
-              <h4 style={{ margin: 0, fontSize: 18, color: T.navy }}>Staff Login History ({staffLoginTotal})</h4>
-              <span style={{ color: T.slate, fontSize: 13 }}>Last month login count</span>
-            </div>
-            <div style={{ overflowX: 'auto', border: `1px solid ${T.border}`, borderRadius: 10 }}>
-              <table className="employee-table">
-                <thead><tr><th>Staff</th><th>Date</th><th>Login Count</th><th>History</th></tr></thead>
-                <tbody>
-                  {staffLoginRows.length === 0 ? (
-                    <tr><td colSpan="4" style={{ textAlign: 'center', color: T.slate }}>No staff login records in the last month.</td></tr>
-                  ) : staffLoginRows.map(row => (
-                    <tr key={row.date}>
-                      <td>{row.staff_name}</td>
-                      <td>{formatSimpleDate(row.date)}</td>
-                      <td>{row.login_count}</td>
-                      <td><button className="employee-btn employee-btn-sm employee-btn-ghost" onClick={() => showHistory(row.title, row.records)}><i className="fas fa-eye" /> View</button></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
         </>
-      )}
-
-      {loginModal && (
-        <Modal open onClose={() => setLoginModal(null)} title={loginModal.title} size="md">
-          <div style={{ overflowX: 'auto' }}>
-            <table className="employee-table">
-              <thead><tr><th>Login Time</th><th>Logout Time</th><th>Last Seen</th></tr></thead>
-              <tbody>
-                {loginModal.records.map((record, index) => (
-                  <tr key={record.id || index}>
-                    <td>{formatActivityTime(record.login_time)}</td>
-                    <td>{formatActivityTime(record.logout_time)}</td>
-                    <td>{formatActivityTime(record.last_seen)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Modal>
       )}
     </div>
   )
@@ -2571,7 +2480,7 @@ export function MaterialLibrary() {
   const [assignMaterial, setAssignMaterial] = useState(null)
   const [viewAssignedMaterial, setViewAssignedMaterial] = useState(null)
   const [deleteId, setDeleteId] = useState(null)
-  const [filters, setFilters] = useState({ search: '', branch: '', batch: '' })
+  const [filters, setFilters] = useState({ search: '', batch: '' })
 
   const load = useCallback(async (nextFilters = filters) => {
     setLoading(true)
@@ -2599,8 +2508,7 @@ export function MaterialLibrary() {
 
   useEffect(() => { load() }, [load])
 
-  const branches = Array.from(new Set(batches.map(b => b.branch).filter(Boolean))).sort()
-  const filteredBatches = filters.branch ? batches.filter(b => b.branch === filters.branch) : batches
+  const filteredBatches = batches
 
   const fileIcon = url => {
     if (!url) return 'fa-file-alt'
@@ -2639,7 +2547,7 @@ export function MaterialLibrary() {
   }
 
   const clearFilters = () => {
-    const empty = { search: '', branch: '', batch: '' }
+    const empty = { search: '', batch: '' }
     setFilters(empty)
     load(empty)
   }
@@ -2659,13 +2567,6 @@ export function MaterialLibrary() {
           <div>
             <label className="employee-label">Search</label>
             <input className="employee-input" value={filters.search} onChange={e => setFilters(p => ({ ...p, search: e.target.value }))} placeholder="Search by title" />
-          </div>
-          <div>
-            <label className="employee-label">Branch</label>
-            <select className="employee-select" value={filters.branch} onChange={e => setFilters(p => ({ ...p, branch: e.target.value, batch: '' }))}>
-              <option value="">All branches</option>
-              {branches.map(branch => <option key={branch} value={branch}>{branch}</option>)}
-            </select>
           </div>
           <div>
             <label className="employee-label">Batch</label>
@@ -2693,9 +2594,9 @@ export function MaterialLibrary() {
                   <th style={{ width: '30%' }}>Material</th>
                   <th style={{ width: '14%' }}>Uploaded By</th>
                   <th style={{ width: '12%' }}>Date</th>
-                  <th style={{ width: '28%', textAlign: 'center' }}>Assigned Batches</th>
+                  <th style={{ width: '27%', textAlign: 'center' }}>Assigned Batches</th>
                   <th style={{ width: '8%', textAlign: 'center' }}>File</th>
-                  <th style={{ width: '8%', textAlign: 'center' }}>Action</th>
+                  <th style={{ width: '9%', textAlign: 'center' }}>Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -2726,12 +2627,12 @@ export function MaterialLibrary() {
                         <i className="fas fa-download" />
                       </button>
                     </td>
-                    <td style={{ verticalAlign: 'top', textAlign: 'center' }}>
-                      <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
-                        <button className="employee-btn employee-btn-sm employee-btn-teal" title="Assign to batches" onClick={() => setAssignMaterial(material)}>
+                    <td style={{ verticalAlign: 'middle', textAlign: 'center', paddingInline: 10 }}>
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, justifyContent: 'center', flexWrap: 'nowrap', whiteSpace: 'nowrap' }}>
+                        <button className="employee-btn employee-btn-sm employee-btn-teal" style={{ width: 38, minWidth: 38, height: 32, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }} title="Assign to batches" onClick={() => setAssignMaterial(material)}>
                           <i className="fas fa-share-alt" />
                         </button>
-                        <button className="employee-btn employee-btn-sm employee-btn-danger" title="Delete material" onClick={() => setDeleteId(material.id)}>
+                        <button className="employee-btn employee-btn-sm employee-btn-danger" style={{ width: 38, minWidth: 38, height: 32, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }} title="Delete material" onClick={() => setDeleteId(material.id)}>
                           <i className="fas fa-trash-alt" />
                         </button>
                       </div>
@@ -2745,7 +2646,7 @@ export function MaterialLibrary() {
       </div>
 
       {showUpload && <LibraryUploadModal onClose={() => setShowUpload(false)} onSaved={() => { setShowUpload(false); load() }} />}
-      {assignMaterial && <LibraryAssignModal material={assignMaterial} materials={materials} batches={batches} onClose={() => setAssignMaterial(null)} onSaved={() => { setAssignMaterial(null); load() }} />}
+      {assignMaterial && <LibraryAssignModal material={assignMaterial} batches={batches} onClose={() => setAssignMaterial(null)} onSaved={() => { setAssignMaterial(null); load() }} />}
       {viewAssignedMaterial && (
         <Modal open onClose={() => setViewAssignedMaterial(null)} title="Assigned Batches" size="md">
           <div style={{ display: 'grid', gap: 10 }}>
@@ -2763,7 +2664,7 @@ export function MaterialLibrary() {
       )}
       {deleteId && (
         <Modal open onClose={() => setDeleteId(null)} title="Delete Library Material" size="sm">
-          <p>Delete this library material? Assigned library materials cannot be deleted.</p>
+          <p>Delete this library material and all of its batch assignments?</p>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 20 }}>
             <button className="employee-btn employee-btn-ghost" onClick={() => setDeleteId(null)}>Cancel</button>
             <button className="employee-btn employee-btn-danger" onClick={async () => {
@@ -2832,12 +2733,16 @@ function LibraryUploadModal({ onClose, onSaved }) {
   )
 }
 
-function LibraryAssignModal({ material, materials, batches, onClose, onSaved }) {
-  const [selectedMaterialId, setSelectedMaterialId] = useState(String(material.id))
-  const [form, setForm] = useState({ branch: '', batchIds: [] })
+function LibraryAssignModal({ material, batches, onClose, onSaved }) {
+  const [originalBatchIds] = useState(() => (material?.assigned_batches || []).map(batch => String(batch.id)))
+  const [form, setForm] = useState({
+    branch: material?.assigned_batches?.[0]?.branch || '',
+    batchIds: originalBatchIds,
+  })
   const [saving, setSaving] = useState(false)
   const branches = Array.from(new Set(batches.map(b => b.branch).filter(Boolean))).sort()
   const filteredBatches = form.branch ? batches.filter(b => b.branch === form.branch) : []
+
   const toggleBatch = (batchId) => {
     const id = String(batchId)
     setForm(prev => ({
@@ -2850,17 +2755,20 @@ function LibraryAssignModal({ material, materials, batches, onClose, onSaved }) 
 
   const save = async e => {
     e.preventDefault(); setSaving(true)
-    if (!form.batchIds.length) {
+    if (!form.batchIds.length && !originalBatchIds.length) {
       toast.error('Select at least one batch')
       setSaving(false)
       return
     }
     try {
+      const addBatchIds = form.batchIds.filter(id => !originalBatchIds.includes(id))
+      const removeBatchIds = originalBatchIds.filter(id => !form.batchIds.includes(id))
       await api.post('/material-library/assign/', {
-        material: selectedMaterialId,
-        batch_ids: form.batchIds,
+        material: material.id,
+        batch_ids: addBatchIds,
+        remove_batch_ids: removeBatchIds,
       })
-      toast.success(`Material assigned to ${form.batchIds.length} batch(es)`)
+      toast.success('Material batch assignments updated')
       onSaved()
     } catch (err) {
       const d = err.response?.data || {}
@@ -2872,14 +2780,12 @@ function LibraryAssignModal({ material, materials, batches, onClose, onSaved }) 
     <Modal open onClose={onClose} title="Assign Library Material" size="md">
       <form onSubmit={save}>
         <div className="employee-fg">
-          <label className="employee-label">Library Material <span className="employee-req">*</span></label>
-          <select className="employee-select" value={selectedMaterialId} onChange={e => setSelectedMaterialId(e.target.value)} required>
-            {materials.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
-          </select>
+          <label className="employee-label">Library Material</label>
+          <div className="employee-input" style={{ display: 'flex', alignItems: 'center', fontWeight: 700 }} title={material.title}>{material.title}</div>
         </div>
         <div className="employee-fg">
           <label className="employee-label">Target Branch <span className="employee-req">*</span></label>
-          <select className="employee-select" value={form.branch} onChange={e => setForm({ branch: e.target.value, batchIds: [] })} required>
+          <select className="employee-select" value={form.branch} onChange={e => setForm(prev => ({ ...prev, branch: e.target.value }))} required>
             <option value="">Select branch...</option>
             {branches.map(branch => <option key={branch} value={branch}>{branch}</option>)}
           </select>
@@ -6257,26 +6163,23 @@ export function StaffQuizResults() {
         )}
       </div>
 
-      {review && <EmployeeQuizReviewPanel review={review} onClose={() => setReview(null)} />}
+      {review && <EmployeeQuizReviewModal review={review} onClose={() => setReview(null)} />}
     </div>
   )
 }
 
-function EmployeeQuizReviewPanel({ review, onClose }) {
+function EmployeeQuizReviewModal({ review, onClose }) {
   const questions = review.questions || []
 
   return (
-    <div className="employee-card" style={{ marginTop: 20 }}>
-      <div className="employee-card-header">
+    <Modal open onClose={onClose} title="Quiz Answer Review" size="xl">
+      <div style={{ display: 'grid', gap: 16, maxHeight: '70vh', overflowY: 'auto', paddingRight: 4 }}>
         <div>
-          <h5>{review.student_name || 'Student'} - {review.quiz_title || 'Quiz Review'}</h5>
+          <h5 style={{ margin: 0 }}>{review.student_name || 'Student'} - {review.quiz_title || 'Quiz Review'}</h5>
           <div style={{ color: T.slate, fontSize: 12, marginTop: 4 }}>
             {review.student_id || 'Student'} | Score {review.score || 0}/{review.total_marks || 0} | {Number(review.percentage || 0).toFixed(1)}%
           </div>
         </div>
-        <button className="employee-btn employee-btn-sm employee-btn-ghost" onClick={onClose}>Close</button>
-      </div>
-      <div style={{ padding: 20, display: 'grid', gap: 14 }}>
         {questions.map((q, index) => (
           <div key={q.question_id || index} style={{ border: `1px solid ${q.is_correct ? 'rgba(76,175,129,.28)' : 'rgba(232,72,85,.28)'}`, borderRadius: 12, padding: 16, background: q.is_correct ? 'rgba(76,175,129,.06)' : 'rgba(232,72,85,.06)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
@@ -6292,7 +6195,7 @@ function EmployeeQuizReviewPanel({ review, onClose }) {
           </div>
         ))}
       </div>
-    </div>
+    </Modal>
   )
 }
 export function BranchAnnouncements() {

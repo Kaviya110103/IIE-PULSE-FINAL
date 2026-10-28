@@ -429,6 +429,14 @@ class PublicUser(models.Model):
         ('not_interested', 'Not Interested'),
         ('joined_another_institute', 'Joined in Another Institute'),
     ]
+    SOURCE_CHOICES = [
+        ('google', 'Google'),
+        ('facebook', 'Facebook'),
+        ('instagram', 'Instagram'),
+        ('linkedin', 'LinkedIn'),
+        ('friends', 'Friends'),
+        ('others', 'Others'),
+    ]
 
     name = models.CharField(max_length=120)
     email = models.EmailField(blank=True, null=True)
@@ -439,6 +447,7 @@ class PublicUser(models.Model):
     city = models.CharField(max_length=100, blank=True, null=True)
     state = models.CharField(max_length=100, blank=True, null=True)
     branch = models.CharField(max_length=40, choices=BRANCH_CHOICES, blank=True, default='')
+    source = models.CharField(max_length=30, choices=SOURCE_CHOICES, blank=True, default='')
     username = models.CharField(max_length=120, unique=True)
     password = models.CharField(max_length=255)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='new')

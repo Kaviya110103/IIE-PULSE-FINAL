@@ -9,20 +9,27 @@ export default function AppLayout({ role }) {
   const location = useLocation()
   const [unread, setUnread] = useState(0)
   const [loginRating, setLoginRating] = useState(null)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
   const roleLabel = {
     admin: 'Administrator',
     employee: user?.designation || 'Employee',
     student: 'Student',
-    counselor: 'Counselor'
+    counselor: 'Counselor',
+    public: 'Public Learner'
   }
   const notificationPath = {
     admin: '/admin/notifications',
     employee: '/employee/notifications',
     counselor: '/counselor/notifications',
     student: '/student/notifications',
+    public: '/public',
   }[role] || '/student/notifications'
 
   const refreshUnread = () => {
+    if (role === 'public') {
+      setUnread(0)
+      return () => {}
+    }
     let alive = true
     api.get('/notifications/')
       .then(res => {
@@ -62,17 +69,32 @@ export default function AppLayout({ role }) {
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: '#f4f6f9' }}>
-      <Sidebar role={role} />
-      <div style={{ marginLeft: 250, flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+      <Sidebar role={role} isOpen={sidebarOpen} />
+      <div style={{ marginLeft: sidebarOpen ? 250 : 0, flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh', transition: 'margin-left .2s ease' }}>
         {/* Top navbar */}
         <nav style={{
           background: '#fff', borderBottom: '1px solid #e8ecef',
-          padding: '0 24px', height: 60, display: 'flex',
+          padding: '0 18px', height: 54, display: 'flex',
           alignItems: 'center', justifyContent: 'space-between',
           position: 'sticky', top: 0, zIndex: 50,
           boxShadow: '0 1px 4px rgba(0,0,0,.06)'
         }}>
-          <div style={{ fontSize: 13, color: '#8d9498' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: '#8d9498' }}>
+            {(role === 'admin' || role === 'counselor' || role === 'public') && (
+              <button
+                type="button"
+                title={sidebarOpen ? 'Close menu' : 'Open menu'}
+                aria-label={sidebarOpen ? 'Close menu' : 'Open menu'}
+                onClick={() => setSidebarOpen(open => !open)}
+                style={{
+                  width: 30, height: 30, border: '1px solid #e2e8f0', borderRadius: 7,
+                  background: '#fff', color: '#334155', display: 'inline-flex', alignItems: 'center',
+                  justifyContent: 'center', padding: 0,
+                }}
+              >
+                <i className="fas fa-bars" style={{ fontSize: 13 }} />
+              </button>
+            )}
             <i className="fas fa-home" style={{ marginRight: 6 }}></i>
             {roleLabel[role]} Portal
           </div>
@@ -108,7 +130,7 @@ export default function AppLayout({ role }) {
                 <strong style={{ fontSize: 12 }}>{loginRating?.stars ?? 0}/5</strong>
               </Link>
             )}
-            <Link
+            {role !== 'public' && <Link
               to={notificationPath}
               title="Notifications"
               onClick={() => setUnread(0)}
@@ -148,7 +170,7 @@ export default function AppLayout({ role }) {
                   {unread > 9 ? '9+' : unread}
                 </span>
               )}
-            </Link>
+            </Link>}
             <div style={{ textAlign: 'right' }}>
               <div style={{ fontSize: 13.5, fontWeight: 600, color: '#1a2035' }}>
                 {user?.name || user?.username}
@@ -168,7 +190,7 @@ export default function AppLayout({ role }) {
         </nav>
 
         {/* Page content */}
-        <main style={{ padding: '24px', flex: 1 }}>
+        <main style={{ padding: '18px', flex: 1 }}>
           <Outlet />
         </main>
       </div>

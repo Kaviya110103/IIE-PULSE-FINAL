@@ -21,6 +21,14 @@ export function AuthProvider({ children }) {
         storedUser = null
       }
 
+      if (storedUser?.user_type === 'public' && storedUser.username) {
+        if (!cancelled) {
+          setUser(storedUser)
+          setLoading(false)
+        }
+        return
+      }
+
       if (!storedUser || (!access && !refresh)) {
         localStorage.removeItem('user')
         if (!cancelled) {
@@ -77,6 +85,20 @@ export function AuthProvider({ children }) {
       resetInactivityTimer()
       return { success: true, data: userData }
     } catch (err) {
+      if (user_type === 'student') {
+        try {
+          const { data } = await api.post('/public-users/login/', { username, password })
+          const publicUser = { ...(data?.data || {}), user_type: 'public' }
+          if (!publicUser.username) throw new Error('Invalid public-user session')
+          localStorage.removeItem('access')
+          localStorage.removeItem('refresh')
+          localStorage.setItem('user', JSON.stringify(publicUser))
+          setUser(publicUser)
+          return { success: true, data: publicUser }
+        } catch (publicError) {
+          return { success: false, error: getApiErrorMessage(publicError, getApiErrorMessage(err, 'Login failed')) }
+        }
+      }
       return { success: false, error: getApiErrorMessage(err, 'Login failed') }
     } finally {
       setLoading(false)
@@ -84,8 +106,19 @@ export function AuthProvider({ children }) {
   }
 
   const logout = async () => {
+    if (user?.user_type === 'public') {
+      try {
+        await api.post('/public-users/logout/', { username: user.username })
+      } finally {
+        localStorage.clear()
+        setUser(null)
+        window.location.replace('/login')
+      }
+      return
+    }
     await logoutSession({ redirect: false })
     setUser(null)
+    window.location.replace('/login')
   }
 
   return (
