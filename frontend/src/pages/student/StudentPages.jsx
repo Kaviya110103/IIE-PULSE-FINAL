@@ -2329,6 +2329,20 @@ export function StudentBatches() {
     return `/student/attendance?${query.toString()}`
   }
 
+  const trainerSchedule = (batch) => {
+    const trainers = Array.isArray(batch.trainers) ? batch.trainers : []
+    if (trainers.length) {
+      return trainers.map(trainer => ({
+        name: trainer.name || 'Trainer',
+        timing: trainer.batch_timing || batch.batch_timing || 'N/A',
+      }))
+    }
+    const names = Array.isArray(batch.trainer_names) ? batch.trainer_names : []
+    return names.length
+      ? names.map(name => ({ name, timing: batch.batch_timing || 'N/A' }))
+      : [{ name: batch.faculty_name || 'N/A', timing: batch.batch_timing || 'N/A' }]
+  }
+
   return (
     <div className="student-root">
       <StudentStyles />
@@ -2351,14 +2365,20 @@ export function StudentBatches() {
                 </div>
                 <div style={{ display: 'grid', gap: 8, fontSize: 14, marginBottom: 16 }}>
                   <div>
-                    <strong>Trainer(s):</strong> {(batch.trainer_names || []).join(', ') || batch.faculty_name || 'N/A'}{' '}
+                    <strong>Trainer(s):</strong>{' '}
                     <StudentBadge
                       text={batch.trainer_status || 'Current Trainer'}
                       variant={batch.is_previous_assignment ? 'warning' : 'success'}
                     />
+                    <div style={{ display: 'grid', gap: 4, marginTop: 6 }}>
+                      {trainerSchedule(batch).map((trainer, index) => (
+                        <div key={`${trainer.name}-${index}`}>
+                          {trainer.name} <span style={{ color: T.slate }}>- {trainer.timing}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                   <div><strong>Batch:</strong> {getBatchDisplayName(batch)}</div>
-                  <div><strong>Timing:</strong> {batch.batch_timing || 'N/A'}</div>
                   <div><strong>Duration:</strong> {batch.start_date || 'N/A'} to {batch.end_date || 'N/A'}</div>
                   <div><strong>Logsheet:</strong> {batch.total_sessions || 0} sessions, {batch.completed_sessions || 0} completed ({batch.progress_percentage || 0}%)</div>
                   <div>
@@ -3238,12 +3258,12 @@ export function StudentMaterials() {
                 <col style={{ width: '130px' }} />
                 <col style={{ width: '180px' }} />
               </colgroup>
-              <thead><tr><th>Title</th><th>Date</th><th style={{ textAlign: 'right' }}>View</th></tr></thead>
+              <thead><tr><th>Title</th><th>Assigned Date</th><th style={{ textAlign: 'right' }}>View</th></tr></thead>
               <tbody>
                 {materials.map(m => (
                   <tr key={m.id}>
                     <td><div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}><div style={{ width: 36, height: 36, borderRadius: 8, background: `linear-gradient(135deg, ${T.amber}, ${T.rose})`, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto' }}><i className={`fas ${fileIcon(m.file)}`} /></div><span style={{ fontWeight: 600, overflowWrap: 'anywhere' }}>{m.title}</span></div></td>
-                    <td style={{ fontSize: 12 }}>{m.uploaded_at ? new Date(m.uploaded_at).toLocaleDateString('en-IN') : '—'}</td>
+                    <td style={{ fontSize: 12 }}>{(m.material_assigned_at || m.uploaded_at) ? new Date(m.material_assigned_at || m.uploaded_at).toLocaleDateString('en-IN') : '—'}</td>
                     <td style={{ textAlign: 'right' }}>
                       <button type="button" onClick={() => openMaterial(m)} className="student-btn student-btn-sm student-btn-primary" disabled={openingId === m.id}>
                         <i className={`fas ${openingId === m.id ? 'fa-spinner fa-spin' : 'fa-eye'}`} /> {openingId === m.id ? 'Opening...' : 'View'}

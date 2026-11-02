@@ -7,11 +7,12 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
+      "env": {
+        "APP_VARIANT": "development",
+        "EXPO_PUBLIC_API_URL": "https://iiepulse.indrainstitute.com/api/"
+      },
       "android": {
         "buildType": "apk"
-      },
-      "env": {
-        "EXPO_PUBLIC_API_URL": "https://iiepulse.indrainstitute.com/api/"
       }
     },
     "preview": {

@@ -989,9 +989,6 @@ class LoginView(APIView):
                 employee = Employee.objects.get(user=user)
             except Employee.DoesNotExist:
                 return Response({'error': 'Employee account not found.'}, status=403)
-            conflict = single_device_login_conflict_response(user)
-            if conflict is not None:
-                return conflict
             record_user_login(user, 'employee', employee=employee)
             return Response({
                 **get_tokens_for_user(user),
@@ -1507,16 +1504,16 @@ class StudentDashboardView(APIView):
         # -------------------------------------------------------------
 
         # Match the student web modules: count assigned items, not only submitted results.
-        if student.assigned_batch:
+        content_batches = _student_current_content_batches(student)
+        if content_batches:
             assigned_test_ids = set(AssignedTest.objects.filter(
-                batch=student.assigned_batch,
-                test__created_by=student.assigned_staff,
+                batch__in=content_batches,
             ).values_list('test_id', flat=True))
             tests_count = len(assigned_test_ids)
             quizzes_count = Quiz.objects.filter(
                 (
-                    Q(quiz_scope='staff_batch', created_by=student.assigned_staff) &
-                    (Q(assigned_batches=student.assigned_batch) | Q(batch=student.assigned_batch))
+                    Q(quiz_scope='staff_batch') &
+                    (Q(assigned_batches__in=content_batches) | Q(batch__in=content_batches))
                 ) |
                 Q(quiz_scope='admin_global', audience__in=['students', 'both']),
                 is_published=True,
@@ -1525,11 +1522,9 @@ class StudentDashboardView(APIView):
             tests_count = 0
             quizzes_count = 0
         materials_count = StudyMaterial.objects.filter(
-            uploaded_by=student.assigned_staff,
-        ).filter(
-            Q(batch=student.assigned_batch) |
-            Q(assignments__batch=student.assigned_batch)
-        ).distinct().count() if student.assigned_batch and student.assigned_staff else 0
+            Q(batch__in=content_batches) |
+            Q(assignments__batch__in=content_batches)
+        ).distinct().count() if content_batches else 0
         # -------------------------------------------------------------
 
 
@@ -2669,24 +2664,31 @@ def _student_accessible_batches(student):
 
 
 def _student_current_content_batches(student):
-    """Return only the student's currently assigned batch for staff content.
+    """Return every active enrollment that can receive staff content.
 
-    Reassignment history is useful for attendance history, but must never make
-    another trainer's tests, quizzes, or materials visible to a student.
+    ``assigned_batch`` is the legacy primary-batch field.  A student can now
+    have multiple active course/batch enrollments, so content must be scoped to
+    all active enrollment rows while still excluding reassignment history.
     """
-    return [student.assigned_batch] if student and student.assigned_batch_id else []
+    return _student_enrolled_batches(student) if student else []
 
 
 def _student_can_access_material(student, material):
-    """Keep staff materials limited to the student's current batch and trainer."""
-    if not student or not student.assigned_batch_id or not student.assigned_staff_id:
-        return False
-    if material.uploaded_by_id != student.assigned_staff_id:
+    """Allow material only when it is assigned to one active student batch."""
+    if not student:
         return False
     material_batch_ids = set(material.assignments.values_list('batch_id', flat=True))
     if material.batch_id:
         material_batch_ids.add(material.batch_id)
-    return student.assigned_batch_id in material_batch_ids
+    student_batch_ids = {batch.id for batch in _student_current_content_batches(student)}
+    return bool(material_batch_ids.intersection(student_batch_ids))
+
+
+def _parallel_course_batches(batch):
+    """All batches that use one course-level shared logsheet."""
+    if not batch or not batch.course_name_id:
+        return []
+    return list(Batches.objects.filter(course_name_id=batch.course_name_id).select_related('course_name'))
 
 
 def _is_batch_trainer(batch, employee):
@@ -2921,7 +2923,11 @@ class BatchCreateView(APIView):
             branch=branch,
         )
         if logsheet_file:
-            batch.course_logsheet = logsheet_file
+            # A course has one shared logsheet. Existing batch-level files are
+            # kept for backwards compatibility, while new uploads are stored
+            # only once on the course record.
+            course.course_logsheet = logsheet_file
+            course.save(update_fields=['course_logsheet'])
         batch.save()
         # Build the session sheet immediately. If the course PDF is no longer
         # present on this server, the sync helper can reuse the same course's
@@ -3006,7 +3012,11 @@ class BatchDetailView(generics.RetrieveUpdateDestroyAPIView):
 
         # -- Handle logsheet file ------------------------------------------
         if request.FILES.get('course_logsheet'):
-            batch.course_logsheet = request.FILES.get('course_logsheet')
+            uploaded_logsheet = request.FILES.get('course_logsheet')
+            # Parallel batches for the same course always synchronize from
+            # this single course-level logsheet.
+            batch.course_name.course_logsheet = uploaded_logsheet
+            batch.course_name.save(update_fields=['course_logsheet'])
 
         try:
             batch.end_date = calculate_batch_end_date(batch.course_name, batch.start_date)
@@ -4411,15 +4421,14 @@ class StudyMaterialListView(generics.ListAPIView):
         except Employee.DoesNotExist:
             try:
                 student = Students.objects.get(user=user)
-                if student.assigned_batch_id and student.assigned_staff_id:
-                    # Materials uploaded through the staff library are marked
-                    # is_library=True. Students must see those files once the
-                    # trainer assigns them to their current batch.
+                active_batch_ids = [batch.id for batch in _student_current_content_batches(student)]
+                if active_batch_ids:
+                    # A student can have more than one active course.  Keep
+                    # visibility batch-scoped, but include every active batch
+                    # rather than only the legacy primary assignment.
                     return qs.filter(
-                        uploaded_by_id=student.assigned_staff_id,
-                    ).filter(
-                        Q(batch_id=student.assigned_batch_id) |
-                        Q(assignments__batch_id=student.assigned_batch_id)
+                        Q(batch_id__in=active_batch_ids) |
+                        Q(assignments__batch_id__in=active_batch_ids)
                     ).distinct()
                 return qs.none()
             except Students.DoesNotExist:
@@ -4673,27 +4682,11 @@ def download_material(request, pk):
             status=status.HTTP_403_FORBIDDEN,
         )
 
-    # Use persistent storage if uploaded files must survive deploys, restarts,
-    # or rebuilds.
-    if not material.file:
-        return Response(
-            {'error': 'File missing on server. Re-upload required or persistent storage required.'},
-            status=404,
-        )
-
-    try:
-        file_path = material.file.path
-    except (NotImplementedError, ValueError):
-        return Response(
-            {'error': 'File missing on server. Re-upload required or persistent storage required.'},
-            status=404,
-        )
-
-    if not os.path.exists(file_path):
-        return Response(
-            {'error': 'File missing on server. Re-upload required or persistent storage required.'},
-            status=404,
-        )
+    # Use the same legacy-media recovery path as internal preview.  Earlier
+    # uploads can remain in the previous media store after a deployment.
+    file_path, file_error = _material_file_path_or_response(material)
+    if file_error:
+        return file_error
 
     filename = os.path.basename(material.file.name)
     content_type = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
@@ -5528,10 +5521,10 @@ class AssignedTestListView(generics.ListCreateAPIView):
 def student_tests(request):
     try:
         student = Students.objects.select_related('assigned_batch', 'assigned_staff').get(user=request.user)
-        if student.assigned_batch_id and student.assigned_staff_id:
+        batches = _student_current_content_batches(student)
+        if batches:
             assigned = AssignedTest.objects.filter(
-                batch=student.assigned_batch,
-                test__created_by=student.assigned_staff,
+                batch__in=batches,
             )
             return Response(AssignedTestSerializer(assigned, many=True).data)
     except Students.DoesNotExist:
@@ -5740,6 +5733,25 @@ class StudentSupportListView(generics.ListCreateAPIView):
                 True,
             )
         return support
+
+
+class StaffStudentSupportListView(generics.ListAPIView):
+    """Support raised by students currently assigned to the signed-in trainer."""
+    serializer_class = StudentSupportRequestSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        try:
+            employee = Employee.objects.get(user=self.request.user)
+        except Employee.DoesNotExist:
+            return StudentSupportRequest.objects.none()
+
+        student_user_ids = Students.objects.filter(
+            Q(assigned_staff=employee) |
+            Q(batch_enrollments__is_active=True, batch_enrollments__batch__faculty=employee) |
+            Q(batch_enrollments__is_active=True, batch_enrollments__batch__trainer_assignments__trainer=employee)
+        ).exclude(user__isnull=True).values_list('user_id', flat=True).distinct()
+        return StudentSupportRequest.objects.filter(student_id__in=student_user_ids).select_related('student').order_by('-created_at')
 
 
 class CounselorSupportListView(generics.ListCreateAPIView):
@@ -6078,7 +6090,7 @@ class QuizListView(generics.ListAPIView):
                 batch_ids = [batch.id for batch in _student_current_content_batches(student)]
                 return Quiz.objects.filter(
                     (
-                        Q(quiz_scope='staff_batch', created_by=student.assigned_staff) &
+                        Q(quiz_scope='staff_batch') &
                         (Q(assigned_batches__id__in=batch_ids) | Q(batch_id__in=batch_ids))
                     ) |
                     Q(quiz_scope='admin_global', audience__in=['students', 'both']),
@@ -6292,7 +6304,7 @@ def take_quiz(request, quiz_id):
         quiz.is_published and (
             (quiz.quiz_scope == 'admin_global' and quiz.audience in ('students', 'both')) or
             (
-                quiz.quiz_scope == 'staff_batch' and quiz.created_by_id == student.assigned_staff_id and (
+                quiz.quiz_scope == 'staff_batch' and (
                     quiz.batch_id in student_batch_ids or
                     quiz.assigned_batches.filter(id__in=student_batch_ids).exists()
                 )
@@ -6917,6 +6929,30 @@ def admin_public_user_status(request, pk):
     return Response({'success': True, 'data': serialize_public_user(public_user)})
 
 
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def admin_public_user_delete(request, pk):
+    """Remove an unprocessed public registration only."""
+    if not can_view_public_users(request.user):
+        return Response({'error': 'Admin or counselor access required.'}, status=status.HTTP_403_FORBIDDEN)
+
+    public_user = PublicUser.objects.filter(pk=pk).first()
+    if not public_user:
+        return Response({'error': 'Public user not found.'}, status=status.HTTP_404_NOT_FOUND)
+    if public_user.status != 'new':
+        return Response({'error': 'Only new public user registrations can be deleted.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    employee = Employee.objects.filter(user=request.user).first()
+    if not is_admin_user(request.user):
+        if not employee or str(employee.designation or '').lower() != 'counselor':
+            return Response({'error': 'Only counselors can delete public user records.'}, status=status.HTTP_403_FORBIDDEN)
+        if str(employee.branch or '').strip().lower() != str(public_user.branch or '').strip().lower():
+            return Response({'error': 'You can delete public users from your branch only.'}, status=status.HTTP_403_FORBIDDEN)
+
+    public_user.delete()
+    return Response({'success': True, 'message': 'Public user deleted successfully.'})
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def staff_quiz_results(request):
@@ -7328,12 +7364,10 @@ def get_batch_sessions_with_logsheet(request, batch_id):
             'access': 'previous' if is_previous_trainer else 'active',
             'can_update_logsheet': not is_previous_trainer,
             'logsheet_url': (
-    batch.course_logsheet.url
-    if batch.course_logsheet
-    else batch.course_name.course_logsheet.url
-    if batch.course_name and batch.course_name.course_logsheet
-    else None
-),
+                batch.course_name.course_logsheet.url
+                if batch.course_name and batch.course_name.course_logsheet
+                else batch.course_logsheet.url if batch.course_logsheet else None
+            ),
             'sessions': sessions_data,
         })
     except Batches.DoesNotExist:
@@ -7353,53 +7387,22 @@ def staff_mark_session_complete(request, session_id):
         if not _has_active_batch_control(session.batch, emp):
             return Response({'error': 'This batch was reassigned. Previous trainers can view history but cannot update logsheet progress.'}, status=403)
 
-        if session.staff_completed:
-            return Response({
-                'success': True,
-                'message': f'Session {session.session_number} is already completed and locked.',
-                'session': CourseSessionSerializer(session).data,
-            })
-
-        session.staff_completed = True
-        session.completed_date = timezone.now()
-        session.completed_by = emp
-        session.save()
-
-        students = active_students_for_batch(session.batch)
-
-        for student in students:
-            status_obj, created = StudentSessionStatus.objects.get_or_create(
-                student=student, 
-                session=session
-            )
-            status_obj.staff_completed = True
-            status_obj.staff_completed_at = timezone.now()
-            status_obj.status = 'pending'
-            status_obj.save()
-            
-            progress, _ = Student_Session_Progress.objects.get_or_create(
-                student=student, session=session
-            )
-            progress.staff_completed = True
-            progress.staff_completed_at = timezone.now()
-            progress.student_status = 'pending'
-            progress.save()
-
-            if student.user:
-                SessionNotification.objects.create(
-                    session=session,
-                    from_user=request.user,
-                    to_user=student.user,
-                    notification_type='session_completed',
-                    message=f"Session {session.session_number}: '{session.title}' has been completed by your trainer. Please confirm or raise a doubt.",
-                    title=f"Session {session.session_number} Completed",
-                    requires_action=True
-                )
+        targets = _complete_parallel_course_session(session, emp, request.user)
+        source_session = next((target for target in targets if target.pk == session.pk), session)
+        notified_students = sum(
+            active_students_for_batch(target.batch).count()
+            for target in targets
+        )
 
         return Response({
             'success': True,
-            'message': f'Session {session.session_number} marked complete. {students.count()} students notified.',
-            'session': CourseSessionSerializer(session).data,
+            'message': (
+                f'Session {session.session_number} marked complete across '
+                f'{len(targets)} shared course batch(es). '
+                f'{notified_students} students notified.'
+            ),
+            'session': CourseSessionSerializer(source_session).data,
+            'shared_batch_ids': [target.batch_id for target in targets],
         })
     except (Employee.DoesNotExist, CourseSession.DoesNotExist):
         return Response({'error': 'Not found'}, status=404)
@@ -7419,7 +7422,7 @@ def staff_unmark_session(request, session_id):
         session.completed_date = None
         session.save()
         StudentSessionStatus.objects.filter(session=session).update(
-            staff_completed=False, status='pending'
+            staff_completed=False, student_status='pending'
         )
         Student_Session_Progress.objects.filter(session=session).update(
             staff_completed=False,
@@ -8314,12 +8317,13 @@ def _student_detail_payload(student):
     present_att = len([a for a in att_qs if str(a.status).lower() == 'present'])
     test_qs = list(TestResult.objects.filter(student=student).select_related('test').order_by('-submitted_at'))
     quiz_qs = list(QuizAttempt.objects.filter(student=student).select_related('quiz').order_by('-submitted_at'))
+    content_batches = _student_current_content_batches(student)
     assigned_quiz_qs = Quiz.objects.filter(
-        Q(quiz_scope='staff_batch', created_by=student.assigned_staff, assigned_batches=student.assigned_batch) |
-        Q(quiz_scope='staff_batch', created_by=student.assigned_staff, batch=student.assigned_batch) |
+        Q(quiz_scope='staff_batch', assigned_batches__in=content_batches) |
+        Q(quiz_scope='staff_batch', batch__in=content_batches) |
         Q(quiz_scope='admin_global', audience__in=['students', 'both']),
         is_published=True
-    ).distinct().prefetch_related('questions').order_by('-created_at') if student.assigned_batch_id else Quiz.objects.none()
+    ).distinct().prefetch_related('questions').order_by('-created_at') if content_batches else Quiz.objects.none()
     leave_qs = list(StudentLeaveApplication.objects.filter(student=student).order_by('-applied_at'))
     progress_qs = Student_Session_Progress.objects.filter(student=student)
     total_sessions = progress_qs.count()
@@ -11786,7 +11790,7 @@ def extract_sessions_from_logsheet(batch, debug=False, prefer_course_logsheet=Fa
         return []
 
 
-def sync_missing_sessions_from_logsheet(batch, debug=False, prefer_course_logsheet=False):
+def sync_missing_sessions_from_logsheet(batch, debug=False, prefer_course_logsheet=True):
     """
     Non-destructively align DB sessions with the PDF logsheet.
     Existing progress rows are preserved by updating CourseSession rows in-place.
@@ -11955,6 +11959,72 @@ def sync_missing_sessions_from_logsheet(batch, debug=False, prefer_course_logshe
         )
 
     return len(new_sessions)
+
+
+def _complete_parallel_course_session(source_session, employee, actor_user):
+    """Reflect one course-logsheet completion in every parallel batch.
+
+    CourseSession remains batch-owned for backwards-compatible student
+    progress, attendance and reporting.  Matching sessions are synchronized by
+    session number so a single shared course logsheet has one completion state
+    across all trainers and timings.
+    """
+    completed_at = timezone.now()
+    targets = []
+    for batch in _parallel_course_batches(source_session.batch):
+        sync_missing_sessions_from_logsheet(batch, prefer_course_logsheet=True)
+        target = CourseSession.objects.filter(
+            batch=batch,
+            session_number=source_session.session_number,
+        ).first()
+        if target:
+            targets.append(target)
+
+    for target in targets:
+        if not target.staff_completed:
+            target.staff_completed = True
+            target.completed_date = completed_at
+            target.completed_by = employee
+            target.save(update_fields=['staff_completed', 'completed_date', 'completed_by', 'updated_at'])
+
+        DailySessionCompletion.objects.update_or_create(
+            session=target,
+            faculty=employee,
+            completion_date=completed_at.date(),
+            defaults={'completed': True, 'completed_at': completed_at},
+        )
+
+        for student in active_students_for_batch(target.batch):
+            status_obj, _ = StudentSessionStatus.objects.get_or_create(
+                student=student,
+                session=target,
+            )
+            status_obj.staff_completed = True
+            status_obj.staff_completed_at = completed_at
+            status_obj.student_status = 'pending'
+            status_obj.save(update_fields=['staff_completed', 'staff_completed_at', 'student_status'])
+
+            progress, _ = Student_Session_Progress.objects.get_or_create(
+                student=student,
+                session=target,
+            )
+            progress.staff_completed = True
+            progress.staff_completed_at = completed_at
+            if progress.student_status == 'not_started':
+                progress.student_status = 'pending'
+            progress.save(update_fields=['staff_completed', 'staff_completed_at', 'student_status', 'updated_at'])
+
+            if student.user:
+                _queue_user_notification(
+                    student.user,
+                    actor_user,
+                    'session_completed',
+                    f'Session {target.session_number} Completed',
+                    f"Session {target.session_number}: '{target.title}' has been completed by your trainer. Please confirm or raise a doubt.",
+                    True,
+                )
+
+    return targets
 
 
 def _ensure_student_session_rows(batch, sessions):
@@ -12143,7 +12213,7 @@ def student_quizzes(request):
         
         quizzes = Quiz.objects.filter(
             (
-                Q(quiz_scope='staff_batch', created_by=student.assigned_staff) &
+                Q(quiz_scope='staff_batch') &
                 (Q(assigned_batches__in=student_batches_list) | Q(batch__in=student_batches_list))
             ) |
             Q(quiz_scope='admin_global', audience__in=['students', 'both']),
@@ -12210,7 +12280,7 @@ def student_take_quiz(request, quiz_id):
         
         assigned_batch_ids = [batch.id for batch in _student_current_content_batches(student)]
         assigned_to_batch = (
-            quiz.quiz_scope == 'staff_batch' and quiz.created_by_id == student.assigned_staff_id and (
+            quiz.quiz_scope == 'staff_batch' and (
                 quiz.batch_id in assigned_batch_ids or
                 quiz.assigned_batches.filter(id__in=assigned_batch_ids).exists()
             )
@@ -12459,13 +12529,12 @@ def student_assigned_tests(request):
         return Response([])
 
     student_batches_list = _student_current_content_batches(student)
-    if not student_batches_list or not student.assigned_staff_id:
+    if not student_batches_list:
         return Response([])
 
     # Only tests assigned to this student's active batches.
     assigned = AssignedTest.objects.filter(
         batch__in=student_batches_list,
-        test__created_by=student.assigned_staff,
     ).select_related('test', 'batch', 'batch__course_name').order_by('-assigned_date')
 
     def test_status(test):
@@ -12560,13 +12629,12 @@ def student_take_test(request, test_id):
         
         # Check if student is in a batch that has this test assigned
         student_batches_list = _student_current_content_batches(student)
-        if not student_batches_list or not student.assigned_staff_id:
+        if not student_batches_list:
             return Response({'error': 'You are not assigned to any batch'}, status=400)
         
         assigned_exists = AssignedTest.objects.filter(
             test=test,
             batch__in=student_batches_list,
-            test__created_by=student.assigned_staff,
         ).exists()
 
         if not assigned_exists:
