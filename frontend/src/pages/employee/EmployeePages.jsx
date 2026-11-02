@@ -2969,10 +2969,20 @@ export function CounselorLeaveApply() {
 export function StaffSupportRequest() {
   const [showForm, setShowForm] = useState(false)
   const [requests, setRequests] = useState([])
+  const [studentRequests, setStudentRequests] = useState([])
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
   const [saving, setSaving] = useState(false)
-  const load = () => { setLoading(true); api.get('/staff-support/').then(r => setRequests(r.data.results || r.data)).finally(() => setLoading(false)) }
+  const load = () => {
+    setLoading(true)
+    Promise.all([
+      api.get('/staff-support/'),
+      api.get('/employee/student-support/').catch(() => ({ data: { results: [] } })),
+    ]).then(([ownResponse, studentResponse]) => {
+      setRequests(ownResponse.data.results || ownResponse.data || [])
+      setStudentRequests(studentResponse.data.results || studentResponse.data || [])
+    }).finally(() => setLoading(false))
+  }
   useEffect(() => { load() }, [])
 
   const submit = async () => {
@@ -3001,6 +3011,31 @@ export function StaffSupportRequest() {
                     <td style={{ maxWidth: 400 }}>{r.message}</td>
                     <td><Badge text={r.status?.replace('_', ' ')} variant={r.status === 'resolved' ? 'success' : r.status === 'in_progress' ? 'info' : 'warning'} /></td>
                     <td style={{ fontSize: 12 }}>{r.created_at ? new Date(r.created_at).toLocaleDateString('en-IN') : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+      <div className="employee-card">
+        <SH title={`Student Support Requests (${studentRequests.length})`} />
+        {loading ? <Spin /> : studentRequests.length === 0 ? (
+          <Empty msg="No support requests from your assigned students" icon="fa-headset" />
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table className="employee-table">
+              <thead><tr><th>Student</th><th>Message</th><th>Status</th><th>Date</th></tr></thead>
+              <tbody>
+                {studentRequests.map(request => (
+                  <tr key={request.id}>
+                    <td style={{ fontWeight: 600 }}>
+                      {request.student_display_name || request.student_name || 'Student'}
+                      {request.student_code && <div style={{ fontSize: 11, color: T.slate, marginTop: 3 }}>{request.student_code}</div>}
+                    </td>
+                    <td style={{ maxWidth: 400 }}>{request.message}</td>
+                    <td><Badge text={request.status?.replace('_', ' ')} variant={request.status === 'resolved' ? 'success' : request.status === 'in_progress' ? 'info' : 'warning'} /></td>
+                    <td style={{ fontSize: 12 }}>{request.created_at ? new Date(request.created_at).toLocaleDateString('en-IN') : '—'}</td>
                   </tr>
                 ))}
               </tbody>

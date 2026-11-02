@@ -151,6 +151,7 @@ urlpatterns = [
     # â”€â”€ SUPPORT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     path('api/staff-support/', v.StaffSupportListView.as_view()),
     path('api/student-support/', v.StudentSupportListView.as_view()),
+    path('api/employee/student-support/', v.StaffStudentSupportListView.as_view()),
     path('api/counselor-support/', v.CounselorSupportListView.as_view()),
 
     # â”€â”€ ADMIN OVERVIEW â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -243,6 +244,7 @@ urlpatterns = [
     path('api/public-users/logout/', v.public_user_logout),
     path('api/admin/public-users/', v.admin_public_users),
     path('api/admin/public-users/<int:pk>/status/', v.admin_public_user_status),
+    path('api/admin/public-users/<int:pk>/', v.admin_public_user_delete),
     path('api/quiz/result/<int:attempt_id>/', quiz_result_details, name='quiz-result-details'),
     path('api/quiz/attempt/<int:attempt_id>/result/', v.quiz_result),
     path('api/quiz/<int:quiz_id>/take/', student_take_quiz, name='student-take-quiz'),

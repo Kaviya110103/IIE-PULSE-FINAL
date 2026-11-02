@@ -1,6 +1,7 @@
 import json
 import tempfile
 from datetime import date, timedelta
+from pathlib import Path
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
@@ -11,6 +12,7 @@ from rest_framework.test import APIClient
 
 from .models import (
     Batches,
+    BatchSessionProgress,
     ChallengeQuestionPool,
     CourseSession,
     Courses,
@@ -30,6 +32,7 @@ from .models import (
     Student_Session_Progress,
     SessionCompletion,
     Students,
+    UserActivity,
 )
 from .services.challenge_ai import (
     ChallengeAIError,
@@ -925,3 +928,139 @@ class StudentChallengePhaseOneTests(TestCase):
         self.assertIn(global_quiz.title, titles)
         self.assertIn(assigned_quiz.title, titles)
         self.assertNotIn(hidden_quiz.title, titles)
+
+
+class ParallelCourseWorkflowTests(TestCase):
+    """Regression coverage for multi-batch students and shared course sessions."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.trainer_one_user = User.objects.create_user('parallel-trainer-1', password='pass123')
+        self.trainer_two_user = User.objects.create_user('parallel-trainer-2', password='pass123')
+        self.student_user = User.objects.create_user('parallel-student', password='pass123')
+        self.trainer_one = Employee.objects.create(
+            user=self.trainer_one_user, staff_id='PAR001', email='parallel-one@example.com',
+            first_name='Parallel', last_name='One', mobile_no=9000000001,
+            date_of_birth=date(1990, 1, 1), designation='mentor', branch='100ft',
+            gender='Male', address='Coimbatore',
+        )
+        self.trainer_two = Employee.objects.create(
+            user=self.trainer_two_user, staff_id='PAR002', email='parallel-two@example.com',
+            first_name='Parallel', last_name='Two', mobile_no=9000000002,
+            date_of_birth=date(1991, 1, 1), designation='mentor', branch='100ft',
+            gender='Female', address='Coimbatore',
+        )
+        self.course = Courses.objects.create(
+            course_name='Parallel Python', course_type='software', duration='2 months', fee=1000,
+        )
+        self.batch_one = Batches.objects.create(
+            batch_number='PAR-B1', course_type='software', course_name=self.course,
+            faculty=self.trainer_one, start_date=date(2026, 1, 1), end_date=date(2026, 3, 1),
+            batch_timing='morning', branch='100ft',
+        )
+        self.batch_two = Batches.objects.create(
+            batch_number='PAR-B2', course_type='software', course_name=self.course,
+            faculty=self.trainer_two, start_date=date(2026, 1, 1), end_date=date(2026, 3, 1),
+            batch_timing='evening', branch='100ft',
+        )
+        self.student = Students.objects.create(
+            student_id='PAR-STU-1', email='parallel-student@example.com', first_name='Parallel',
+            last_name='Student', mobile_no='9000000003', date_of_birth=date(2001, 1, 1),
+            city='Coimbatore', state='Tamil Nadu', qualification='UG', course='Parallel Python',
+            gender='Female', branch='100ft', user=self.student_user,
+            assigned_staff=self.trainer_one, assigned_batch=self.batch_one,
+        )
+        enrollment = StudentCourseEnrollment.objects.create(
+            student=self.student, course=self.course, enrolled_by=self.trainer_one_user,
+        )
+        for batch in (self.batch_one, self.batch_two):
+            StudentBatchEnrollment.objects.create(
+                student=self.student, batch=batch, course_enrollment=enrollment,
+                assigned_by=self.trainer_one_user,
+            )
+
+    def test_student_sees_materials_from_every_active_batch(self):
+        first = StudyMaterial.objects.create(
+            batch=self.batch_one, uploaded_by=self.trainer_one, title='Morning notes', file='materials/morning.pdf',
+        )
+        second = StudyMaterial.objects.create(
+            batch=self.batch_two, uploaded_by=self.trainer_two, title='Evening notes', file='materials/evening.pdf',
+        )
+        self.client.force_authenticate(user=self.student_user)
+
+        response = self.client.get('/api/materials/')
+
+        self.assertEqual(response.status_code, 200)
+        material_ids = {item['id'] for item in response.json()['results']}
+        self.assertSetEqual(material_ids, {first.id, second.id})
+
+    def test_download_restores_a_missing_legacy_material_file(self):
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                material = StudyMaterial.objects.create(
+                    batch=self.batch_one,
+                    uploaded_by=self.trainer_one,
+                    title='Legacy notes',
+                    file=SimpleUploadedFile('legacy-notes.pdf', b'old file content'),
+                )
+                Path(material.file.path).unlink()
+                restored_response = type('LegacyResponse', (), {
+                    'raise_for_status': lambda self: None,
+                    'iter_content': lambda self, chunk_size: [b'old file content'],
+                })()
+                self.client.force_authenticate(user=self.student_user)
+                with patch('connect.api_views.requests.get', return_value=restored_response):
+                    response = self.client.get(f'/api/materials/{material.id}/download/')
+                    response_body = b''.join(response.streaming_content)
+                    response.close()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response_body, b'old file content')
+
+    def test_students_remain_single_device_but_staff_can_log_in_more_than_once(self):
+        first_student_client = APIClient()
+        second_student_client = APIClient()
+        first = first_student_client.post('/api/auth/login/', {
+            'username': 'parallel-student@example.com', 'password': 'pass123', 'user_type': 'student',
+        }, format='json')
+        second = second_student_client.post('/api/auth/login/', {
+            'username': 'parallel-student@example.com', 'password': 'pass123', 'user_type': 'student',
+        }, format='json')
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 409)
+
+        first_staff_client = APIClient()
+        second_staff_client = APIClient()
+        first_staff = first_staff_client.post('/api/auth/login/', {
+            'username': 'parallel-trainer-1', 'password': 'pass123', 'user_type': 'employee',
+        }, format='json')
+        second_staff = second_staff_client.post('/api/auth/login/', {
+            'username': 'parallel-trainer-1', 'password': 'pass123', 'user_type': 'employee',
+        }, format='json')
+        self.assertEqual(first_staff.status_code, 200)
+        self.assertEqual(second_staff.status_code, 200)
+
+    def test_completion_propagates_to_parallel_course_batches_and_counts_once_per_batch(self):
+        first_session = CourseSession.objects.create(
+            batch=self.batch_one, session_number=1, title='Shared lesson', topics='Basics',
+        )
+        second_session = CourseSession.objects.create(
+            batch=self.batch_two, session_number=1, title='Shared lesson', topics='Basics',
+        )
+        self.client.force_authenticate(user=self.trainer_one_user)
+
+        response = self.client.post(f'/api/sessions/{first_session.id}/staff-complete/')
+
+        self.assertEqual(response.status_code, 200)
+        first_session.refresh_from_db()
+        second_session.refresh_from_db()
+        self.assertTrue(first_session.staff_completed)
+        self.assertTrue(second_session.staff_completed)
+        self.assertTrue(Student_Session_Progress.objects.get(student=self.student, session=first_session).staff_completed)
+        self.assertTrue(Student_Session_Progress.objects.get(student=self.student, session=second_session).staff_completed)
+
+        progress = BatchSessionProgress.objects.create(batch=self.batch_two, faculty=self.trainer_two)
+        progress.update_progress()
+        progress.refresh_from_db()
+        self.assertEqual(progress.total_sessions, 1)
+        self.assertEqual(progress.completed_sessions, 1)
