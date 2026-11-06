@@ -1,6 +1,7 @@
 import json
 import tempfile
 from datetime import date, timedelta
+from pathlib import Path
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
@@ -11,25 +12,36 @@ from rest_framework.test import APIClient
 
 from .models import (
     Batches,
+    BatchSessionProgress,
     ChallengeQuestionPool,
+    CompletedStudent,
     CourseSession,
     Courses,
     DailySessionCompletion,
     Employee,
+    FeePayment,
     ReassignedStudentRecord,
     Quiz,
     QuizQuestion,
     StudyMaterial,
+    StudyMaterialAssignment,
+    StudentLeaveApplication,
     StudentBatchEnrollment,
     StudentChallenge,
     StudentChallengeAchievement,
     StudentChallengeDay,
     StudentChallengeDayQuestion,
     StudentCourseEnrollment,
+    StudentSupportRequest,
     StudentSessionStatus,
     Student_Session_Progress,
     SessionCompletion,
+    SessionNotification,
     Students,
+    AssignedTest,
+    QuizTest,
+    TestResult,
+    UserActivity,
 )
 from .services.challenge_ai import (
     ChallengeAIError,
@@ -48,6 +60,7 @@ from .services.challenge_service import (
     submit_challenge_day,
     validate_question_eligibility,
 )
+from .api_views import _send_batch_duration_notifications
 
 
 class StudentChallengePhaseOneTests(TestCase):
@@ -925,3 +938,362 @@ class StudentChallengePhaseOneTests(TestCase):
         self.assertIn(global_quiz.title, titles)
         self.assertIn(assigned_quiz.title, titles)
         self.assertNotIn(hidden_quiz.title, titles)
+
+
+class ParallelCourseWorkflowTests(TestCase):
+    """Regression coverage for multi-batch students and shared course sessions."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.trainer_one_user = User.objects.create_user('parallel-trainer-1', password='pass123')
+        self.trainer_two_user = User.objects.create_user('parallel-trainer-2', password='pass123')
+        self.student_user = User.objects.create_user('parallel-student', password='pass123')
+        self.trainer_one = Employee.objects.create(
+            user=self.trainer_one_user, staff_id='PAR001', email='parallel-one@example.com',
+            first_name='Parallel', last_name='One', mobile_no=9000000001,
+            date_of_birth=date(1990, 1, 1), designation='mentor', branch='100ft',
+            gender='Male', address='Coimbatore',
+        )
+        self.trainer_two = Employee.objects.create(
+            user=self.trainer_two_user, staff_id='PAR002', email='parallel-two@example.com',
+            first_name='Parallel', last_name='Two', mobile_no=9000000002,
+            date_of_birth=date(1991, 1, 1), designation='mentor', branch='100ft',
+            gender='Female', address='Coimbatore',
+        )
+        self.course = Courses.objects.create(
+            course_name='Parallel Python', course_type='software', duration='2 months', fee=1000,
+        )
+        self.batch_one = Batches.objects.create(
+            batch_number='PAR-B1', course_type='software', course_name=self.course,
+            faculty=self.trainer_one, start_date=date(2026, 1, 1), end_date=date(2026, 3, 1),
+            batch_timing='morning', branch='100ft',
+        )
+        self.batch_two = Batches.objects.create(
+            batch_number='PAR-B2', course_type='software', course_name=self.course,
+            faculty=self.trainer_two, start_date=date(2026, 1, 1), end_date=date(2026, 3, 1),
+            batch_timing='evening', branch='100ft',
+        )
+        self.student = Students.objects.create(
+            student_id='PAR-STU-1', email='parallel-student@example.com', first_name='Parallel',
+            last_name='Student', mobile_no='9000000003', date_of_birth=date(2001, 1, 1),
+            city='Coimbatore', state='Tamil Nadu', qualification='UG', course='Parallel Python',
+            gender='Female', branch='100ft', user=self.student_user,
+            assigned_staff=self.trainer_one, assigned_batch=self.batch_one,
+        )
+        enrollment = StudentCourseEnrollment.objects.create(
+            student=self.student, course=self.course, enrolled_by=self.trainer_one_user,
+        )
+        for batch in (self.batch_one, self.batch_two):
+            StudentBatchEnrollment.objects.create(
+                student=self.student, batch=batch, course_enrollment=enrollment,
+                assigned_by=self.trainer_one_user,
+            )
+
+    def test_student_sees_materials_from_every_active_batch(self):
+        first = StudyMaterial.objects.create(
+            batch=self.batch_one, uploaded_by=self.trainer_one, title='Morning notes', file='materials/morning.pdf',
+        )
+        second = StudyMaterial.objects.create(
+            batch=self.batch_two, uploaded_by=self.trainer_two, title='Evening notes', file='materials/evening.pdf',
+        )
+        self.client.force_authenticate(user=self.student_user)
+
+        response = self.client.get('/api/materials/')
+
+        self.assertEqual(response.status_code, 200)
+        material_ids = {item['id'] for item in response.json()['results']}
+        self.assertSetEqual(material_ids, {first.id, second.id})
+
+    def test_download_restores_a_missing_legacy_material_file(self):
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                material = StudyMaterial.objects.create(
+                    batch=self.batch_one,
+                    uploaded_by=self.trainer_one,
+                    title='Legacy notes',
+                    file=SimpleUploadedFile('legacy-notes.pdf', b'old file content'),
+                )
+                Path(material.file.path).unlink()
+                restored_response = type('LegacyResponse', (), {
+                    'raise_for_status': lambda self: None,
+                    'iter_content': lambda self, chunk_size: [b'old file content'],
+                })()
+                self.client.force_authenticate(user=self.student_user)
+                with patch('connect.api_views.requests.get', return_value=restored_response):
+                    response = self.client.get(f'/api/materials/{material.id}/download/')
+                    response_body = b''.join(response.streaming_content)
+                    response.close()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response_body, b'old file content')
+
+    def test_students_remain_single_device_but_staff_can_log_in_more_than_once(self):
+        first_student_client = APIClient()
+        second_student_client = APIClient()
+        first = first_student_client.post('/api/auth/login/', {
+            'username': 'parallel-student@example.com', 'password': 'pass123', 'user_type': 'student',
+        }, format='json')
+        second = second_student_client.post('/api/auth/login/', {
+            'username': 'parallel-student@example.com', 'password': 'pass123', 'user_type': 'student',
+        }, format='json')
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 409)
+
+        first_staff_client = APIClient()
+        second_staff_client = APIClient()
+        first_staff = first_staff_client.post('/api/auth/login/', {
+            'username': 'parallel-trainer-1', 'password': 'pass123', 'user_type': 'employee',
+        }, format='json')
+        second_staff = second_staff_client.post('/api/auth/login/', {
+            'username': 'parallel-trainer-1', 'password': 'pass123', 'user_type': 'employee',
+        }, format='json')
+        self.assertEqual(first_staff.status_code, 200)
+        self.assertEqual(second_staff.status_code, 200)
+
+    def test_completion_propagates_to_parallel_course_batches_and_counts_once_per_batch(self):
+        first_session = CourseSession.objects.create(
+            batch=self.batch_one, session_number=1, title='Shared lesson', topics='Basics',
+        )
+        second_session = CourseSession.objects.create(
+            batch=self.batch_two, session_number=1, title='Shared lesson', topics='Basics',
+        )
+        self.client.force_authenticate(user=self.trainer_one_user)
+
+        response = self.client.post(f'/api/sessions/{first_session.id}/staff-complete/')
+
+        self.assertEqual(response.status_code, 200)
+        first_session.refresh_from_db()
+        second_session.refresh_from_db()
+        self.assertTrue(first_session.staff_completed)
+        self.assertTrue(second_session.staff_completed)
+        self.assertTrue(Student_Session_Progress.objects.get(student=self.student, session=first_session).staff_completed)
+        self.assertTrue(Student_Session_Progress.objects.get(student=self.student, session=second_session).staff_completed)
+
+        progress = BatchSessionProgress.objects.create(batch=self.batch_two, faculty=self.trainer_two)
+        progress.update_progress()
+        progress.refresh_from_db()
+        self.assertEqual(progress.total_sessions, 1)
+        self.assertEqual(progress.completed_sessions, 1)
+
+
+class StaffWorkflowRegressionTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.current_user = User.objects.create_user('current-trainer', password='pass123')
+        self.previous_user = User.objects.create_user('previous-trainer', password='pass123')
+        self.student_user = User.objects.create_user('workflow-student', password='pass123')
+        self.current_staff = Employee.objects.create(
+            user=self.current_user, staff_id='WORK001', email='current@example.com',
+            first_name='Current', last_name='Trainer', mobile_no=9000000101,
+            date_of_birth=date(1990, 1, 1), designation='mentor', branch='100ft',
+            gender='Male', address='Coimbatore',
+        )
+        self.previous_staff = Employee.objects.create(
+            user=self.previous_user, staff_id='WORK002', email='previous@example.com',
+            first_name='Previous', last_name='Trainer', mobile_no=9000000102,
+            date_of_birth=date(1991, 1, 1), designation='mentor', branch='100ft',
+            gender='Female', address='Coimbatore',
+        )
+        self.course = Courses.objects.create(
+            course_name='Workflow Course', course_type='software', duration='2 months', fee=1000,
+        )
+        self.batch = Batches.objects.create(
+            batch_number='WORK-B1', course_type='software', course_name=self.course,
+            faculty=self.current_staff, start_date=date(2026, 1, 1), end_date=date(2026, 3, 1),
+            batch_timing='morning', branch='100ft',
+        )
+        self.student = Students.objects.create(
+            student_id='WORK-STU-1', email='workflow@example.com', first_name='Workflow',
+            last_name='Student', mobile_no='9000000103', date_of_birth=date(2001, 1, 1),
+            city='Coimbatore', state='Tamil Nadu', qualification='UG', course='Workflow Course',
+            gender='Female', branch='100ft', user=self.student_user,
+            assigned_staff=self.current_staff, assigned_batch=self.batch,
+        )
+
+    def test_staff_batch_count_does_not_depend_on_student_confirmation(self):
+        session = CourseSession.objects.create(batch=self.batch, session_number=1, title='Session one')
+        Student_Session_Progress.objects.create(
+            student=self.student, session=session, staff_completed=True, student_status='pending',
+        )
+        self.client.force_authenticate(user=self.current_user)
+
+        response = self.client.get(f'/api/batches/{self.batch.id}/staff-detail-report/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['summary']['staff_completed_sessions'], 1)
+        self.assertEqual(response.data['summary']['student_completed_sessions'], 0)
+
+    def test_support_and_leave_are_visible_only_to_current_trainer(self):
+        StudentSupportRequest.objects.create(student=self.student_user, message='Need help')
+        StudentLeaveApplication.objects.create(
+            student=self.student, assigned_staff=self.previous_staff, leave_type='casual',
+            start_date=date(2026, 2, 1), end_date=date(2026, 2, 1), number_of_days=1,
+            reason='Test leave', contact_info='9000000103', status='pending',
+        )
+
+        self.client.force_authenticate(user=self.current_user)
+        support_response = self.client.get('/api/employee/student-support/')
+        leave_response = self.client.get('/api/staff/student-leave/')
+
+        self.assertEqual(support_response.status_code, 200)
+        self.assertEqual(len(support_response.data['results']), 1)
+        self.assertEqual(leave_response.status_code, 200)
+        self.assertEqual(leave_response.data['results'], [])
+
+    def test_material_library_month_summary_includes_uploads_and_assignments(self):
+        material = StudyMaterial.objects.create(
+            title='Monthly material', file='materials/monthly.pdf', uploaded_by=self.current_staff,
+            is_library=True,
+        )
+        StudyMaterialAssignment.objects.create(
+            material=material, batch=self.batch, assigned_by=self.current_staff,
+        )
+        self.client.force_authenticate(user=self.current_user)
+        current_month = timezone.localdate().strftime('%Y-%m')
+
+        response = self.client.get(f'/api/material-library/?month={current_month}')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['summary']['month_upload_count'], 1)
+        self.assertEqual(response.data['summary']['month_assignment_count'], 1)
+        self.assertEqual(response.data['summary']['overall_upload_count'], 1)
+        self.assertEqual(response.data['summary']['overall_assignment_count'], 1)
+        self.assertTrue(response.data['results'][0]['assigned_batches'][0]['assigned_at'])
+
+    def test_current_trainer_can_resolve_student_support_request(self):
+        request = StudentSupportRequest.objects.create(student=self.student_user, message='Need help')
+        self.client.force_authenticate(user=self.current_user)
+
+        response = self.client.patch(f'/api/employee/student-support/{request.id}/resolve/')
+
+        self.assertEqual(response.status_code, 200)
+        request.refresh_from_db()
+        self.assertEqual(request.status, 'resolved')
+
+    def test_completed_student_progress_is_not_shown_as_unmarked(self):
+        session = CourseSession.objects.create(batch=self.batch, session_number=1, title='Completed legacy session')
+        Student_Session_Progress.objects.create(
+            student=self.student,
+            session=session,
+            staff_completed=False,
+            completed=True,
+            student_status='completed',
+        )
+        self.client.force_authenticate(user=self.student_user)
+
+        response = self.client.get('/api/sessions/student/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data['results'][0]['staff_completed'])
+        self.assertEqual(response.data['results'][0]['student_status'], 'completed')
+
+    def test_batch_ending_reminder_is_created_once_from_ten_days_before_end(self):
+        self.batch.end_date = timezone.localdate() + timedelta(days=10)
+        self.batch.save(update_fields=['end_date'])
+
+        first_sent = _send_batch_duration_notifications(
+            self.batch, self.current_staff, self.current_user, timezone.localdate()
+        )
+        second_sent = _send_batch_duration_notifications(
+            self.batch, self.current_staff, self.current_user, timezone.localdate()
+        )
+
+        self.assertEqual(first_sent, 1)
+        self.assertEqual(second_sent, 0)
+        self.assertEqual(SessionNotification.objects.filter(
+            to_user=self.current_user,
+            notification_type='batch_ending_soon',
+        ).count(), 1)
+
+
+class StudentCompletionReportTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.student_user = User.objects.create_user(username='report.student@example.com', password='pass123')
+        self.other_user = User.objects.create_user(username='other.student@example.com', password='pass123')
+        staff_user = User.objects.create_user(username='report.trainer@example.com', password='pass123')
+        self.trainer = Employee.objects.create(
+            user=staff_user, staff_id='RPT001', email='report.trainer@example.com',
+            first_name='Report', last_name='Trainer', mobile_no='9000000001',
+            date_of_birth=date(1990, 1, 1), designation='mentor', branch='100ft', gender='Male', address='Coimbatore',
+        )
+        course = Courses.objects.create(course_name='Report Course', course_type='software', duration='1 month', fee=1200)
+        self.batch = Batches.objects.create(
+            batch_number='RPT-BATCH', course_type='software', course_name=course, faculty=self.trainer,
+            start_date=date(2026, 1, 1), end_date=date(2026, 2, 1), batch_timing='Morning', branch='100ft',
+        )
+        self.student = Students.objects.create(
+            student_id='RPT-STU-1', email='report.student@example.com', first_name='Report', last_name='Student',
+            mobile_no='9000000002', date_of_birth=date(2000, 1, 1), city='Coimbatore', state='Tamil Nadu',
+            qualification='Graduate', course='Report Course', gender='Female', branch='100ft', user=self.student_user,
+        )
+        self.completed = CompletedStudent.objects.create(
+            original_student_id=str(self.student.id), student_id=self.student.student_id, email=self.student.email,
+            first_name=self.student.first_name, last_name=self.student.last_name, mobile_no=self.student.mobile_no,
+            date_of_birth=self.student.date_of_birth, city=self.student.city, state=self.student.state,
+            qualification=self.student.qualification, course='Report Course', gender=self.student.gender, branch='100ft',
+            batch_number=self.batch.batch_number, batch_id=str(self.batch.id), batch_start_date=self.batch.start_date,
+            batch_end_date=self.batch.end_date, faculty_name='Report Trainer', course_name='Report Course',
+            completed_sessions_count=1, total_sessions_count=1, graduated_from_trainer=self.trainer,
+        )
+        self.session = CourseSession.objects.create(
+            batch=self.batch, session_number=1, title='Report Session', staff_completed=True, completed_date=timezone.now(),
+            completed_by=self.trainer,
+        )
+        Student_Session_Progress.objects.create(
+            student=self.student, session=self.session, staff_completed=True, completed=True,
+            student_status='completed', staff_completed_at=timezone.now(), student_confirmed_at=timezone.now(),
+        )
+        FeePayment.objects.create(student=self.student, batch=self.batch, total_fee=1200, amount_paid=700, balance=500)
+
+    def test_student_can_only_access_own_detailed_completion_report(self):
+        self.client.force_authenticate(user=self.student_user)
+        response = self.client.get('/api/student/completion-report/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data['results']), 1)
+        report = response.data['results'][0]
+        self.assertEqual(report['course_batch']['batch_id'], 'RPT-BATCH')
+        self.assertEqual(report['sessions'][0]['title'], 'Report Session')
+        self.assertTrue(report['sessions'][0]['trainer_completed'])
+        self.assertTrue(report['sessions'][0]['student_completed'])
+        self.assertEqual(report['fees']['pending_balance'], 500.0)
+
+        pdf_response = self.client.get(f'/api/student/completion-report/download/?report_id={self.completed.id}')
+        self.assertEqual(pdf_response.status_code, 200)
+        self.assertEqual(pdf_response['Content-Type'], 'application/pdf')
+
+        self.client.force_authenticate(user=self.other_user)
+        other_response = self.client.get('/api/student/completion-report/')
+        self.assertEqual(other_response.status_code, 403)
+
+    def test_active_course_report_is_visible_but_has_no_pdf_download(self):
+        active_course = Courses.objects.create(course_name='Active Course', course_type='software', duration='1 month', fee=900)
+        active_batch = Batches.objects.create(
+            batch_number='ACTIVE-RPT-BATCH', course_type='software', course_name=active_course, faculty=self.trainer,
+            start_date=date(2026, 3, 1), end_date=date(2026, 4, 1), batch_timing='Morning', branch='100ft',
+        )
+        StudentBatchEnrollment.objects.create(student=self.student, batch=active_batch, is_active=True)
+        CourseSession.objects.create(batch=active_batch, session_number=1, title='Active Session')
+
+        self.client.force_authenticate(user=self.student_user)
+        response = self.client.get('/api/student/completion-report/')
+
+        self.assertEqual(response.status_code, 200)
+        active_report = next(item for item in response.data['results'] if item['id'] == f'active-{active_batch.id}')
+        self.assertFalse(active_report['is_completed'])
+        self.assertEqual(active_report['course_batch']['course_name'], 'Active Course')
+
+    def test_technical_test_accepts_answer_file_submission(self):
+        StudentBatchEnrollment.objects.create(student=self.student, batch=self.batch, is_active=True)
+        test = QuizTest.objects.create(
+            title='Technical File Submission', test_type='technical', creation_method='manual',
+            course=self.batch.course_name, created_by=self.trainer,
+        )
+        AssignedTest.objects.create(test=test, batch=self.batch)
+        self.client.force_authenticate(user=self.student_user)
+        answer = SimpleUploadedFile('answer.py', b'print("done")', content_type='text/x-python')
+        response = self.client.post(f'/api/tests/{test.id}/take/', {'submission_file': answer}, format='multipart')
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(TestResult.objects.filter(student=self.student, test=test, submission_file__isnull=False).exists())

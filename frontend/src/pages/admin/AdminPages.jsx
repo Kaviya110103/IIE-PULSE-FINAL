@@ -156,6 +156,8 @@ export function AdminStyles() {
       }
       .public-users-table .public-user-actions { display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 6px; }
       .public-users-table .public-user-actions .admin-btn { width: 100%; min-width: 80px; height: 26px; justify-content: center; padding: 0 7px; font-size: 11px; white-space: nowrap; }
+      .public-users-table .public-user-actions.public-user-actions-compact { flex-direction: row; align-items: center; justify-content: center; gap: 6px; }
+      .public-users-table .public-user-actions .public-user-icon-action { width: 30px; min-width: 30px; height: 30px; padding: 0; font-size: 12px; }
       @media (max-width: 920px) { .public-users-tabs { grid-template-columns: 1fr; } }
 
       .admin-card {
@@ -6469,6 +6471,17 @@ export function AdminPublicUsers() {
     }
   }
 
+  const deleteNewUser = async (item) => {
+    if (!window.confirm(`Delete new registration for ${item.name || 'this public user'}?`)) return
+    try {
+      await api.delete(`/admin/public-users/${item.id}/`)
+      toast.success('Public user deleted')
+      load('users')
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to delete public user')
+    }
+  }
+
   const renderUsers = (mode = activeTab) => (
     <PublicUsersTable
       columns={[
@@ -6480,7 +6493,7 @@ export function AdminPublicUsers() {
         isCounselor ? 'Branch' : 'Counselled By',
         ...(mode === 'walked_in' ? ['Follow-up Date', 'Feedback', 'Remark'] : []),
         ...(mode === 'users' ? ['Remark'] : []),
-        ...(isCounselor && mode !== 'enrolled' ? ['Action'] : []),
+        ...((mode === 'users' || (isCounselor && mode !== 'enrolled')) ? ['Action'] : []),
       ]}
       items={items}
       emptyMsg="No public users registered yet"
@@ -6565,13 +6578,13 @@ export function AdminPublicUsers() {
           )}
           {isCounselor && mode !== 'enrolled' && (
             <td>
-              <div className="public-user-actions">
-                <button className="admin-btn admin-btn-primary admin-btn-sm" onClick={() => enrollUser(item)}>
-                  <i className="fas fa-user-check" /> Enroll
+              <div className={`public-user-actions ${mode === 'users' ? 'public-user-actions-compact' : ''}`}>
+                <button className={`admin-btn admin-btn-primary admin-btn-sm ${mode === 'users' ? 'public-user-icon-action' : ''}`} onClick={() => enrollUser(item)} title="Enroll" aria-label="Enroll">
+                  <i className="fas fa-user-check" />{mode !== 'users' && ' Enroll'}
                 </button>
                 {mode === 'users' && (
-                  <button className="admin-btn admin-btn-ghost admin-btn-sm" onClick={() => markWalkedIn(item)}>
-                    <i className="fas fa-walking" /> Walk In
+                  <button className="admin-btn admin-btn-ghost admin-btn-sm public-user-icon-action" onClick={() => markWalkedIn(item)} title="Move to Walked In" aria-label="Move to Walked In">
+                    <i className="fas fa-walking" />
                   </button>
                 )}
                 {mode === 'walked_in' && (
@@ -6579,6 +6592,20 @@ export function AdminPublicUsers() {
                     <i className="fas fa-phone" /> Follow Up
                   </button>
                 )}
+                {mode === 'users' && (
+                  <button className="admin-btn admin-btn-danger admin-btn-sm public-user-icon-action" onClick={() => deleteNewUser(item)} title="Delete" aria-label="Delete">
+                    <i className="fas fa-trash" />
+                  </button>
+                )}
+              </div>
+            </td>
+          )}
+          {!isCounselor && mode === 'users' && (
+            <td>
+              <div className="public-user-actions public-user-actions-compact">
+                <button className="admin-btn admin-btn-danger admin-btn-sm public-user-icon-action" onClick={() => deleteNewUser(item)} title="Delete" aria-label="Delete">
+                  <i className="fas fa-trash" />
+                </button>
               </div>
             </td>
           )}

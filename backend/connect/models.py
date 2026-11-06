@@ -94,6 +94,10 @@ class Batches ( models.Model ) :
     branch = models.CharField ( max_length = 200 )
     # ADD THIS FIELD to store the logsheet
     course_logsheet = models.FileField ( upload_to = 'batch_logsheets/' , blank = True , null = True )
+    # Archived batches stay in the database so student learning history and
+    # completion reports never lose their course links.
+    is_archived = models.BooleanField(default=False)
+    archived_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField ( auto_now_add = True )
     
     class Meta :
@@ -103,20 +107,9 @@ class Batches ( models.Model ) :
         return self.batch_number
     
     def save ( self , *args , **kwargs ) :
-        # Auto-copy logsheet from course if not provided
-        if not self.course_logsheet and self.course_name.course_logsheet :
-            import os
-            from django.core.files.base import ContentFile
-            
-            original_file = self.course_name.course_logsheet
-            if original_file and original_file.storage.exists(original_file.name) :
-                filename = os.path.basename ( original_file.name )
-                original_file.open('rb')
-                try:
-                    self.course_logsheet.save ( filename , ContentFile(original_file.read()) , save = False )
-                finally:
-                    original_file.close()
-        
+        # A course logsheet is shared by every parallel batch.  Older batches
+        # may still have a copied file in ``course_logsheet``; keep it intact
+        # for compatibility, but never create another copy for new batches.
         super ( ).save ( *args , **kwargs )
 
 
@@ -375,6 +368,7 @@ class UserActivity ( models.Model ) :
     login_time = models.DateTimeField ( default = timezone.now )
     logout_time = models.DateTimeField ( null = True , blank = True )
     last_seen = models.DateTimeField ( null = True , blank = True )
+    device_id = models.CharField(max_length=120, blank=True, default='')
     created_at = models.DateTimeField ( auto_now_add = True )
 
     class Meta :
@@ -882,12 +876,14 @@ class BatchSessionProgress ( models.Model ) :
         total_sessions = CourseSession.objects.filter ( batch = self.batch ).count ( )
         self.total_sessions = total_sessions
         
-        # Count sessions that have at least one completion entry
-        completed_count = DailySessionCompletion.objects.filter (
-                session__batch = self.batch ,
-                faculty = self.faculty ,
-                completed = True
-        ).values ( 'session' ).distinct ( ).count ( )
+        # Completion belongs to the shared course logsheet, not to one
+        # trainer's DailySessionCompletion rows.  Parallel trainers can mark
+        # different sessions, therefore counting only ``self.faculty`` made a
+        # fully completed batch appear half complete.
+        completed_count = CourseSession.objects.filter(
+                batch=self.batch,
+                staff_completed=True,
+        ).count()
         
         self.completed_sessions = completed_count
         self.progress_percentage = (completed_count / total_sessions * 100) if total_sessions > 0 else 0

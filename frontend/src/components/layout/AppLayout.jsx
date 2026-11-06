@@ -80,21 +80,19 @@ export default function AppLayout({ role }) {
           boxShadow: '0 1px 4px rgba(0,0,0,.06)'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: '#8d9498' }}>
-            {(role === 'admin' || role === 'counselor' || role === 'public') && (
-              <button
-                type="button"
-                title={sidebarOpen ? 'Close menu' : 'Open menu'}
-                aria-label={sidebarOpen ? 'Close menu' : 'Open menu'}
-                onClick={() => setSidebarOpen(open => !open)}
-                style={{
-                  width: 30, height: 30, border: '1px solid #e2e8f0', borderRadius: 7,
-                  background: '#fff', color: '#334155', display: 'inline-flex', alignItems: 'center',
-                  justifyContent: 'center', padding: 0,
-                }}
-              >
-                <i className="fas fa-bars" style={{ fontSize: 13 }} />
-              </button>
-            )}
+            <button
+              type="button"
+              title={sidebarOpen ? 'Close menu' : 'Open menu'}
+              aria-label={sidebarOpen ? 'Close menu' : 'Open menu'}
+              onClick={() => setSidebarOpen(open => !open)}
+              style={{
+                width: 30, height: 30, border: '1px solid #e2e8f0', borderRadius: 7,
+                background: '#fff', color: '#334155', display: 'inline-flex', alignItems: 'center',
+                justifyContent: 'center', padding: 0,
+              }}
+            >
+              <i className="fas fa-bars" style={{ fontSize: 13 }} />
+            </button>
             <i className="fas fa-home" style={{ marginRight: 6 }}></i>
             {roleLabel[role]} Portal
           </div>

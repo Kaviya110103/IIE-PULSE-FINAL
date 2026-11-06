@@ -3,6 +3,16 @@ import api, { getApiErrorMessage, logoutSession, resetInactivityTimer } from '..
 
 const AuthContext = createContext(null)
 
+const getBrowserDeviceId = () => {
+  const key = 'iie_device_id'
+  let deviceId = localStorage.getItem(key)
+  if (!deviceId) {
+    deviceId = `web-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`
+    localStorage.setItem(key, deviceId)
+  }
+  return deviceId
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -74,7 +84,12 @@ export function AuthProvider({ children }) {
   const login = async (username, password, user_type) => {
     setLoading(true)
     try {
-      const { data } = await api.post('/auth/login/', { username, password, user_type })
+      const { data } = await api.post('/auth/login/', {
+        username,
+        password,
+        user_type,
+        ...(user_type === 'student' ? { device_id: getBrowserDeviceId() } : {}),
+      })
       localStorage.setItem('access', data.access)
       localStorage.setItem('refresh', data.refresh)
       const userData = { ...data }
@@ -85,7 +100,9 @@ export function AuthProvider({ children }) {
       resetInactivityTimer()
       return { success: true, data: userData }
     } catch (err) {
-      if (user_type === 'student') {
+      // Public-user fallback is only for credentials that are not a student
+      // account. Do not hide a real student login restriction behind 401.
+      if (user_type === 'student' && err.response?.status === 401) {
         try {
           const { data } = await api.post('/public-users/login/', { username, password })
           const publicUser = { ...(data?.data || {}), user_type: 'public' }

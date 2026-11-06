@@ -1266,6 +1266,41 @@ function AssignModalV2({ student, counselorBranch, onClose, onSaved }) {
     },
   })
 
+  const sectionFromExistingBatches = (course) => {
+    const section = initialSection(course)
+    const existingBatches = Array.isArray(course?.batches) ? course.batches : []
+    const selectedBatch = existingBatches[0]
+    if (!selectedBatch) return section
+
+    const trainerRows = Array.isArray(selectedBatch.trainers) ? selectedBatch.trainers : []
+    const trainerIds = trainerRows.length
+      ? trainerRows.map(trainer => String(trainer.id)).filter(Boolean)
+      : (selectedBatch.trainer_ids || []).map(String).filter(Boolean)
+    const fallbackTrainerId = selectedBatch.faculty || selectedBatch.faculty_id
+    const staffIds = trainerIds.length
+      ? [...new Set(trainerIds)]
+      : (fallbackTrainerId ? [String(fallbackTrainerId)] : [])
+    if (!staffIds.length) return section
+
+    const trainerTimingById = Object.fromEntries(
+      trainerRows
+        .filter(trainer => trainer?.id != null)
+        .map(trainer => [String(trainer.id), trainer.batch_timing || selectedBatch.batch_timing || ''])
+    )
+    const batchByStaff = Object.fromEntries(staffIds.map(id => [id, String(selectedBatch.id)]))
+    const staffBatches = Object.fromEntries(staffIds.map(id => [id, [selectedBatch]]))
+
+    return {
+      ...section,
+      staffIds,
+      staffBatches,
+      batchByStaff,
+      staffTimings: trainerTimingById,
+      selectedParallelBatchId: staffIds.length > 1 ? String(selectedBatch.id) : '',
+      parallelMode: 'existing',
+    }
+  }
+
   const setCourseSection = (courseId, updater) => {
     setAssignments(prev => {
       const current = prev[courseId] || initialSection(enrolledCourses.find(c => String(c.course_id) === String(courseId)) || {})
@@ -1405,7 +1440,7 @@ function AssignModalV2({ student, counselorBranch, onClose, onSaved }) {
       const next = { ...prev }
       enrolledCourses.forEach(course => {
         const courseId = String(course.course_id)
-        if (!next[courseId]) next[courseId] = initialSection(course)
+        if (!next[courseId]) next[courseId] = sectionFromExistingBatches(course)
       })
       Object.keys(next).forEach(courseId => {
         if (!enrolledCourses.some(course => String(course.course_id) === courseId)) delete next[courseId]

@@ -6,7 +6,7 @@ const PRODUCTION_API = "https://iiepulse.indrainstitute.com/api/";
 const LOCAL_WEB_API = "http://127.0.0.1:8000/api/";
 const DEV_LAN_API =
   process.env.EXPO_PUBLIC_LOCAL_API_URL ||
-  (typeof __DEV__ !== "undefined" && __DEV__ ? "http://192.168.1.34:8000/api/" : "");
+  (typeof __DEV__ !== "undefined" && __DEV__ ? "http://192.168.1.13:8000/api/" : "");
 const LOCAL_LAN_API = DEV_LAN_API || PRODUCTION_API;
 const DEFAULT_API =
   Platform.OS === "web" && typeof __DEV__ !== "undefined" && __DEV__
@@ -197,6 +197,7 @@ type LoginPayload = {
   username: string;
   password: string;
   user_type: "admin" | "employee" | "student";
+  device_id?: string;
 };
 
 type OtpSendPayload = {
@@ -424,6 +425,16 @@ export type ReferralPayload = {
 
 const GUEST_USERS_KEY = "guest_users";
 const GUEST_SESSION_KEY = "guest_session";
+const DEVICE_ID_KEY = "iie_device_id";
+
+async function getMobileDeviceId() {
+  let deviceId = await AsyncStorage.getItem(DEVICE_ID_KEY);
+  if (!deviceId) {
+    deviceId = `mobile-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+    await AsyncStorage.setItem(DEVICE_ID_KEY, deviceId);
+  }
+  return deviceId;
+}
 
 async function getGuestUsers(): Promise<GuestRegistrationPayload[]> {
   const storedUsers = await AsyncStorage.getItem(GUEST_USERS_KEY);
@@ -538,7 +549,10 @@ export async function loginUser(payload: LoginPayload) {
       "student_name",
     ]);
 
-    const response = await postLoginWithFallback(payload);
+    const loginPayload = payload.user_type === "student"
+      ? { ...payload, device_id: await getMobileDeviceId() }
+      : payload;
+    const response = await postLoginWithFallback(loginPayload);
     const data = response.data;
 
     await persistStudentSession(data);

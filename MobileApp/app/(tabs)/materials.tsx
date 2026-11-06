@@ -27,6 +27,7 @@ type MaterialItem = {
   description?: string;
   file?: string;
   uploaded_at?: string;
+  material_assigned_at?: string;
   uploaded_by_name?: string;
   batch_number?: string;
   batch_code?: string;
@@ -192,9 +193,9 @@ export default function MaterialsScreen() {
               <View style={styles.metaItem}>
                 <Ionicons name="calendar-outline" size={15} color="#7C3AED" />
                 <Text style={styles.meta}>
-                  Uploaded:{" "}
-                  {item.uploaded_at
-                    ? new Date(item.uploaded_at).toLocaleDateString()
+                  Assigned:{" "}
+                  {item.material_assigned_at || item.uploaded_at
+                    ? new Date(item.material_assigned_at || item.uploaded_at || "").toLocaleDateString()
                     : "N/A"}
                 </Text>
               </View>

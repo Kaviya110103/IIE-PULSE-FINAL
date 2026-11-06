@@ -437,6 +437,7 @@ class StudyMaterialSerializer(serializers.ModelSerializer):
     batch_number = serializers.SerializerMethodField()
     batch_code = serializers.SerializerMethodField()
     assigned_batches = serializers.SerializerMethodField()
+    material_assigned_at = serializers.SerializerMethodField()
     file = serializers.FileField(required=False, allow_null=True)
 
     class Meta:
@@ -468,7 +469,7 @@ class StudyMaterialSerializer(serializers.ModelSerializer):
         batches = []
         seen = set()
 
-        def add_batch(batch):
+        def add_batch(batch, assigned_at=None):
             if batch and batch.id not in seen:
                 seen.add(batch.id)
                 batches.append({
@@ -478,16 +479,46 @@ class StudyMaterialSerializer(serializers.ModelSerializer):
                     'display_name': batch.batch_code or batch.batch_number,
                     'branch': batch.branch,
                     'course_name': getattr(batch.course_name, 'course_name', None) if batch.course_name else None,
+                    'assigned_at': assigned_at.isoformat() if assigned_at else None,
                 })
 
-        add_batch(getattr(obj, 'batch', None))
+        # Legacy materials were tied directly to one batch before the
+        # assignment table was introduced. Keep their upload time useful as
+        # the assignment time in the staff material history.
+        add_batch(getattr(obj, 'batch', None), getattr(obj, 'uploaded_at', None))
         for assignment in getattr(obj, 'assignments', []).all():
-            add_batch(assignment.batch)
+            add_batch(assignment.batch, assignment.assigned_at)
         return batches
 
     def get_batch_number(self, obj):
         batches = self.get_assigned_batches(obj)
         return ', '.join(batch['batch_number'] for batch in batches) if batches else None
+
+    def get_material_assigned_at(self, obj):
+        """Return the assignment date for the requesting student's active batch."""
+        request = self.context.get('request')
+        if not request or not getattr(request, 'user', None) or not request.user.is_authenticated:
+            return None
+
+        if not hasattr(self, '_request_student_batch_ids'):
+            try:
+                student = Students.objects.select_related('assigned_batch').get(user=request.user)
+                batch_ids = set(student.batch_enrollments.filter(is_active=True).values_list('batch_id', flat=True))
+                if student.assigned_batch_id:
+                    batch_ids.add(student.assigned_batch_id)
+                self._request_student_batch_ids = batch_ids
+            except Students.DoesNotExist:
+                self._request_student_batch_ids = set()
+
+        if not self._request_student_batch_ids:
+            return None
+
+        matching_dates = [
+            assignment.assigned_at
+            for assignment in obj.assignments.all()
+            if assignment.batch_id in self._request_student_batch_ids
+        ]
+        return max(matching_dates) if matching_dates else obj.uploaded_at
 
     def get_batch_code(self, obj):
         batches = self.get_assigned_batches(obj)
@@ -827,6 +858,8 @@ class SupportRequestSerializer(serializers.ModelSerializer):
 
 class StudentSupportRequestSerializer(serializers.ModelSerializer):
     student_name = serializers.SerializerMethodField()
+    student_display_name = serializers.SerializerMethodField()
+    student_code = serializers.SerializerMethodField()
 
     class Meta:
         model = StudentSupportRequest
@@ -840,6 +873,16 @@ class StudentSupportRequestSerializer(serializers.ModelSerializer):
             return obj.student.username
         except Exception:
             return ''
+
+    def get_student_display_name(self, obj):
+        student = Students.objects.filter(user=obj.student).only('first_name', 'last_name').first()
+        if not student:
+            return self.get_student_name(obj)
+        return f"{student.first_name} {student.last_name or ''}".strip()
+
+    def get_student_code(self, obj):
+        student = Students.objects.filter(user=obj.student).only('student_id').first()
+        return student.student_id if student else ''
 
 
 class CourseSessionSerializer(serializers.ModelSerializer):

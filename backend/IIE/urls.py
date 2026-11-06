@@ -151,6 +151,8 @@ urlpatterns = [
     # â”€â”€ SUPPORT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     path('api/staff-support/', v.StaffSupportListView.as_view()),
     path('api/student-support/', v.StudentSupportListView.as_view()),
+    path('api/employee/student-support/', v.StaffStudentSupportListView.as_view()),
+    path('api/employee/student-support/<int:pk>/resolve/', v.staff_resolve_student_support),
     path('api/counselor-support/', v.CounselorSupportListView.as_view()),
 
     # â”€â”€ ADMIN OVERVIEW â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -243,6 +245,7 @@ urlpatterns = [
     path('api/public-users/logout/', v.public_user_logout),
     path('api/admin/public-users/', v.admin_public_users),
     path('api/admin/public-users/<int:pk>/status/', v.admin_public_user_status),
+    path('api/admin/public-users/<int:pk>/', v.admin_public_user_delete),
     path('api/quiz/result/<int:attempt_id>/', quiz_result_details, name='quiz-result-details'),
     path('api/quiz/attempt/<int:attempt_id>/result/', v.quiz_result),
     path('api/quiz/<int:quiz_id>/take/', student_take_quiz, name='student-take-quiz'),
@@ -285,6 +288,8 @@ urlpatterns = [
     path('api/fees/<int:fee_id>/bill-link/', create_fee_bill_link),
     path('api/fees/<int:fee_id>/bill/', generate_bill),
     path('api/student/fee/', student_fee_details),
+    path('api/student/completion-report/', v.student_completion_report),
+    path('api/student/completion-report/download/', v.download_student_completion_report),
 
 
 
