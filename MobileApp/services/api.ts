@@ -197,6 +197,7 @@ type LoginPayload = {
   username: string;
   password: string;
   user_type: "admin" | "employee" | "student";
+  device_id?: string;
 };
 
 type OtpSendPayload = {
@@ -424,6 +425,16 @@ export type ReferralPayload = {
 
 const GUEST_USERS_KEY = "guest_users";
 const GUEST_SESSION_KEY = "guest_session";
+const DEVICE_ID_KEY = "iie_device_id";
+
+async function getMobileDeviceId() {
+  let deviceId = await AsyncStorage.getItem(DEVICE_ID_KEY);
+  if (!deviceId) {
+    deviceId = `mobile-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+    await AsyncStorage.setItem(DEVICE_ID_KEY, deviceId);
+  }
+  return deviceId;
+}
 
 async function getGuestUsers(): Promise<GuestRegistrationPayload[]> {
   const storedUsers = await AsyncStorage.getItem(GUEST_USERS_KEY);
@@ -538,7 +549,10 @@ export async function loginUser(payload: LoginPayload) {
       "student_name",
     ]);
 
-    const response = await postLoginWithFallback(payload);
+    const loginPayload = payload.user_type === "student"
+      ? { ...payload, device_id: await getMobileDeviceId() }
+      : payload;
+    const response = await postLoginWithFallback(loginPayload);
     const data = response.data;
 
     await persistStudentSession(data);

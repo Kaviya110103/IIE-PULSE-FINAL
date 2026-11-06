@@ -94,6 +94,10 @@ class Batches ( models.Model ) :
     branch = models.CharField ( max_length = 200 )
     # ADD THIS FIELD to store the logsheet
     course_logsheet = models.FileField ( upload_to = 'batch_logsheets/' , blank = True , null = True )
+    # Archived batches stay in the database so student learning history and
+    # completion reports never lose their course links.
+    is_archived = models.BooleanField(default=False)
+    archived_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField ( auto_now_add = True )
     
     class Meta :
@@ -364,6 +368,7 @@ class UserActivity ( models.Model ) :
     login_time = models.DateTimeField ( default = timezone.now )
     logout_time = models.DateTimeField ( null = True , blank = True )
     last_seen = models.DateTimeField ( null = True , blank = True )
+    device_id = models.CharField(max_length=120, blank=True, default='')
     created_at = models.DateTimeField ( auto_now_add = True )
 
     class Meta :

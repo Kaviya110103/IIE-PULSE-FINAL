@@ -1605,7 +1605,7 @@ function RequestCompletionSection({ batch, students, sessions, onSuccess, openSi
       </div>
 
       {showForm && (
-        <div style={{ background: '#f8fafc', borderRadius: 12, padding: 18 }}>
+        <Modal open onClose={() => setShowForm(false)} size="md" title="Send Reassignment Request">
           <div className="employee-fg">
             <label className="employee-label">Select Student <span className="employee-req">*</span></label>
             <select className="employee-select" value={selectedStudent} onChange={e => setSelectedStudent(e.target.value)}>
@@ -1659,7 +1659,7 @@ function RequestCompletionSection({ batch, students, sessions, onSuccess, openSi
               {saving ? <><i className="fas fa-spinner fa-spin" /> Sending...</> : <><i className="fas fa-paper-plane" /> Send to Counselor</>}
             </button>
           </div>
-        </div>
+        </Modal>
       )}
     </div>
   )
@@ -1675,6 +1675,7 @@ function SessionsModal({ batch, onClose }) {
   const [extracting, setExtracting] = useState(false)
   const [finalStudentId, setFinalStudentId] = useState('')
   const [requestOpenSignal, setRequestOpenSignal] = useState(0)
+  const [completeConfirmOpen, setCompleteConfirmOpen] = useState(false)
   const [finalizing, setFinalizing] = useState(false)
   const [completedFinalStudentIds, setCompletedFinalStudentIds] = useState(new Set())
 
@@ -1745,7 +1746,7 @@ function SessionsModal({ batch, onClose }) {
     }
   }
 
-  const selectedFinalStudent = finalStudentId || (students[0]?.id ? String(students[0].id) : '')
+  const selectedFinalStudent = finalStudentId
   const selectedFinalStudentCompleted = selectedFinalStudent && completedFinalStudentIds.has(String(selectedFinalStudent))
 
   const openCompletionRequest = () => {
@@ -1771,6 +1772,12 @@ function SessionsModal({ batch, onClose }) {
     } finally {
       setFinalizing(false)
     }
+  }
+
+  const openCompleteConfirmation = () => {
+    if (!selectedFinalStudent) return toast.error('Select a student')
+    if (selectedFinalStudentCompleted) return toast.error('This student is already completed')
+    setCompleteConfirmOpen(true)
   }
 
   return (
@@ -1841,29 +1848,49 @@ function SessionsModal({ batch, onClose }) {
                   <div style={{ color: T.slate, fontSize: 12 }}>
                     {selectedFinalStudentCompleted
                       ? 'This student has been moved to the completed list. Completion actions are now locked.'
-                      : 'Mentor sessions are complete. If the student has also completed all sessions, click Completed. Otherwise, send a request to the counselor.'}
+                      : 'Select one student below. If the student has also completed all sessions, click Completed. Otherwise, send a request to the counselor.'}
                   </div>
                 </div>
-                <select
-                  className="employee-select"
-                  style={{ minWidth: 220, flex: '0 1 260px' }}
-                  value={selectedFinalStudent}
-                  onChange={e => setFinalStudentId(e.target.value)}
-                >
-                  {students.map(s => (
-                    <option key={s.id} value={s.id}>{s.first_name} {s.last_name} ({s.student_id})</option>
-                  ))}
-                </select>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 8, marginTop: 12 }}>
+                {students.map(s => {
+                  const value = String(s.id)
+                  const studentCompleted = completedFinalStudentIds.has(value)
+                  return (
+                    <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 10px', border: `1px solid ${selectedFinalStudent === value ? T.teal : T.border}`, borderRadius: 8, cursor: studentCompleted ? 'not-allowed' : 'pointer', opacity: studentCompleted ? .62 : 1 }}>
+                      <input type="checkbox" checked={selectedFinalStudent === value} disabled={studentCompleted} onChange={e => setFinalStudentId(e.target.checked ? value : '')} />
+                      <span style={{ fontSize: 12, fontWeight: 600 }}>{s.first_name} {s.last_name} ({s.student_id})</span>
+                      {studentCompleted && <span style={{ marginLeft: 'auto', fontSize: 11, color: T.sage }}>Completed</span>}
+                    </label>
+                  )
+                })}
               </div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
-                <button className="employee-btn employee-btn-primary employee-btn-sm" onClick={openCompletionRequest} disabled={!!selectedFinalStudentCompleted}>
-                  <i className="fas fa-paper-plane" /> Request
+                <button className="employee-btn employee-btn-primary employee-btn-sm" onClick={openCompletionRequest} disabled={!selectedFinalStudent || !!selectedFinalStudentCompleted}>
+                  <i className="fas fa-paper-plane" /> Reassign
                 </button>
-                <button className="employee-btn employee-btn-teal employee-btn-sm" onClick={handleMoveCompleted} disabled={finalizing || !!selectedFinalStudentCompleted}>
+                <button className="employee-btn employee-btn-teal employee-btn-sm" onClick={openCompleteConfirmation} disabled={!selectedFinalStudent || finalizing || !!selectedFinalStudentCompleted}>
                   {selectedFinalStudentCompleted ? <><i className="fas fa-lock" /> Completed</> : finalizing ? <><i className="fas fa-spinner fa-spin" /> Moving...</> : <><i className="fas fa-check" /> Completed</>}
                 </button>
               </div>
             </div>
+          )}
+
+          {completeConfirmOpen && (
+            <Modal open onClose={() => setCompleteConfirmOpen(false)} size="sm" title="Complete Student Course">
+              <div style={{ display: 'grid', gap: 16 }}>
+                <div className="employee-alert-info">
+                  <i className="fas fa-user-graduate" /> You are about to mark <strong>{students.find(s => String(s.id) === selectedFinalStudent)?.first_name} {students.find(s => String(s.id) === selectedFinalStudent)?.last_name}</strong> as completed for this batch.
+                </div>
+                <p style={{ margin: 0, color: T.slate, fontSize: 13 }}>Please confirm only after the student has completed every session.</p>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+                  <button className="employee-btn employee-btn-ghost employee-btn-sm" onClick={() => setCompleteConfirmOpen(false)} disabled={finalizing}>Cancel</button>
+                  <button className="employee-btn employee-btn-teal employee-btn-sm" onClick={async () => { await handleMoveCompleted(); setCompleteConfirmOpen(false) }} disabled={finalizing}>
+                    {finalizing ? <><i className="fas fa-spinner fa-spin" /> Completing...</> : <><i className="fas fa-check" /> Confirm Complete</>}
+                  </button>
+                </div>
+              </div>
+            </Modal>
           )}
 
           <div style={{ display: 'flex', gap: 4, borderBottom: `2px solid ${T.border}`, marginBottom: 12 }}>
@@ -2472,6 +2499,10 @@ function MaterialUploadModal({ onClose, onSaved, material = null }) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 export function MaterialLibrary() {
+  const currentMonthValue = () => {
+    const now = new Date()
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  }
   const [materials, setMaterials] = useState([])
   const [batches, setBatches] = useState([])
   const [previousBatches, setPreviousBatches] = useState([])
@@ -2479,10 +2510,20 @@ export function MaterialLibrary() {
   const [showUpload, setShowUpload] = useState(false)
   const [assignMaterial, setAssignMaterial] = useState(null)
   const [viewAssignedMaterial, setViewAssignedMaterial] = useState(null)
+  const [showAssignmentSummary, setShowAssignmentSummary] = useState(false)
   const [deleteId, setDeleteId] = useState(null)
-  const [filters, setFilters] = useState({ search: '', batch: '' })
+  // Show a useful month in the picker, while the first load intentionally
+  // remains unfiltered so staff can see the full library.
+  const [filters, setFilters] = useState(() => ({ search: '', batch: '', month: currentMonthValue() }))
+  const [materialSummary, setMaterialSummary] = useState({
+    selected_month: null,
+    month_upload_count: 0,
+    month_assignment_count: 0,
+    overall_upload_count: 0,
+    overall_assignment_count: 0,
+  })
 
-  const load = useCallback(async (nextFilters = filters) => {
+  const load = useCallback(async (nextFilters = {}) => {
     setLoading(true)
     try {
       const params = new URLSearchParams()
@@ -2498,13 +2539,20 @@ export function MaterialLibrary() {
       const active = batchesRes.data.results || batchesRes.data || []
       const previous = (previousRes.data.results || previousRes.data || []).map(batch => ({ ...batch, accessStatus: 'previous' }))
       setMaterials(materialsRes.data.results || materialsRes.data || [])
+      setMaterialSummary(materialsRes.data.summary || {
+        selected_month: null,
+        month_upload_count: 0,
+        month_assignment_count: 0,
+        overall_upload_count: 0,
+        overall_assignment_count: 0,
+      })
       setBatches([...active, ...previous])
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to load material library')
     } finally {
       setLoading(false)
     }
-  }, [filters])
+  }, [])
 
   useEffect(() => { load() }, [load])
 
@@ -2547,10 +2595,19 @@ export function MaterialLibrary() {
   }
 
   const clearFilters = () => {
-    const empty = { search: '', batch: '' }
-    setFilters(empty)
-    load(empty)
+    const defaults = { search: '', batch: '', month: currentMonthValue() }
+    setFilters(defaults)
+    load({})
   }
+
+  const summaryMonth = materialSummary.selected_month
+  const assignmentSummaryRows = materials.flatMap(material => (
+    (material.assigned_batches || []).map(batch => ({
+      materialTitle: material.title,
+      materialId: material.id,
+      ...batch,
+    }))
+  )).filter(item => !summaryMonth || (item.assigned_at || '').slice(0, 7) === summaryMonth)
 
   return (
     <div className="employee-root">
@@ -2560,6 +2617,17 @@ export function MaterialLibrary() {
         sub="Upload materials, search files, and assign them to one or multiple batches"
         btn={<button className="employee-btn employee-btn-primary" onClick={() => setShowUpload(true)}><i className="fas fa-upload" /> Upload Material</button>}
       />
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 12, marginBottom: 20 }}>
+        <div className="employee-card" style={{ margin: 0, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 36, height: 36, borderRadius: 9, background: 'rgba(14, 165, 164, .12)', color: T.teal, display: 'grid', placeItems: 'center' }}><i className="fas fa-cloud-upload-alt" /></div>
+          <div><div style={{ fontSize: 12, color: T.slate, fontWeight: 700 }}>Material Upload</div><div style={{ fontSize: 22, color: T.navy, fontWeight: 800 }}>{materialSummary.month_upload_count || 0}</div></div>
+        </div>
+        <button type="button" className="employee-card" onClick={() => setShowAssignmentSummary(true)} style={{ margin: 0, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, width: '100%', border: 'none', textAlign: 'left', cursor: 'pointer' }} title="View material assignment details">
+          <div style={{ width: 36, height: 36, borderRadius: 9, background: 'rgba(14, 165, 164, .12)', color: T.teal, display: 'grid', placeItems: 'center' }}><i className="fas fa-share-alt" /></div>
+          <div><div style={{ fontSize: 12, color: T.slate, fontWeight: 700 }}>Material Assigned</div><div style={{ fontSize: 22, color: T.navy, fontWeight: 800 }}>{materialSummary.month_assignment_count || 0}</div></div>
+        </button>
+      </div>
 
       <div className="employee-card" style={{ marginBottom: 20 }}>
         <SH title="Filters" />
@@ -2574,6 +2642,10 @@ export function MaterialLibrary() {
               <option value="">All batches</option>
               {filteredBatches.map(batch => <option key={batch.id} value={batch.id}>{getBatchDisplayName(batch)}{batch.accessStatus === 'previous' ? ' - Reassigned' : ''}</option>)}
             </select>
+          </div>
+          <div>
+            <label className="employee-label">Month</label>
+            <input className="employee-input" type="month" value={filters.month} onChange={e => setFilters(p => ({ ...p, month: e.target.value }))} />
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
             <button className="employee-btn employee-btn-primary" onClick={() => load(filters)}><i className="fas fa-search" /> Apply</button>
@@ -2655,11 +2727,33 @@ export function MaterialLibrary() {
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontWeight: 800, color: T.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{getBatchDisplayName(batch)}</div>
                   <div style={{ color: T.slate, fontSize: 12, marginTop: 3 }}>{batch.course_name_display || batch.course_name || 'Course'}{batch.branch ? ` - ${batch.branch}` : ''}</div>
+                  <div style={{ color: T.slate, fontSize: 12, marginTop: 3 }}>Assigned: {batch.assigned_at ? new Date(batch.assigned_at).toLocaleDateString('en-IN') : '-'}</div>
                 </div>
                 <Badge text="Assigned" variant="success" />
               </div>
             )) : <Empty msg="No batches assigned yet" icon="fa-folder-open" />}
           </div>
+        </Modal>
+      )}
+      {showAssignmentSummary && (
+        <Modal open onClose={() => setShowAssignmentSummary(false)} title="Material Assignment Details" size="lg">
+          {assignmentSummaryRows.length ? (
+            <div style={{ overflowX: 'auto' }}>
+              <table className="employee-table" style={{ minWidth: 640 }}>
+                <thead><tr><th>Material</th><th>Batch</th><th>Branch</th><th>Assigned Date</th></tr></thead>
+                <tbody>
+                  {assignmentSummaryRows.map((item, index) => (
+                    <tr key={`${item.materialId}-${item.id}-${index}`}>
+                      <td style={{ fontWeight: 700 }}>{item.materialTitle}</td>
+                      <td>{getBatchDisplayName(item)}</td>
+                      <td>{item.branch || '-'}</td>
+                      <td>{item.assigned_at ? new Date(item.assigned_at).toLocaleString('en-IN') : '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : <Empty msg="No material assignments found for this month" icon="fa-share-alt" />}
         </Modal>
       )}
       {deleteId && (
@@ -3025,7 +3119,7 @@ export function StaffSupportRequest() {
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table className="employee-table">
-              <thead><tr><th>Student</th><th>Message</th><th>Status</th><th>Date</th></tr></thead>
+              <thead><tr><th>Student</th><th>Message</th><th>Status</th><th>Date</th><th>Action</th></tr></thead>
               <tbody>
                 {studentRequests.map(request => (
                   <tr key={request.id}>
@@ -3036,6 +3130,21 @@ export function StaffSupportRequest() {
                     <td style={{ maxWidth: 400 }}>{request.message}</td>
                     <td><Badge text={request.status?.replace('_', ' ')} variant={request.status === 'resolved' ? 'success' : request.status === 'in_progress' ? 'info' : 'warning'} /></td>
                     <td style={{ fontSize: 12 }}>{request.created_at ? new Date(request.created_at).toLocaleDateString('en-IN') : '—'}</td>
+                    <td>
+                      {request.status === 'resolved' ? (
+                        <span style={{ color: T.sage, fontWeight: 700 }}><i className="fas fa-check-circle" /> Resolved</span>
+                      ) : (
+                        <button className="employee-btn employee-btn-sm employee-btn-primary" onClick={async () => {
+                          try {
+                            await api.patch(`/employee/student-support/${request.id}/resolve/`)
+                            toast.success('Student support request resolved')
+                            load()
+                          } catch (err) {
+                            toast.error(err.response?.data?.error || 'Unable to resolve request')
+                          }
+                        }}><i className="fas fa-check" /> Resolve</button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

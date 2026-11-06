@@ -152,6 +152,7 @@ urlpatterns = [
     path('api/staff-support/', v.StaffSupportListView.as_view()),
     path('api/student-support/', v.StudentSupportListView.as_view()),
     path('api/employee/student-support/', v.StaffStudentSupportListView.as_view()),
+    path('api/employee/student-support/<int:pk>/resolve/', v.staff_resolve_student_support),
     path('api/counselor-support/', v.CounselorSupportListView.as_view()),
 
     # â”€â”€ ADMIN OVERVIEW â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -287,6 +288,8 @@ urlpatterns = [
     path('api/fees/<int:fee_id>/bill-link/', create_fee_bill_link),
     path('api/fees/<int:fee_id>/bill/', generate_bill),
     path('api/student/fee/', student_fee_details),
+    path('api/student/completion-report/', v.student_completion_report),
+    path('api/student/completion-report/download/', v.download_student_completion_report),
 
 
 
