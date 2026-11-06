@@ -285,6 +285,7 @@ function StudentNav() {
         {/* <SubLink to="/student/support" label="Support Request Status" /> */}
       </NavGroup>
       <NavItem to="/student/fee" icon="fa-rupee-sign" label="Fee Details" />
+      <NavItem to="/student/reports" icon="fa-file-alt" label="Reports" />
     </>
   )
 }

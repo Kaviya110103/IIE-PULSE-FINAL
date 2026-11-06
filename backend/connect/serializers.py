@@ -469,7 +469,7 @@ class StudyMaterialSerializer(serializers.ModelSerializer):
         batches = []
         seen = set()
 
-        def add_batch(batch):
+        def add_batch(batch, assigned_at=None):
             if batch and batch.id not in seen:
                 seen.add(batch.id)
                 batches.append({
@@ -479,11 +479,15 @@ class StudyMaterialSerializer(serializers.ModelSerializer):
                     'display_name': batch.batch_code or batch.batch_number,
                     'branch': batch.branch,
                     'course_name': getattr(batch.course_name, 'course_name', None) if batch.course_name else None,
+                    'assigned_at': assigned_at.isoformat() if assigned_at else None,
                 })
 
-        add_batch(getattr(obj, 'batch', None))
+        # Legacy materials were tied directly to one batch before the
+        # assignment table was introduced. Keep their upload time useful as
+        # the assignment time in the staff material history.
+        add_batch(getattr(obj, 'batch', None), getattr(obj, 'uploaded_at', None))
         for assignment in getattr(obj, 'assignments', []).all():
-            add_batch(assignment.batch)
+            add_batch(assignment.batch, assignment.assigned_at)
         return batches
 
     def get_batch_number(self, obj):

@@ -46,7 +46,7 @@ import {
 // ── Student ────────────────────────────────────────────────────────────────
 import {
   StudentDashboard, StudentAnnouncements, StudentAttendance, StudentBatches, StudentSessions, StudentNotifications,
-  StudentQuizList, StudentTests, StudentLeave, StudentMaterials, StudentSupport, StudentFeeDetails,
+  StudentQuizList, StudentTests, StudentLeave, StudentMaterials, StudentSupport, StudentFeeDetails, StudentCompletionReport,
   StudentChallenge, StudentLoginRatingHistory,
 } from './pages/student/StudentPages'
 import StudentDesk from './pages/student/StudentDesk'
@@ -304,7 +304,8 @@ function AppRoutes() {
         <Route path="add-student" element={<StudentsList adminView />} />
         <Route path="students" element={<CounselorStudents />} />
         <Route path="/counselor/assigned-students" element={<CounselorAssignedStudents />} />
-        <Route path="batches" element={<BatchesList staffView />} />
+        {/* Counselors manage the batches they create for their own branch. */}
+        <Route path="batches" element={<BatchesList />} />
         <Route path="announcements" element={<CounselorAnnouncements />} />
         <Route path="admin-announcements" element={<StaffAnnouncements />} />
         <Route path="awards" element={<AdminAwards />} />
@@ -344,6 +345,7 @@ function AppRoutes() {
         <Route path="support/new" element={<StudentSupport />} />
         <Route path="notifications" element={<StudentNotifications />} />
         <Route path="fee" element={<StudentFeeDetails />} />
+        <Route path="reports" element={<StudentCompletionReport />} />
 
 
       </Route>

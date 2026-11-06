@@ -3,6 +3,7 @@ import api from '../../api/client'
 import toast from 'react-hot-toast'
 import { useNavigate } from 'react-router-dom'  // ← ADD THIS
 import heroStudentsImage from '../../assets/hero-students.png'
+import iieLogo from '../../assets/iie-empowering-dreams.png'
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf'
 import pdfWorker from 'pdfjs-dist/legacy/build/pdf.worker.min.js?url'
 import * as XLSX from 'xlsx'
@@ -3392,7 +3393,9 @@ export function StudentTests() {
   useEffect(() => { loadTests() }, [])
 
   const startTest = async (test) => {
-    if (test.creation_method === 'upload' && test.question_paper_url) {
+    // Technical tests always accept an answer-file submission, including
+    // trainer-created tests that do not have an uploaded paper.
+    if (test.test_type === 'technical' || (test.creation_method === 'upload' && test.question_paper_url)) {
       setActiveTest({ ...test, questions: [], isUploadTest: true })
       return
     }
@@ -3456,9 +3459,9 @@ export function StudentTests() {
                       className="student-btn student-btn-primary"
                       style={{ width: '100%' }}
                       onClick={() => startTest(test)}
-                      disabled={test.creation_method !== 'upload' && test.total_questions === 0}
+                      disabled={test.test_type !== 'technical' && test.creation_method !== 'upload' && test.total_questions === 0}
                     >
-                      {test.creation_method === 'upload'
+                      {test.test_type === 'technical' || test.creation_method === 'upload'
                         ? 'View & Submit Test'
                         : test.total_questions === 0 ? 'No Questions' : 'View Questions'}
                     </button>
@@ -3493,7 +3496,7 @@ export function StudentTests() {
                     <td>
                       {result.manual_mark != null
                         ? `${result.manual_mark}/${result.max_marks || 100}`
-                        : result.creation_method === 'upload'
+                        : result.test_type === 'technical' || result.creation_method === 'upload'
                           ? 'Waiting for mark'
                           : `${result.score || 0}/${result.total_questions || 0}`}
                     </td>
@@ -3507,13 +3510,13 @@ export function StudentTests() {
                             borderRadius: 3
                           }} />
                         </div>
-                        <strong>{result.manual_mark == null && result.creation_method === 'upload' ? 'Pending' : `${(result.percentage || 0).toFixed(1)}%`}</strong>
+                        <strong>{result.manual_mark == null && (result.test_type === 'technical' || result.creation_method === 'upload') ? 'Pending' : `${(result.percentage || 0).toFixed(1)}%`}</strong>
                       </div>
                     </td>
                     <td>
                       <StudentBadge
-                        text={result.manual_mark == null && result.creation_method === 'upload' ? '⏳ Submitted' : (result.percentage || 0) >= 50 ? '✅ Passed' : '❌ Failed'}
-                        variant={result.manual_mark == null && result.creation_method === 'upload' ? 'pending' : (result.percentage || 0) >= 50 ? 'success' : 'danger'}
+                        text={result.manual_mark == null && (result.test_type === 'technical' || result.creation_method === 'upload') ? '⏳ Submitted' : (result.percentage || 0) >= 50 ? '✅ Passed' : '❌ Failed'}
+                        variant={result.manual_mark == null && (result.test_type === 'technical' || result.creation_method === 'upload') ? 'pending' : (result.percentage || 0) >= 50 ? 'success' : 'danger'}
                       />
                     </td>
                     <td style={{ fontSize: 12, color: T.slate }}>
@@ -3592,7 +3595,7 @@ function TakeTestComponent({ test, onDone }) {
     }
   }
 
-  if (test.isUploadTest || test.creation_method === 'upload') {
+  if (test.isUploadTest || test.test_type === 'technical' || test.creation_method === 'upload') {
     return (
       <div className="student-root">
         <StudentStyles />
@@ -4659,6 +4662,154 @@ const viewBillPdf = async (feeId) => {
           )}
         </>
       )}
+    </div>
+  )
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// STUDENT COMPLETION REPORT
+// ══════════════════════════════════════════════════════════════════════════════
+export function StudentCompletionReport() {
+  const [reports, setReports] = useState([])
+  const [selectedId, setSelectedId] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [downloading, setDownloading] = useState(false)
+
+  useEffect(() => {
+    let active = true
+    api.get('/student/completion-report/')
+      .then(({ data }) => {
+        if (!active) return
+        const rows = data?.results || []
+        setReports(rows)
+        setSelectedId(rows[0] ? String(rows[0].id) : '')
+      })
+      .catch(err => {
+        console.error('Completion report load failed:', err)
+        toast.error(err.response?.data?.error || 'Unable to load your completion report')
+      })
+      .finally(() => active && setLoading(false))
+    return () => { active = false }
+  }, [])
+
+  const report = reports.find(item => String(item.id) === String(selectedId)) || reports[0]
+  const fmtMoney = value => `₹${Number(value || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  const download = async () => {
+    if (!report) return
+    if (!report.is_completed) {
+      toast.error('PDF download becomes available after this course is completed.')
+      return
+    }
+    setDownloading(true)
+    const toastId = toast.loading('Preparing your completion report...')
+    try {
+      const response = await api.get(`/student/completion-report/download/?report_id=${report.id}`, { responseType: 'blob' })
+      const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }))
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `${(report.student?.name || 'student').replace(/\s+/g, '_')}_Completion_Report.pdf`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(url)
+      toast.success('Completion report downloaded', { id: toastId })
+    } catch (err) {
+      console.error('Completion report download failed:', err)
+      toast.error(err.response?.data?.error || 'Unable to download the report', { id: toastId })
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  if (loading) return <div className="student-root"><StudentStyles /><StudentSpin /></div>
+  if (!report) {
+    return (
+      <div className="student-root">
+        <StudentStyles />
+        <StudentPageHeader title="Course Reports" sub="Your course progress and completion records will appear here." />
+        <div className="student-card"><StudentEmpty msg="No course report is available yet." icon="fa-file-alt" /></div>
+      </div>
+    )
+  }
+
+  const info = report.student || {}
+  const batch = report.course_batch || {}
+  const sessions = report.sessions || []
+  const materials = report.materials || []
+  const quizzes = report.quizzes || []
+  const tests = report.tests || []
+  const attendance = report.attendance || {}
+  const fees = report.fees || {}
+
+  const infoGrid = (items) => (
+    <div className="student-row-grid-2" style={{ padding: '20px 22px' }}>
+      {items.map(([label, value]) => (
+        <div key={label} style={{ padding: '11px 13px', border: `1px solid ${T.border}`, borderRadius: 9, background: T.white }}>
+          <div style={{ color: T.slate, fontSize: 10.5, textTransform: 'uppercase', fontWeight: 700, letterSpacing: '.4px', marginBottom: 4 }}>{label}</div>
+          <div style={{ fontWeight: 600, fontSize: 13.5 }}>{value || '—'}</div>
+        </div>
+      ))}
+    </div>
+  )
+
+  return (
+    <div className="student-root">
+      <StudentStyles />
+      <StudentPageHeader
+        title="Course Report"
+        sub={report.is_completed ? 'Your completed course record, assessments and fee details.' : 'Your live course progress, assessments and fee details.'}
+        btn={report.is_completed
+          ? <button type="button" className="student-btn student-btn-primary" onClick={download} disabled={downloading}><i className="fas fa-file-pdf" />{downloading ? 'Preparing PDF...' : 'Download PDF'}</button>
+          : <StudentBadge text="In Progress - PDF after completion" variant="info" />}
+      />
+
+      <div className="student-card" style={{ padding: '14px 22px', display: 'flex', alignItems: 'center', gap: 12 }}>
+        <img src={iieLogo} alt="IIE - Empowering Dreams" style={{ width: 92, height: 48, objectFit: 'contain' }} />
+        <div><strong style={{ fontSize: 15 }}>Course Completion Report</strong><div style={{ color: T.slate, fontSize: 12 }}>IIE Student Course Report</div></div>
+      </div>
+
+      {reports.length > 1 && (
+        <div className="student-card" style={{ padding: 16 }}>
+          <label className="student-label" htmlFor="completion-report-select">Course report</label>
+          <select id="completion-report-select" className="student-select" value={selectedId} onChange={e => setSelectedId(e.target.value)}>
+            {reports.map(item => <option key={item.id} value={item.id}>{item.course_batch?.course_name || 'Course'} - {item.course_batch?.batch_id || 'Batch'}{item.is_completed ? ' (Completed)' : ' (In Progress)'}</option>)}
+          </select>
+        </div>
+      )}
+
+      <div className="student-stat-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+        <div className="student-stat-card"><div className="student-stat-icon" style={{ background: '#e8f8f0', color: T.sage }}><i className="fas fa-check-double" /></div><div><div className="student-stat-value" style={{ fontSize: 21 }}>{batch.total_sessions_completed || 0}/{batch.total_sessions || 0}</div><div className="student-stat-label">Sessions Completed</div></div></div>
+        <div className="student-stat-card"><div className="student-stat-icon" style={{ background: '#fef5e4', color: T.amber }}><i className="fas fa-book" /></div><div><div className="student-stat-value" style={{ fontSize: 21 }}>{materials.length}</div><div className="student-stat-label">Learning Materials</div></div></div>
+        <div className="student-stat-card"><div className="student-stat-icon" style={{ background: '#e4f2fd', color: T.teal }}><i className="fas fa-clipboard-check" /></div><div><div className="student-stat-value" style={{ fontSize: 21 }}>{quizzes.length + tests.length}</div><div className="student-stat-label">Assessments Attended</div></div></div>
+        <div className="student-stat-card"><div className="student-stat-icon" style={{ background: fees.pending_balance > 0 ? '#fdeaec' : '#e8f8f0', color: fees.pending_balance > 0 ? T.rose : T.sage }}><i className="fas fa-rupee-sign" /></div><div><div className="student-stat-value" style={{ fontSize: 21 }}>{fmtMoney(fees.pending_balance)}</div><div className="student-stat-label">Pending Balance</div></div></div>
+      </div>
+
+      <div className="student-card"><StudentSectionHeader title="Personal Information" />{infoGrid([['Name', info.name], ['Email', info.email], ['Mobile Number', info.mobile_no], ['Date of Birth', info.date_of_birth], ['Gender', info.gender], ['Qualification', info.qualification], ['Branch', info.branch], ['City', info.city]])}</div>
+      <div className="student-card"><StudentSectionHeader title="Course and Batch Details" />{infoGrid([['Course Name', batch.course_name], ['Batch ID', batch.batch_id], ['Batch Start Date', batch.batch_start_date], ['Batch End Date', batch.batch_end_date], ['Trainer Name', batch.trainer_name], ['Completion Date', batch.completion_date || (report.is_completed ? '—' : 'In Progress')], ['Total Sessions Completed', `${batch.total_sessions_completed || 0} / ${batch.total_sessions || 0}`]])}</div>
+
+      <div className="student-card">
+        <StudentSectionHeader title="Session Completion Logsheet" count={sessions.length} />
+        <div style={{ overflowX: 'auto' }}><table className="student-table"><thead><tr><th>#</th><th>Session</th><th>Trainer Completion</th><th>Student Completion</th></tr></thead><tbody>{sessions.length ? sessions.map(item => <tr key={`${item.session_number}-${item.title}`}><td>{item.session_number}</td><td><strong>{item.title}</strong>{item.topics && <div style={{ color: T.slate, fontSize: 11, marginTop: 3 }}>{item.topics}</div>}</td><td><StudentBadge text={item.trainer_completed ? 'Completed' : 'Not marked'} variant={item.trainer_completed ? 'success' : 'warning'} />{item.trainer_completed_at && <div style={{ color: T.slate, fontSize: 11, marginTop: 5 }}>{item.trainer_completed_at}</div>}</td><td><StudentBadge text={item.student_completed ? 'Completed' : 'Pending'} variant={item.student_completed ? 'success' : 'pending'} />{item.student_completed_at && <div style={{ color: T.slate, fontSize: 11, marginTop: 5 }}>{item.student_completed_at}</div>}</td></tr>) : <tr><td colSpan="4" style={{ textAlign: 'center', color: T.slate }}>No session history is available for this earlier completion.</td></tr>}</tbody></table></div>
+      </div>
+
+      <div className="student-card">
+        <StudentSectionHeader title="Attendance Details" />
+        <div className="student-stat-grid" style={{ padding: '20px 22px', marginBottom: 0, gridTemplateColumns: 'repeat(3, 1fr)' }}>
+          <div><div className="student-stat-label">Days Marked</div><div style={{ fontWeight: 700, fontSize: 20 }}>{attendance.total_attendance || 0}</div></div>
+          <div><div className="student-stat-label">Present</div><div style={{ fontWeight: 700, fontSize: 20, color: T.sage }}>{attendance.present_count || 0}</div></div>
+          <div><div className="student-stat-label">Attendance</div><div style={{ fontWeight: 700, fontSize: 20 }}>{attendance.attendance_percentage || 0}%</div></div>
+        </div>
+        {attendance.records?.length > 0 && <div style={{ overflowX: 'auto', borderTop: `1px solid ${T.border}` }}><table className="student-table"><thead><tr><th>Date</th><th>Status</th></tr></thead><tbody>{attendance.records.map((item, index) => <tr key={`${item.date}-${index}`}><td>{item.date}</td><td><StudentBadge text={item.status || '—'} variant={String(item.status).toLowerCase() === 'present' ? 'success' : 'danger'} /></td></tr>)}</tbody></table></div>}
+      </div>
+
+      <div className="student-card"><StudentSectionHeader title="Learning Materials" count={materials.length} /><div style={{ overflowX: 'auto' }}><table className="student-table"><thead><tr><th>Material</th><th>Uploaded By</th><th>Assigned Date</th></tr></thead><tbody>{materials.length ? materials.map((item, index) => <tr key={`${item.title}-${index}`}><td><strong>{item.title}</strong></td><td>{item.uploaded_by || '—'}</td><td>{item.assigned_date || '—'}</td></tr>) : <tr><td colSpan="3" style={{ textAlign: 'center', color: T.slate }}>No material records found.</td></tr>}</tbody></table></div></div>
+
+      <div className="student-row-grid-2">
+        <div className="student-card"><StudentSectionHeader title="Quiz Report" count={quizzes.length} /><div style={{ overflowX: 'auto' }}><table className="student-table"><thead><tr><th>Quiz</th><th>Score</th><th>Result</th><th>Date</th></tr></thead><tbody>{quizzes.length ? quizzes.map((item, index) => <tr key={`${item.title}-${index}`}><td>{item.title}</td><td>{item.score}/{item.total_marks}</td><td>{item.percentage}%</td><td>{item.submitted_at}</td></tr>) : <tr><td colSpan="4" style={{ textAlign: 'center', color: T.slate }}>No quizzes attended.</td></tr>}</tbody></table></div></div>
+        <div className="student-card"><StudentSectionHeader title="Test / Assessment Report" count={tests.length} /><div style={{ overflowX: 'auto' }}><table className="student-table"><thead><tr><th>Test</th><th>Score</th><th>Result</th><th>Date</th></tr></thead><tbody>{tests.length ? tests.map((item, index) => <tr key={`${item.title}-${index}`}><td>{item.title}</td><td>{item.score}/{item.total_marks}</td><td>{item.percentage}%</td><td>{item.submitted_at}</td></tr>) : <tr><td colSpan="4" style={{ textAlign: 'center', color: T.slate }}>No tests attended.</td></tr>}</tbody></table></div></div>
+      </div>
+
+      <div className="student-card"><StudentSectionHeader title="Fee Details" /><div className="student-stat-grid" style={{ padding: '20px 22px', marginBottom: 0, gridTemplateColumns: 'repeat(3, 1fr)' }}><div><div className="student-stat-label">Total Course Fee</div><div style={{ fontWeight: 700, fontSize: 20 }}>{fmtMoney(fees.total_course_fee)}</div></div><div><div className="student-stat-label">Amount Paid</div><div style={{ fontWeight: 700, fontSize: 20, color: T.sage }}>{fmtMoney(fees.amount_paid)}</div></div><div><div className="student-stat-label">Pending Balance</div><div style={{ fontWeight: 700, fontSize: 20, color: fees.pending_balance > 0 ? T.rose : T.sage }}>{fmtMoney(fees.pending_balance)}</div></div></div>{fees.payment_history?.length > 0 && <div style={{ overflowX: 'auto', borderTop: `1px solid ${T.border}` }}><table className="student-table"><thead><tr><th>Amount</th><th>Payment Mode</th><th>Date</th><th>Notes</th></tr></thead><tbody>{fees.payment_history.map((item, index) => <tr key={`${item.paid_at}-${index}`}><td>{fmtMoney(item.amount)}</td><td>{item.payment_mode}</td><td>{item.paid_at}</td><td>{item.notes || '—'}</td></tr>)}</tbody></table></div>}</div>
     </div>
   )
 }
