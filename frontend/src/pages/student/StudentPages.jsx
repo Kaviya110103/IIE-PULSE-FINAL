@@ -3393,9 +3393,9 @@ export function StudentTests() {
   useEffect(() => { loadTests() }, [])
 
   const startTest = async (test) => {
-    // Technical tests always accept an answer-file submission, including
-    // trainer-created tests that do not have an uploaded paper.
-    if (test.test_type === 'technical' || (test.creation_method === 'upload' && test.question_paper_url)) {
+    // Only uploaded question papers skip the question API. Manually created
+    // technical tests still have questions that students must be able to read.
+    if (test.creation_method === 'upload') {
       setActiveTest({ ...test, questions: [], isUploadTest: true })
       return
     }
@@ -3595,7 +3595,7 @@ function TakeTestComponent({ test, onDone }) {
     }
   }
 
-  if (test.isUploadTest || test.test_type === 'technical' || test.creation_method === 'upload') {
+  if (test.isUploadTest || test.creation_method === 'upload') {
     return (
       <div className="student-root">
         <StudentStyles />
@@ -3680,6 +3680,36 @@ function TakeTestComponent({ test, onDone }) {
                 <p style={{ margin: 0, color: T.slate }}>{q.question_text}</p>
               </div>
             ))}
+            <div className="student-fg" style={{ marginTop: 8 }}>
+              <label className="student-label">Upload Answer File *</label>
+              <input
+                className="student-input"
+                type="file"
+                accept=".pdf,.doc,.docx,.zip,.rar,.png,.jpg,.jpeg,.txt,.py,.java"
+                onChange={e => {
+                  setSubmissionFile(e.target.files?.[0] || null)
+                  setSubmissionFiles([])
+                }}
+              />
+            </div>
+            <div className="student-fg">
+              <label className="student-label">Or Upload Answer Folder</label>
+              <input
+                className="student-input"
+                type="file"
+                multiple
+                webkitdirectory="true"
+                directory="true"
+                onChange={e => {
+                  setSubmissionFiles(Array.from(e.target.files || []))
+                  setSubmissionFile(null)
+                }}
+              />
+              <small style={{ color: T.slate }}>Folder files will be saved as one ZIP for your mentor to view.</small>
+            </div>
+            <button className="student-btn student-btn-success" type="button" onClick={submitUploadTest} disabled={submitting || (!submissionFile && submissionFiles.length === 0)}>
+              <i className="fas fa-paper-plane" /> {submitting ? 'Submitting...' : 'Submit Test'}
+            </button>
           </div>
         </div>
       </div>
@@ -3719,7 +3749,7 @@ function TakeTestComponent({ test, onDone }) {
   }
 
   if (result) {
-    if (test.isUploadTest || test.creation_method === 'upload') {
+    if (test.isUploadTest || test.creation_method === 'upload' || test.test_type === 'technical') {
       return (
         <div className="student-root">
           <StudentStyles />

@@ -80,6 +80,10 @@ export default function App() {
   const activeMode: QuizMode = resolvedMode ?? (isAssignedTestMode ? "assigned-test" : isPracticeMode ? "practice" : "excel");
   const isPracticeAttempt = activeMode === "practice";
   const isAssignedTestAttempt = activeMode === "assigned-test";
+  const isTechnicalAssignedTest = isAssignedTestAttempt && quiz?.test_type === "technical";
+  const isUploadOnlyTest = isAssignedTestAttempt &&
+    (quiz?.creation_method === "upload" || !!quiz?.question_paper_url) &&
+    questions.length === 0;
 
   const getPracticeSubmitter = async () => {
     const [guestSessionRaw, studentId, studentName] = await Promise.all([
@@ -219,12 +223,15 @@ export default function App() {
   useEffect(() => {
     if (!quiz || result || submitting || questions.length === 0) return;
     if ((quiz.duration_minutes || 0) > 0 && timeLeft <= 0) {
+      // Technical tests require an uploaded answer file, so they cannot be
+      // auto-submitted as an empty multiple-choice answer payload.
+      if (isTechnicalAssignedTest) return;
       submitQuiz(true);
       return;
     }
     const timer = setInterval(() => setTimeLeft((seconds) => Math.max(seconds - 1, 0)), 1000);
     return () => clearInterval(timer);
-  }, [quiz, result, submitting, timeLeft, questions.length]);
+  }, [quiz, result, submitting, timeLeft, questions.length, isTechnicalAssignedTest]);
 
   const heading = useMemo(() => {
     return quiz?.title || "Aptitude Test";
@@ -239,7 +246,7 @@ export default function App() {
   const handleSubmit = async () => {
     if (!quiz) return;
 
-    if (isAssignedTestAttempt && (quiz.creation_method === "upload" || quiz.question_paper_url) && questions.length === 0) {
+    if (isTechnicalAssignedTest || isUploadOnlyTest) {
       submitUploadedTest();
       return;
     }
@@ -448,7 +455,7 @@ export default function App() {
         />
       </View>
 
-      {isAssignedTestAttempt && (quiz.creation_method === "upload" || quiz.question_paper_url) && questions.length === 0 ? (
+      {isUploadOnlyTest ? (
         <View style={styles.card}>
           <Text style={styles.question}>Question Paper Test</Text>
           {!!quiz.instructions && <Text style={styles.description}>{quiz.instructions}</Text>}
@@ -561,6 +568,26 @@ export default function App() {
           );
         })()}
 
+      {isTechnicalAssignedTest && questions.length > 0 && !result ? (
+        <View style={styles.card}>
+          <Text style={styles.question}>Submit your technical test answer</Text>
+          {!!quiz.question_paper_url && (
+            <TouchableOpacity
+              style={styles.paperBtn}
+              onPress={() => Linking.openURL(quiz.question_paper_url || "").catch(() => Alert.alert("Unable to open", "Could not open the question paper."))}
+            >
+              <Text style={styles.paperBtnText}>View Test File</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity style={styles.uploadBtn} onPress={pickSubmissionFile}>
+            <Text style={styles.uploadBtnText}>
+              {submissionFile?.name ? `Selected: ${submissionFile.name}` : "Choose Answer File"}
+            </Text>
+          </TouchableOpacity>
+          <Text style={styles.uploadHint}>For folder submissions, compress the folder as ZIP and upload it here.</Text>
+        </View>
+      ) : null}
+
       {!result && questions.length > 0 ? (
         <View style={styles.navRow}>
           <TouchableOpacity
@@ -585,7 +612,7 @@ export default function App() {
         <TouchableOpacity
           style={[styles.submitBtn, submitting && { opacity: 0.7 }]}
           onPress={handleSubmit}
-          disabled={submitting || (questions.length === 0 && !(isAssignedTestAttempt && (quiz.creation_method === "upload" || quiz.question_paper_url)))}
+          disabled={submitting || (questions.length === 0 && !isUploadOnlyTest && !isTechnicalAssignedTest)}
         >
           <Text style={styles.submitText}>
             {submitting ? "Submitting..." : isAssignedTestAttempt || isPracticeAttempt ? "Submit Test" : "Submit Quiz"}
@@ -593,7 +620,7 @@ export default function App() {
         </TouchableOpacity>
       ) : (
         <>
-          {isAssignedTestAttempt && (quiz.creation_method === "upload" || quiz.question_paper_url) && questions.length === 0 ? (
+          {isTechnicalAssignedTest || isUploadOnlyTest ? (
             <>
               <Text style={styles.scoreText}>Test Submitted</Text>
               <Text style={styles.resultText}>Your answer file was submitted. Your mentor will update the mark after review.</Text>
