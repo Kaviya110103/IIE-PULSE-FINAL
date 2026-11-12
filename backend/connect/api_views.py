@@ -628,9 +628,11 @@ def apply_activity_date_filters(qs, params):
     date_from = parse_date(params.get('date_from') or '')
     date_to = parse_date(params.get('date_to') or '')
     if date_from:
-        qs = qs.filter(login_time__date__gte=date_from)
+        start_at = timezone.make_aware(datetime.combine(date_from, datetime.min.time()))
+        qs = qs.filter(login_time__gte=start_at)
     if date_to:
-        qs = qs.filter(login_time__date__lte=date_to)
+        end_at = timezone.make_aware(datetime.combine(date_to + timedelta(days=1), datetime.min.time()))
+        qs = qs.filter(login_time__lt=end_at)
     return qs
 
 
@@ -1405,7 +1407,20 @@ class EmployeeDashboardView(APIView):
             'my_batches_count': my_batches.count(),
             'my_students_count': my_students.count(),
             'today_classes_count': my_batches.filter(start_date__lte=today, end_date__gte=today).count(),
-            'materials_count': StudyMaterial.objects.filter(uploaded_by=employee).count(),
+            # The dashboard Materials card represents the same library list
+            # shown under Staff > Materials, not legacy batch-only uploads.
+            'materials_count': StudyMaterial.objects.filter(
+                uploaded_by=employee,
+                is_library=True,
+            ).count(),
+            'materials_uploaded_count': StudyMaterial.objects.filter(
+                uploaded_by=employee,
+                is_library=True,
+            ).count(),
+            'materials_assigned_count': StudyMaterialAssignment.objects.filter(
+                assigned_by=employee,
+                material__is_library=True,
+            ).count(),
             'completed_students_count': my_completed_students.count(),
             'reassigned_students_count': reassigned_students_count,
             'announcements_count': announcements.count(),
@@ -1488,7 +1503,7 @@ class StudentDashboardView(APIView):
         ).prefetch_related('specific_students').filter(
             is_published=True,
             created_by_id__in=trainer_user_ids,
-            recipient_type__in=['specific_batch', 'specific_student'],
+            recipient_type__in=['students', 'specific_batch', 'specific_student'],
         ).distinct().order_by('-created_at')
         trainer_items = [
             _serialize_mobile_announcement(
@@ -3919,6 +3934,99 @@ def _sync_reassigned_student_progress_for_batch(batch):
         )
 
 
+def _reconcile_batch_completion_audit(batch):
+    """Repair legacy session rows from the trainer completion audit.
+
+    Earlier releases could save a completed ``DailySessionCompletion`` row
+    without updating the matching CourseSession and student status rows.  The
+    staff view consequently read the audit as completed while a student still
+    saw "Waiting for Trainer".  The audit is trainer-owned, so it is safe to
+    use for this one-way repair; student progress is deliberately never used
+    to promote a trainer completion.
+    """
+    if not batch:
+        return False
+
+    daily_rows = list(
+        DailySessionCompletion.objects.filter(
+            session__batch=batch,
+            completed=True,
+        ).select_related('session', 'faculty').order_by('session_id', '-completed_at', '-completion_date', '-id')
+    )
+    if not daily_rows:
+        return False
+
+    latest_by_session = {}
+    for row in daily_rows:
+        latest_by_session.setdefault(row.session_id, row)
+
+    repaired = False
+    repaired_sessions = []
+    for session_id, row in latest_by_session.items():
+        session = row.session
+        completed_at = row.completed_at
+        if completed_at is None:
+            completed_at = timezone.make_aware(datetime.combine(row.completion_date, datetime.min.time()))
+
+        updates = []
+        if not session.staff_completed:
+            session.staff_completed = True
+            updates.append('staff_completed')
+        if not session.completed_date:
+            session.completed_date = completed_at
+            updates.append('completed_date')
+        if not session.completed_by_id and row.faculty_id:
+            session.completed_by = row.faculty
+            updates.append('completed_by')
+        if updates:
+            session.save(update_fields=[*updates, 'updated_at'])
+            repaired = True
+        repaired_sessions.append((session, completed_at))
+
+    # Bring only stale rows forward from the same audit-backed state. Existing
+    # student confirmations and doubts stay untouched, and routine page loads
+    # do not rewrite every student/session row in the batch.
+    for student in active_students_for_batch(batch):
+        for session, completed_at in repaired_sessions:
+            progress, _ = Student_Session_Progress.objects.get_or_create(
+                student=student,
+                session=session,
+            )
+            progress_updates = []
+            if not progress.staff_completed:
+                progress.staff_completed = True
+                progress_updates.append('staff_completed')
+            if not progress.staff_completed_at:
+                progress.staff_completed_at = completed_at
+                progress_updates.append('staff_completed_at')
+            if progress.student_status == 'not_started':
+                progress.student_status = 'pending'
+                progress_updates.append('student_status')
+            if progress_updates:
+                progress.save(update_fields=[*progress_updates, 'updated_at'])
+                repaired = True
+
+            status_obj, _ = StudentSessionStatus.objects.get_or_create(
+                student=student,
+                session=session,
+            )
+            status_updates = []
+            if not status_obj.staff_completed:
+                status_obj.staff_completed = True
+                status_updates.append('staff_completed')
+            if not status_obj.staff_completed_at:
+                status_obj.staff_completed_at = completed_at
+                status_updates.append('staff_completed_at')
+            if status_obj.student_status not in {'completed', 'doubt', 'pending'}:
+                status_obj.student_status = 'pending'
+                status_updates.append('student_status')
+            if status_updates:
+                status_obj.save(update_fields=status_updates)
+                repaired = True
+
+    return repaired
+
+
 # -- ATTENDANCE ----------------------------------------------------------------
 
 @api_view(['GET'])
@@ -6009,24 +6117,38 @@ def _trainer_announcement_visible_to_student(announcement, student):
     if (creator_emp.designation or '').strip().lower() not in ['trainer', 'mentor']:
         return False
 
+    trainer_batch_ids = Batches.objects.filter(
+        Q(faculty=creator_emp) | Q(trainer_assignments__trainer=creator_emp)
+    ).values_list('id', flat=True)
+    is_trainer_student = bool(
+        student.assigned_staff_id == creator_emp.id
+        or student.assigned_batch_id in trainer_batch_ids
+        or StudentBatchEnrollment.objects.filter(
+            student=student,
+            batch_id__in=trainer_batch_ids,
+            is_active=True,
+        ).exists()
+    )
+
+    if announcement.recipient_type == 'students':
+        return is_trainer_student
+
     if announcement.recipient_type == 'specific_batch':
         return bool(
-            student.assigned_batch_id
-            and announcement.specific_batch_id == student.assigned_batch_id
+            announcement.specific_batch_id
+            and announcement.specific_batch_id in trainer_batch_ids
             and (
-                student.assigned_staff_id == creator_emp.id
-                or student.assigned_batch.faculty_id == creator_emp.id
+                student.assigned_batch_id == announcement.specific_batch_id
+                or StudentBatchEnrollment.objects.filter(
+                    student=student,
+                    batch_id=announcement.specific_batch_id,
+                    is_active=True,
+                ).exists()
             )
         )
 
     if announcement.recipient_type == 'specific_student':
-        return announcement.specific_students.filter(id=student.id).exists() and (
-            student.assigned_staff_id == creator_emp.id
-            or (
-                student.assigned_batch_id
-                and student.assigned_batch.faculty_id == creator_emp.id
-            )
-        )
+        return announcement.specific_students.filter(id=student.id).exists() and is_trainer_student
 
     return False
 
@@ -6102,7 +6224,7 @@ def student_announcements(request):
         ).prefetch_related('specific_students').filter(
             is_published=True,
             created_by_id__in=trainer_user_ids,
-            recipient_type__in=['specific_batch', 'specific_student'],
+            recipient_type__in=['students', 'specific_batch', 'specific_student'],
         ).distinct().order_by('-created_at')
         trainer_items = [
             _serialize_mobile_announcement(
@@ -7247,6 +7369,7 @@ def batch_sessions(request, batch_id):
         batch = Batches.objects.get(id=batch_id)
         sync_missing_sessions_from_logsheet(batch)
         _sync_reassigned_student_progress_for_batch(batch)
+        _reconcile_batch_completion_audit(batch)
     except Batches.DoesNotExist:
         pass
     sessions = CourseSession.objects.filter(batch__id=batch_id).order_by('session_number')
@@ -7274,18 +7397,17 @@ def student_sessions(request):
                 # Re-parsing a PDF on every student app open can make one
                 # student's desk time out while another student's works.
                 _sync_reassigned_student_progress_for_batch(item)
+                _reconcile_batch_completion_audit(item)
             raw_sessions = CourseSession.objects.filter(batch__in=course_batches).order_by('session_number', 'batch_id')
             by_number = {}
             for item in raw_sessions:
                 current = by_number.get(item.session_number)
-                item_progress = Student_Session_Progress.objects.filter(student=student, session=item).first()
-                item_done = bool(item_progress and (
-                    item_progress.staff_completed or item_progress.completed or item_progress.student_status == 'completed'
-                ))
-                current_progress = Student_Session_Progress.objects.filter(student=student, session=current).first() if current else None
-                current_done = bool(current_progress and (
-                    current_progress.staff_completed or current_progress.completed or current_progress.student_status == 'completed'
-                ))
+                item_done = bool(item.staff_completed or DailySessionCompletion.objects.filter(
+                    session=item, completed=True
+                ).exists())
+                current_done = bool(current and (current.staff_completed or DailySessionCompletion.objects.filter(
+                    session=current, completed=True
+                ).exists()))
                 if current is None or (item_done and not current_done):
                     by_number[item.session_number] = item
             batch = course_batches[0]
@@ -7295,10 +7417,12 @@ def student_sessions(request):
             if not batch:
                 return Response({'error': 'You are not assigned to this batch.'}, status=403)
             _sync_reassigned_student_progress_for_batch(batch)
+            _reconcile_batch_completion_audit(batch)
             sessions = CourseSession.objects.filter(batch=batch).order_by('session_number')
         else:
             batch = student.assigned_batch if student.assigned_batch in batches else batches[0]
             _sync_reassigned_student_progress_for_batch(batch)
+            _reconcile_batch_completion_audit(batch)
             sessions = CourseSession.objects.filter(batch=batch).order_by('session_number')
         data = []
 
@@ -7322,22 +7446,37 @@ def student_sessions(request):
             elif status_obj:
                 student_status = status_obj.student_status
 
-            # A student cannot complete a session before trainer completion.
-            # Legacy completed records sometimes missed the redundant
-            # ``staff_completed`` flag, so treat their completed state as
-            # trainer-marked rather than showing a false "not marked" status.
+            # Trainer completion must only come from the trainer-owned session
+            # record (or its audit row). A student completing their own step
+            # must never automatically tick a trainer session as complete.
             student_progress_staff_done = bool(
-                (progress and (progress.staff_completed or progress.completed or progress.student_status == 'completed')) or
-                (status_obj and (status_obj.staff_completed or status_obj.student_status == 'completed')) or
-                session.staff_completed
+                session.staff_completed or DailySessionCompletion.objects.filter(
+                    session=session, completed=True
+                ).exists()
             )
 
-            # If staff completed this for student but status not updated yet
-            if student_progress_staff_done and student_status == 'not_started':
-                student_status = 'pending'
-                if progress:
-                    progress.student_status = 'pending'
-                    progress.save()
+            # Repair legacy student rows from the authoritative trainer state.
+            # This prevents a valid trainer completion from leaving a student
+            # on the stale "Waiting for Trainer" state after deployments.
+            if student_progress_staff_done:
+                completed_at = session.completed_date or timezone.now()
+                if progress and not progress.staff_completed:
+                    progress.staff_completed = True
+                    progress.staff_completed_at = completed_at
+                    if progress.student_status == 'not_started':
+                        progress.student_status = 'pending'
+                    progress.save(update_fields=['staff_completed', 'staff_completed_at', 'student_status', 'updated_at'])
+                    student_status = progress.student_status
+                if status_obj and not status_obj.staff_completed:
+                    status_obj.staff_completed = True
+                    status_obj.staff_completed_at = completed_at
+                    if status_obj.student_status == 'not_started':
+                        status_obj.student_status = 'pending'
+                    status_obj.save(update_fields=['staff_completed', 'staff_completed_at', 'student_status'])
+                    if not progress:
+                        student_status = status_obj.student_status
+                if student_status == 'not_started':
+                    student_status = 'pending'
 
             data.append({
                 'id': session.id,
@@ -7483,25 +7622,43 @@ def get_batch_sessions_with_logsheet(request, batch_id):
         is_previous_trainer = bool(emp and _is_previous_trainer_for_batch(batch, emp))
         sync_missing_sessions_from_logsheet(batch)
         _sync_reassigned_student_progress_for_batch(batch)
+        _reconcile_batch_completion_audit(batch)
         sessions = CourseSession.objects.filter(batch=batch).order_by('session_number')
 
         sessions_data = []
         for session in sessions:
             session_dict = CourseSessionSerializer(session).data
 
-            if not session.staff_completed:
-                # staff_completed = True only if ALL active students
-                # have a progress record with staff_completed=True
-                staff_done_exists = Student_Session_Progress.objects.filter(
-                    session=session,
-                    staff_completed=True
+            # Never derive trainer completion from student progress. That made
+            # a student confirmation appear as if the trainer had completed a
+            # session. The CourseSession/DailySessionCompletion records are
+            # created only by the trainer completion workflow.
+            session_dict['staff_completed'] = bool(
+                session.staff_completed or DailySessionCompletion.objects.filter(
+                    session=session, completed=True
                 ).exists()
-                session_dict['staff_completed'] = staff_done_exists
-            else:
-                # No active students — reset to False so staff sees fresh
-                session_dict['staff_completed'] = session.staff_completed
+            )
 
             sessions_data.append(session_dict)
+
+        # Completion actions are allowed only after each individual student
+        # confirms every session. Keep this server-calculated so the UI cannot
+        # enable a reassignment/completion action for an incomplete student.
+        total_sessions = sessions.count()
+        student_completion = []
+        for student in active_students_for_batch(batch).order_by('first_name', 'last_name'):
+            completed_sessions = Student_Session_Progress.objects.filter(
+                student=student,
+                session__batch=batch,
+            ).filter(
+                Q(completed=True) | Q(student_status='completed')
+            ).values('session_id').distinct().count()
+            student_completion.append({
+                'student_id': student.id,
+                'completed_sessions': completed_sessions,
+                'total_sessions': total_sessions,
+                'eligible_for_final_action': bool(total_sessions and completed_sessions >= total_sessions),
+            })
 
         return Response({
             'batch': BatchSerializer(batch).data,
@@ -7513,6 +7670,7 @@ def get_batch_sessions_with_logsheet(request, batch_id):
                 else batch.course_logsheet.url if batch.course_logsheet else None
             ),
             'sessions': sessions_data,
+            'student_completion': student_completion,
         })
     except Batches.DoesNotExist:
         return Response({'error': 'Batch not found'}, status=404)
@@ -9358,9 +9516,13 @@ def mentor_student_monitoring(request):
         return Response({'error': 'Mentor access required.'}, status=status.HTTP_403_FORBIDDEN)
 
     params = request.query_params
+    # A student can be connected to a mentor through one of several active
+    # batch enrollments, without ``assigned_staff`` being populated.  Use the
+    # common staff/student mapping so login history matches My Batches.
+    mentor_student_ids = active_students_for_staff(mentor).values_list('id', flat=True)
     qs = UserActivity.objects.filter(
         user_type='student',
-        student__assigned_staff=mentor,
+        student_id__in=mentor_student_ids,
     ).select_related('user', 'student', 'student__assigned_staff')
     qs = prepare_activity_monitoring_queryset(qs)
     qs = apply_activity_date_filters(qs, params)
@@ -9396,9 +9558,10 @@ def mentor_student_monitoring_pdf(request):
         return Response({'error': 'Mentor access required.'}, status=status.HTTP_403_FORBIDDEN)
 
     params = request.query_params
+    mentor_student_ids = active_students_for_staff(mentor).values_list('id', flat=True)
     qs = UserActivity.objects.filter(
         user_type='student',
-        student__assigned_staff=mentor,
+        student_id__in=mentor_student_ids,
     ).select_related('user', 'student', 'student__assigned_staff')
     qs = prepare_activity_monitoring_queryset(qs)
     qs = apply_activity_date_filters(qs, params)
@@ -9840,13 +10003,6 @@ def staff_batch_detail_report(request, batch_id):
         session_id__in=session_ids,
         completed=True,
     ).values_list('session_id', flat=True))
-    # Some older completion rows only have the per-student trainer flag. It
-    # represents trainer completion, not student confirmation, so count it
-    # independently to keep the staff total accurate.
-    staff_completed_session_ids.update(Student_Session_Progress.objects.filter(
-        session_id__in=session_ids,
-        staff_completed=True,
-    ).values_list('session_id', flat=True).distinct())
     student_done_count = Student_Session_Progress.objects.filter(
         student_id__in=student_ids,
         session_id__in=session_ids,
@@ -15141,19 +15297,23 @@ class TrainerAnnouncementCreateView(generics.CreateAPIView):
 
         recipient_type = self.request.data.get('recipient_type')
         batch_id = self.request.data.get('specific_batch')
-        if recipient_type not in ['specific_batch', 'specific_student']:
-            raise PermissionDenied("Trainer announcements must target a specific batch or student.")
-        if not batch_id:
+        if recipient_type not in ['students', 'specific_batch', 'specific_student']:
+            raise PermissionDenied("Select an announcement audience.")
+        if recipient_type != 'students' and not batch_id:
             raise PermissionDenied("Select a batch for trainer announcement.")
 
-        batch = Batches.objects.filter(id=batch_id, faculty=trainer).first()
-        if not batch:
+        batch = None
+        if batch_id:
+            batch = Batches.objects.filter(
+                id=batch_id,
+            ).filter(Q(faculty=trainer) | Q(trainer_assignments__trainer=trainer)).distinct().first()
+        if recipient_type != 'students' and not batch:
             raise PermissionDenied("You can announce only to your own batches.")
 
         announcement = serializer.save(
             created_by=self.request.user,
             branch=trainer.branch,
-            specific_batch=batch,
+            specific_batch=batch if recipient_type != 'students' else None,
             is_important=recipient_type == 'important' or self.request.data.get('announcement_type') == 'important',
         )
         specific_student_ids = self.request.data.get('specific_student_ids', [])
@@ -15188,8 +15348,12 @@ def trainer_update_announcement(request, pk):
 
     recipient_type = request.data.get('recipient_type', ann.recipient_type)
     batch_id = request.data.get('specific_batch') or ann.specific_batch_id
-    batch = Batches.objects.filter(id=batch_id, faculty=trainer).first()
-    if recipient_type not in ['specific_batch', 'specific_student'] or not batch:
+    batch = None
+    if batch_id:
+        batch = Batches.objects.filter(id=batch_id).filter(
+            Q(faculty=trainer) | Q(trainer_assignments__trainer=trainer)
+        ).distinct().first()
+    if recipient_type not in ['students', 'specific_batch', 'specific_student'] or (recipient_type != 'students' and not batch):
         return Response({'error': 'Select one of your batches.'}, status=400)
 
     serializer_data = request.data.copy()
@@ -15199,7 +15363,7 @@ def trainer_update_announcement(request, pk):
         return Response(serializer.errors, status=400)
     ann = serializer.save(
         branch=trainer.branch,
-        specific_batch=batch,
+        specific_batch=batch if recipient_type != 'students' else None,
         is_important=request.data.get('announcement_type', ann.announcement_type) == 'important',
     )
 

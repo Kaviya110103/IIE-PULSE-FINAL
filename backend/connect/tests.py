@@ -1,12 +1,14 @@
 import json
 import tempfile
+from uuid import uuid4
 from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
+from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase, override_settings
+from django.test import TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
@@ -61,6 +63,166 @@ from .services.challenge_service import (
     validate_question_eligibility,
 )
 from .api_views import _send_batch_duration_notifications
+from .student_counts import completed_students_for_staff
+
+
+class AccountEmailWorkflowTests(TestCase):
+    """Verify account email workflows without delivering mail to real recipients."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.admin = User.objects.create_superuser(
+            username='account-test-admin',
+            email='account-test-admin@example.com',
+            password='pass123',
+        )
+        self.course = Courses.objects.create(
+            course_name='Account Workflow Course',
+            course_type='software',
+            duration='1 month',
+            fee=1000,
+        )
+
+    @patch('connect.api_views.send_email_async')
+    def test_creating_student_queues_welcome_credentials_email(self, send_email_async_mock):
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.post('/api/students/create/', {
+            'student_id': 'EMAIL-STU-1',
+            'first_name': 'Email',
+            'last_name': 'Student',
+            'email': 'email.student@example.com',
+            'mobile_no': '9000000111',
+            'date_of_birth': '2000-01-01',
+            'city': 'Coimbatore',
+            'state': 'Tamil Nadu',
+            'qualification': 'Graduate',
+            'gender': 'Female',
+            'branch': '100ft',
+            'course_ids': [self.course.id],
+        }, format='json')
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data['email_status'], 'queued')
+        send_email_async_mock.assert_called_once()
+        self.assertEqual(send_email_async_mock.call_args.kwargs['recipient_list'], ['email.student@example.com'])
+        self.assertIn('email.student@example.com', send_email_async_mock.call_args.kwargs['message'])
+        self.assertIn('9000000111', send_email_async_mock.call_args.kwargs['message'])
+
+    @patch('connect.api_views.send_email_async')
+    def test_creating_student_accepts_the_browser_multipart_form_payload(self, _send_email_async_mock):
+        """Keep the counselor's FormData request contract covered by QA."""
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.post('/api/students/create/', {
+            'student_id': 'MULTIPART-STU-1',
+            'first_name': 'Multipart',
+            'last_name': 'Student',
+            'email': 'multipart.student@example.com',
+            'mobile_no': '9000000113',
+            'date_of_birth': '2000-01-01',
+            'city': 'Coimbatore',
+            'state': 'Tamil Nadu',
+            'qualification': 'Graduate',
+            'gender': 'Male',
+            'branch': '100ft',
+            'course': self.course.course_name,
+            'course_ids': str(self.course.id),
+            'course_fee_overrides': json.dumps({
+                str(self.course.id): {
+                    'course_fee': self.course.fee,
+                    'eligible_discount': 0,
+                    'actual_fee': self.course.fee,
+                },
+            }),
+        }, format='multipart')
+
+        self.assertEqual(response.status_code, 201, response.data)
+
+    @patch('connect.api_views.send_configured_email')
+    @patch('connect.api_views.random.randint', return_value=123456)
+    def test_student_can_request_otp_and_reset_password(self, _random_mock, send_email_mock):
+        user = User.objects.create_user(
+            username='reset.student@example.com',
+            email='reset.student@example.com',
+            password='old-password',
+        )
+        Students.objects.create(
+            user=user,
+            student_id='RESET-STU-1',
+            email='reset.student@example.com',
+            first_name='Reset',
+            last_name='Student',
+            mobile_no='9000000112',
+            date_of_birth=date(2000, 1, 1),
+            city='Coimbatore',
+            state='Tamil Nadu',
+            qualification='Graduate',
+            course=self.course.course_name,
+            gender='Female',
+            branch='100ft',
+        )
+
+        forgot_response = self.client.post('/api/auth/forgot-password/', {
+            'email': 'reset.student@example.com',
+        }, format='json')
+        self.assertEqual(forgot_response.status_code, 200)
+        send_email_mock.assert_called_once()
+        self.assertEqual(send_email_mock.call_args.kwargs['to_email'], 'reset.student@example.com')
+
+        reset_response = self.client.post('/api/auth/reset-password/', {
+            'email': 'reset.student@example.com',
+            'otp': '123456',
+            'new_password': 'New-Password-123',
+        }, format='json')
+        self.assertEqual(reset_response.status_code, 200)
+        user.refresh_from_db()
+        self.assertTrue(user.check_password('New-Password-123'))
+        self.assertIsNone(cache.get('password_reset_otp_reset.student@example.com'))
+
+
+class CompletedStudentOwnershipTests(TestCase):
+    def setUp(self):
+        self.owner_user = User.objects.create_user('graduate-owner', password='pass123')
+        self.other_user = User.objects.create_user('graduate-other', password='pass123')
+        self.owner = Employee.objects.create(
+            user=self.owner_user, staff_id='GRAD-OWNER', email='graduate-owner@example.com',
+            first_name='Graduate', last_name='Owner', mobile_no='9000000113',
+            date_of_birth=date(1990, 1, 1), designation='mentor', branch='100ft', gender='Male', address='Coimbatore',
+        )
+        self.other = Employee.objects.create(
+            user=self.other_user, staff_id='GRAD-OTHER', email='graduate-other@example.com',
+            first_name='Graduate', last_name='Other', mobile_no='9000000114',
+            date_of_birth=date(1991, 1, 1), designation='mentor', branch='100ft', gender='Female', address='Coimbatore',
+        )
+        self.course = Courses.objects.create(course_name='Graduate Ownership Course', course_type='software', duration='1 month', fee=1000)
+        self.batch = Batches.objects.create(
+            batch_number='GRAD-OWN-B1', course_type='software', course_name=self.course,
+            faculty=self.owner, start_date=date(2026, 1, 1), end_date=date(2026, 2, 1), batch_timing='Morning', branch='100ft',
+        )
+
+    def _completed(self, student_id, trainer=None):
+        return CompletedStudent.objects.create(
+            original_student_id=student_id, student_id=student_id, email=f'{student_id}@example.com',
+            first_name='Graduate', last_name='Student', mobile_no='9000000115', date_of_birth=date(2000, 1, 1),
+            city='Coimbatore', state='Tamil Nadu', qualification='Graduate', course=self.course.course_name,
+            gender='Female', branch='100ft', batch_number=self.batch.batch_number, batch_id=str(self.batch.id),
+            batch_start_date=self.batch.start_date, batch_end_date=self.batch.end_date, faculty_name='Graduate Owner',
+            course_name=self.course.course_name, graduated_from_trainer=trainer,
+        )
+
+    def test_explicit_graduating_trainer_owns_completed_student(self):
+        owned = self._completed('OWNED-STU', trainer=self.owner)
+        other_trainers_graduate = self._completed('OTHER-STU', trainer=self.other)
+        legacy = self._completed('LEGACY-STU')
+
+        owner_rows = completed_students_for_staff(self.owner)
+        other_rows = completed_students_for_staff(self.other)
+        self.assertIn(owned, owner_rows)
+        self.assertIn(legacy, owner_rows)
+        self.assertNotIn(other_trainers_graduate, owner_rows)
+        self.assertIn(other_trainers_graduate, other_rows)
+        self.assertNotIn(owned, other_rows)
 
 
 class StudentChallengePhaseOneTests(TestCase):
@@ -374,7 +536,14 @@ class StudentChallengePhaseOneTests(TestCase):
         second_ids = [item.question_id for item in second['questions']]
         self.assertEqual(first_ids, second_ids)
 
-    def test_completed_sessions_auto_generate_missing_question_pool(self):
+    @override_settings(
+        CHALLENGE_AI_PROVIDER='openai',
+        CHALLENGE_AI_MODEL='mock-model',
+        CHALLENGE_AI_API_KEY='mock-key',
+    )
+    @patch('connect.services.challenge_ai.call_ai_question_provider')
+    def test_completed_sessions_auto_generate_missing_question_pool(self, mocked_provider):
+        mocked_provider.return_value = self.ai_payload(5)
         self.create_pool_questions(4)
         result = get_or_create_today_challenge_day(self.student, self.course, self.batch)
 
@@ -940,22 +1109,25 @@ class StudentChallengePhaseOneTests(TestCase):
         self.assertNotIn(hidden_quiz.title, titles)
 
 
-class ParallelCourseWorkflowTests(TestCase):
+class ParallelCourseWorkflowTests(TransactionTestCase):
     """Regression coverage for multi-batch students and shared course sessions."""
 
     def setUp(self):
         self.client = APIClient()
-        self.trainer_one_user = User.objects.create_user('parallel-trainer-1', password='pass123')
-        self.trainer_two_user = User.objects.create_user('parallel-trainer-2', password='pass123')
-        self.student_user = User.objects.create_user('parallel-student', password='pass123')
+        # Keep every fixture independent when the reusable local test database
+        # contains data from an interrupted prior run.
+        fixture_suffix = uuid4().hex[:8]
+        self.trainer_one_user = User.objects.create_user(f'parallel-trainer-1-{fixture_suffix}', password='pass123')
+        self.trainer_two_user = User.objects.create_user(f'parallel-trainer-2-{fixture_suffix}', password='pass123')
+        self.student_user = User.objects.create_user(f'parallel-student-{fixture_suffix}', password='pass123')
         self.trainer_one = Employee.objects.create(
-            user=self.trainer_one_user, staff_id='PAR001', email='parallel-one@example.com',
+            user=self.trainer_one_user, staff_id=f'PAR001-{fixture_suffix}', email=f'parallel-one-{fixture_suffix}@example.com',
             first_name='Parallel', last_name='One', mobile_no=9000000001,
             date_of_birth=date(1990, 1, 1), designation='mentor', branch='100ft',
             gender='Male', address='Coimbatore',
         )
         self.trainer_two = Employee.objects.create(
-            user=self.trainer_two_user, staff_id='PAR002', email='parallel-two@example.com',
+            user=self.trainer_two_user, staff_id=f'PAR002-{fixture_suffix}', email=f'parallel-two-{fixture_suffix}@example.com',
             first_name='Parallel', last_name='Two', mobile_no=9000000002,
             date_of_birth=date(1991, 1, 1), designation='mentor', branch='100ft',
             gender='Female', address='Coimbatore',
@@ -964,17 +1136,17 @@ class ParallelCourseWorkflowTests(TestCase):
             course_name='Parallel Python', course_type='software', duration='2 months', fee=1000,
         )
         self.batch_one = Batches.objects.create(
-            batch_number='PAR-B1', course_type='software', course_name=self.course,
+            batch_number=f'PAR-B1-{fixture_suffix}', course_type='software', course_name=self.course,
             faculty=self.trainer_one, start_date=date(2026, 1, 1), end_date=date(2026, 3, 1),
             batch_timing='morning', branch='100ft',
         )
         self.batch_two = Batches.objects.create(
-            batch_number='PAR-B2', course_type='software', course_name=self.course,
+            batch_number=f'PAR-B2-{fixture_suffix}', course_type='software', course_name=self.course,
             faculty=self.trainer_two, start_date=date(2026, 1, 1), end_date=date(2026, 3, 1),
             batch_timing='evening', branch='100ft',
         )
         self.student = Students.objects.create(
-            student_id='PAR-STU-1', email='parallel-student@example.com', first_name='Parallel',
+            student_id=f'PAR-STU-{fixture_suffix}', email=f'parallel-student-{fixture_suffix}@example.com', first_name='Parallel',
             last_name='Student', mobile_no='9000000003', date_of_birth=date(2001, 1, 1),
             city='Coimbatore', state='Tamil Nadu', qualification='UG', course='Parallel Python',
             gender='Female', branch='100ft', user=self.student_user,
@@ -1031,10 +1203,10 @@ class ParallelCourseWorkflowTests(TestCase):
         first_student_client = APIClient()
         second_student_client = APIClient()
         first = first_student_client.post('/api/auth/login/', {
-            'username': 'parallel-student@example.com', 'password': 'pass123', 'user_type': 'student',
+            'username': self.student.email, 'password': 'pass123', 'user_type': 'student',
         }, format='json')
         second = second_student_client.post('/api/auth/login/', {
-            'username': 'parallel-student@example.com', 'password': 'pass123', 'user_type': 'student',
+            'username': self.student.email, 'password': 'pass123', 'user_type': 'student',
         }, format='json')
         self.assertEqual(first.status_code, 200)
         self.assertEqual(second.status_code, 409)
@@ -1042,10 +1214,10 @@ class ParallelCourseWorkflowTests(TestCase):
         first_staff_client = APIClient()
         second_staff_client = APIClient()
         first_staff = first_staff_client.post('/api/auth/login/', {
-            'username': 'parallel-trainer-1', 'password': 'pass123', 'user_type': 'employee',
+            'username': self.trainer_one_user.username, 'password': 'pass123', 'user_type': 'employee',
         }, format='json')
         second_staff = second_staff_client.post('/api/auth/login/', {
-            'username': 'parallel-trainer-1', 'password': 'pass123', 'user_type': 'employee',
+            'username': self.trainer_one_user.username, 'password': 'pass123', 'user_type': 'employee',
         }, format='json')
         self.assertEqual(first_staff.status_code, 200)
         self.assertEqual(second_staff.status_code, 200)
@@ -1110,7 +1282,7 @@ class StaffWorkflowRegressionTests(TestCase):
             assigned_staff=self.current_staff, assigned_batch=self.batch,
         )
 
-    def test_staff_batch_count_does_not_depend_on_student_confirmation(self):
+    def test_staff_batch_count_uses_trainer_session_records_only(self):
         session = CourseSession.objects.create(batch=self.batch, session_number=1, title='Session one')
         Student_Session_Progress.objects.create(
             student=self.student, session=session, staff_completed=True, student_status='pending',
@@ -1120,8 +1292,15 @@ class StaffWorkflowRegressionTests(TestCase):
         response = self.client.get(f'/api/batches/{self.batch.id}/staff-detail-report/')
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data['summary']['staff_completed_sessions'], 1)
+        self.assertEqual(response.data['summary']['staff_completed_sessions'], 0)
         self.assertEqual(response.data['summary']['student_completed_sessions'], 0)
+
+        session.staff_completed = True
+        session.completed_date = timezone.now()
+        session.completed_by = self.current_staff
+        session.save(update_fields=['staff_completed', 'completed_date', 'completed_by'])
+        response = self.client.get(f'/api/batches/{self.batch.id}/staff-detail-report/')
+        self.assertEqual(response.data['summary']['staff_completed_sessions'], 1)
 
     def test_support_and_leave_are_visible_only_to_current_trainer(self):
         StudentSupportRequest.objects.create(student=self.student_user, message='Need help')
@@ -1170,7 +1349,7 @@ class StaffWorkflowRegressionTests(TestCase):
         request.refresh_from_db()
         self.assertEqual(request.status, 'resolved')
 
-    def test_completed_student_progress_is_not_shown_as_unmarked(self):
+    def test_student_completion_does_not_auto_complete_trainer_session(self):
         session = CourseSession.objects.create(batch=self.batch, session_number=1, title='Completed legacy session')
         Student_Session_Progress.objects.create(
             student=self.student,
@@ -1184,8 +1363,80 @@ class StaffWorkflowRegressionTests(TestCase):
         response = self.client.get('/api/sessions/student/')
 
         self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.data['results'][0]['staff_completed'])
+        self.assertFalse(response.data['results'][0]['staff_completed'])
         self.assertEqual(response.data['results'][0]['student_status'], 'completed')
+
+    def test_staff_completion_repairs_stale_student_session_state(self):
+        session = CourseSession.objects.create(
+            batch=self.batch,
+            session_number=1,
+            title='Trainer completed lesson',
+            staff_completed=True,
+            completed_date=timezone.now(),
+            completed_by=self.current_staff,
+        )
+        Student_Session_Progress.objects.create(
+            student=self.student,
+            session=session,
+            staff_completed=False,
+            student_status='not_started',
+        )
+        StudentSessionStatus.objects.create(
+            student=self.student,
+            session=session,
+            staff_completed=False,
+            student_status='not_started',
+        )
+        self.client.force_authenticate(user=self.student_user)
+
+        response = self.client.get('/api/sessions/student/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data['results'][0]['staff_completed'])
+        self.assertEqual(response.data['results'][0]['student_status'], 'pending')
+        self.assertTrue(Student_Session_Progress.objects.get(student=self.student, session=session).staff_completed)
+        self.assertTrue(StudentSessionStatus.objects.get(student=self.student, session=session).staff_completed)
+
+    def test_daily_completion_audit_repairs_legacy_student_waiting_state(self):
+        """A legacy audit-only completion must not leave students waiting."""
+        session = CourseSession.objects.create(
+            batch=self.batch,
+            session_number=1,
+            title='Audit-only trainer completion',
+            staff_completed=False,
+        )
+        Student_Session_Progress.objects.create(
+            student=self.student,
+            session=session,
+            staff_completed=False,
+            student_status='not_started',
+        )
+        StudentSessionStatus.objects.create(
+            student=self.student,
+            session=session,
+            staff_completed=False,
+            student_status='pending',
+        )
+        completed_at = timezone.now() - timedelta(days=1)
+        DailySessionCompletion.objects.create(
+            session=session,
+            faculty=self.current_staff,
+            completion_date=completed_at.date(),
+            completed=True,
+            completed_at=completed_at,
+        )
+
+        self.client.force_authenticate(user=self.student_user)
+        response = self.client.get('/api/sessions/student/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data['results'][0]['staff_completed'])
+        self.assertEqual(response.data['results'][0]['student_status'], 'pending')
+        session.refresh_from_db()
+        self.assertTrue(session.staff_completed)
+        self.assertEqual(session.completed_by, self.current_staff)
+        self.assertTrue(Student_Session_Progress.objects.get(student=self.student, session=session).staff_completed)
+        self.assertTrue(StudentSessionStatus.objects.get(student=self.student, session=session).staff_completed)
 
     def test_batch_ending_reminder_is_created_once_from_ten_days_before_end(self):
         self.batch.end_date = timezone.localdate() + timedelta(days=10)

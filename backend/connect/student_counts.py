@@ -102,9 +102,15 @@ def completed_students_for_staff(staff):
     batch_ids = [str(batch_id) for batch_id in staff_batches.values_list('id', flat=True)]
     batch_numbers = staff_batches.values_list('batch_number', flat=True)
     staff_name = ' '.join(part for part in [staff.first_name, staff.last_name] if part).strip()
-    staff_filters = Q(graduated_from_trainer=staff) | Q(batch_id__in=batch_ids) | Q(batch_number__in=batch_numbers)
+    # A completed record with an explicit graduating trainer belongs only to
+    # that trainer. Batch matching is retained solely as a legacy fallback for
+    # old snapshots that predate ``graduated_from_trainer``.
+    legacy_batch_filters = Q(batch_id__in=batch_ids) | Q(batch_number__in=batch_numbers)
     if staff_name:
-        staff_filters |= Q(faculty_name__iexact=staff_name)
+        legacy_batch_filters |= Q(faculty_name__iexact=staff_name)
+    staff_filters = Q(graduated_from_trainer=staff) | (
+        Q(graduated_from_trainer__isnull=True) & legacy_batch_filters
+    )
     return qs.filter(staff_filters).distinct()
 
 

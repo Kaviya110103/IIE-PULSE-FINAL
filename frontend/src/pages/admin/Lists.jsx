@@ -1047,11 +1047,24 @@ function StudentForm({ item, publicUser, courses, counselorBranch, onClose, onSa
         return
       }
       const fd = new FormData()
+      // A counselor can keep this form open while another counselor adds a
+      // student. Refresh the generated ID at submit time to avoid sending a
+      // stale, now-occupied ID.
+      let latestStudentId = form.student_id
+      if (!isEdit && form.branch) {
+        try {
+          const idResponse = await api.get(`/generate/student-id/?branch=${form.branch}`)
+          latestStudentId = idResponse.data.student_id || latestStudentId
+          if (latestStudentId !== form.student_id) f('student_id', latestStudentId)
+        } catch {
+          // The server remains the final validator when the ID helper is unavailable.
+        }
+      }
       const selectedNames = validCourseIds
         .map(id => courses.find(c => String(c.id) === String(id)))
         .filter(Boolean)
         .map(c => c.course_name)
-      Object.entries({ ...form, course: selectedNames.join(', ') }).forEach(([k, v]) => { if (v !== '' && v !== undefined) fd.append(k, v) })
+      Object.entries({ ...form, student_id: latestStudentId, course: selectedNames.join(', ') }).forEach(([k, v]) => { if (v !== '' && v !== undefined) fd.append(k, v) })
       validCourseIds.forEach(id => fd.append('course_ids', id))
       const feePayload = {}
       validCourseIds.forEach(id => {
@@ -1079,7 +1092,8 @@ function StudentForm({ item, publicUser, courses, counselorBranch, onClose, onSa
       onSaved()
     } catch (err) {
       const d = err.response?.data || {}
-      toast.error(d.error || d.detail || Object.values(d)[0]?.[0] || 'Save failed')
+      const firstValidationError = Object.values(d).flat().find(value => typeof value === 'string')
+      toast.error(d.error || d.detail || firstValidationError || 'Save failed')
     } finally { setSaving(false) }
   }
 

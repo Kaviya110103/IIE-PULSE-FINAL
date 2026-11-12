@@ -31,6 +31,12 @@ const attendanceSessionText = (record) => {
 
 const getBatchDisplayName = (batch) => batch?.batch_code || batch?.display_name || batch?.batch_number || 'N/A'
 
+const employeeBatchFocusStorageKey = 'iie-pulse:employee-batch-focus'
+
+const rememberEmployeeBatchFocus = (batchId) => {
+  if (batchId) window.sessionStorage.setItem(employeeBatchFocusStorageKey, String(batchId))
+}
+
 const css = `
   @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@300;400;500;600&display=swap');
 
@@ -477,25 +483,24 @@ export function MentorStudentMonitoring() {
 
   const applyPreset = (preset) => {
     const now = new Date()
-    const toISO = (date) => date.toISOString().slice(0, 10)
     let date_from = ''
-    let date_to = toISO(now)
+    let date_to = toLocalDateInputValue(now)
 
     if (preset === 'today') date_from = date_to
     if (preset === 'yesterday') {
       const yesterday = new Date(now)
       yesterday.setDate(now.getDate() - 1)
-      date_from = toISO(yesterday)
+      date_from = toLocalDateInputValue(yesterday)
       date_to = date_from
     }
     if (preset === 'week') {
       const weekStart = new Date(now)
-      weekStart.setDate(now.getDate() - 6)
-      date_from = toISO(weekStart)
+      weekStart.setDate(now.getDate() - ((now.getDay() + 6) % 7))
+      date_from = toLocalDateInputValue(weekStart)
     }
     if (preset === 'month') {
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
-      date_from = toISO(monthStart)
+      date_from = toLocalDateInputValue(monthStart)
     }
 
     const next = { ...filters, date_from, date_to }
@@ -725,6 +730,19 @@ export function ViewBatches() {
     if (matchedBatch) setSessionsModal(matchedBatch)
   }, [batches, previousBatches, location.search])
 
+  useEffect(() => {
+    const focusBatchId = new URLSearchParams(location.search).get('focus_batch') || window.sessionStorage.getItem(employeeBatchFocusStorageKey)
+    if (!focusBatchId || loading) return
+    const timer = setTimeout(() => {
+      const batchCard = document.getElementById(`employee-batch-${focusBatchId}`)
+      if (batchCard) {
+        batchCard.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        window.sessionStorage.removeItem(employeeBatchFocusStorageKey)
+      }
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [batches, previousBatches, loading, location.search])
+
   return (
     <div className="employee-root">
       <Styles />
@@ -866,7 +884,7 @@ export function StaffBatchDetails() {
           <h3><i className="fas fa-chart-line" /> Batch Details</h3>
           <p>View attendance, session completion, and student result records</p>
         </div>
-        <button className="employee-btn employee-btn-ghost" onClick={() => navigate('/employee/batches')}>
+        <button className="employee-btn employee-btn-ghost" onClick={() => navigate(`/employee/batches?focus_batch=${batchId}`)}>
           <i className="fas fa-arrow-left" /> Back
         </button>
       </div>
@@ -1121,7 +1139,7 @@ function BatchCard({ batch, onViewSessions, onViewStudents, accessStatus = 'acti
   }
 
   return (
-    <div className="employee-batch-card">
+    <div id={`employee-batch-${batch.id}`} className="employee-batch-card">
       <div className="employee-batch-header">
         <div>
           <h4>{batchCode}</h4>
@@ -1170,11 +1188,11 @@ function BatchCard({ batch, onViewSessions, onViewStudents, accessStatus = 'acti
       <div className="employee-batch-footer">
         <div className="employee-batch-actions">
           {!isPrevious && (
-            <a href={`/employee/attendance?batch_id=${batch.id}`} className="employee-btn employee-btn-sm" style={{ background: T.sage, color: '#fff', textDecoration: 'none' }}>
+            <a href={`/employee/attendance?batch_id=${batch.id}`} onClick={() => rememberEmployeeBatchFocus(batch.id)} className="employee-btn employee-btn-sm" style={{ background: T.sage, color: '#fff', textDecoration: 'none' }}>
               <i className="fas fa-check-circle" /> Mark Attendance
             </a>
           )}
-          <a href={`/employee/attendance-history?batch_id=${batch.id}`} className="employee-btn employee-btn-sm" style={{ background: 'transparent', border: `1.5px solid ${T.navy}`, color: T.navy, textDecoration: 'none' }}>
+          <a href={`/employee/attendance-history?batch_id=${batch.id}`} onClick={() => rememberEmployeeBatchFocus(batch.id)} className="employee-btn employee-btn-sm" style={{ background: 'transparent', border: `1.5px solid ${T.navy}`, color: T.navy, textDecoration: 'none' }}>
             <i className="fas fa-eye" /> View Attendance
           </a>
         </div>
@@ -1673,9 +1691,12 @@ function SessionsModal({ batch, onClose }) {
   const [tab, setTab] = useState('all')
   const [toggling, setToggling] = useState(null)
   const [extracting, setExtracting] = useState(false)
-  const [finalStudentId, setFinalStudentId] = useState('')
-  const [requestOpenSignal, setRequestOpenSignal] = useState(0)
-  const [completeConfirmOpen, setCompleteConfirmOpen] = useState(false)
+  const [finalStudentIds, setFinalStudentIds] = useState([])
+  const [finalAction, setFinalAction] = useState(null)
+  const [selectedCounselor, setSelectedCounselor] = useState('')
+  const [counselors, setCounselors] = useState([])
+  const [topicsCovered, setTopicsCovered] = useState('')
+  const [message, setMessage] = useState('')
   const [finalizing, setFinalizing] = useState(false)
   const [completedFinalStudentIds, setCompletedFinalStudentIds] = useState(new Set())
 
@@ -1691,6 +1712,13 @@ function SessionsModal({ batch, onClose }) {
   }
 
   useEffect(() => { load() }, [batch.id])
+
+  useEffect(() => {
+    if (!finalAction || !batch?.branch) return
+    api.get(`/employees/?designation=counselor&branch=${batch.branch}`)
+      .then(response => setCounselors(response.data.results || response.data || []))
+      .catch(() => setCounselors([]))
+  }, [finalAction, batch?.branch])
 
   const sessions = data?.sessions || []
   const completed = sessions.filter(s => s.staff_completed)
@@ -1746,38 +1774,60 @@ function SessionsModal({ batch, onClose }) {
     }
   }
 
-  const selectedFinalStudent = finalStudentId
-  const selectedFinalStudentCompleted = selectedFinalStudent && completedFinalStudentIds.has(String(selectedFinalStudent))
+  const studentCompletionById = new Map(
+    (data?.student_completion || []).map(item => [String(item.student_id), item])
+  )
+  const isEligibleForFinalAction = student => {
+    const completion = studentCompletionById.get(String(student.id))
+    return Boolean(completion?.eligible_for_final_action) && !completedFinalStudentIds.has(String(student.id))
+  }
+  const selectedStudents = students.filter(student => finalStudentIds.includes(String(student.id)))
 
-  const openCompletionRequest = () => {
-    if (!selectedFinalStudent) return toast.error('Select a student')
-    if (selectedFinalStudentCompleted) return toast.error('This student is already completed')
-    setRequestOpenSignal(value => value + 1)
+  const toggleFinalStudent = studentId => {
+    const value = String(studentId)
+    setFinalStudentIds(previous => previous.includes(value)
+      ? previous.filter(id => id !== value)
+      : [...previous, value]
+    )
   }
 
-  const handleMoveCompleted = async () => {
-    if (!selectedFinalStudent) return toast.error('Select a student')
-    if (selectedFinalStudentCompleted) return toast.error('This student is already completed')
+  const openFinalAction = action => {
+    if (finalStudentIds.length === 0) return toast.error('Select at least one eligible student')
+    setFinalAction(action)
+  }
+
+  const submitFinalAction = async () => {
+    if (finalStudentIds.length === 0) return toast.error('Select at least one eligible student')
+    if (finalAction === 'reassign' && (!selectedCounselor || !topicsCovered.trim())) {
+      return toast.error('Select a counselor and enter topics covered')
+    }
     setFinalizing(true)
     try {
-      await api.post(`/students/${selectedFinalStudent}/complete/`)
-      toast.success('Student moved to completed list')
-      setCompletedFinalStudentIds(prev => {
-        const next = new Set(prev)
-        next.add(String(selectedFinalStudent))
-        return next
-      })
+      if (finalAction === 'complete') {
+        await Promise.all(finalStudentIds.map(studentId => api.post(`/students/${studentId}/complete/`)))
+        setCompletedFinalStudentIds(previous => new Set([...previous, ...finalStudentIds]))
+        toast.success(`${finalStudentIds.length} student${finalStudentIds.length === 1 ? '' : 's'} moved to completed list`)
+      } else {
+        await Promise.all(finalStudentIds.map(studentId => api.post(`/students/${studentId}/request-completion/`, {
+          counselor_id: selectedCounselor,
+          topics_covered: topicsCovered,
+          sessions_completed: completed.length,
+          total_sessions: sessions.length,
+          message,
+        })))
+        toast.success(`Reassignment request sent for ${finalStudentIds.length} student${finalStudentIds.length === 1 ? '' : 's'}`)
+      }
+      setFinalStudentIds([])
+      setFinalAction(null)
+      setSelectedCounselor('')
+      setTopicsCovered('')
+      setMessage('')
+      load()
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Failed to move student')
+      toast.error(err.response?.data?.error || `Failed to ${finalAction === 'complete' ? 'complete students' : 'send reassignment request'}`)
     } finally {
       setFinalizing(false)
     }
-  }
-
-  const openCompleteConfirmation = () => {
-    if (!selectedFinalStudent) return toast.error('Select a student')
-    if (selectedFinalStudentCompleted) return toast.error('This student is already completed')
-    setCompleteConfirmOpen(true)
   }
 
   return (
@@ -1843,50 +1893,70 @@ function SessionsModal({ batch, onClose }) {
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
                 <div style={{ flex: '1 1 260px' }}>
                   <div style={{ fontWeight: 700, color: T.navy, marginBottom: 4 }}>
-                    Move this student to the completed list or send a reassignment request?
+                    Complete students or send reassignment requests
                   </div>
                   <div style={{ color: T.slate, fontSize: 12 }}>
-                    {selectedFinalStudentCompleted
-                      ? 'This student has been moved to the completed list. Completion actions are now locked.'
-                      : 'Select one student below. If the student has also completed all sessions, click Completed. Otherwise, send a request to the counselor.'}
+                    Only students who completed every session can be selected. Incomplete students remain visible but unavailable.
                   </div>
                 </div>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 8, marginTop: 12 }}>
                 {students.map(s => {
                   const value = String(s.id)
+                  const completion = studentCompletionById.get(value)
+                  const eligible = isEligibleForFinalAction(s)
                   const studentCompleted = completedFinalStudentIds.has(value)
                   return (
-                    <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 10px', border: `1px solid ${selectedFinalStudent === value ? T.teal : T.border}`, borderRadius: 8, cursor: studentCompleted ? 'not-allowed' : 'pointer', opacity: studentCompleted ? .62 : 1 }}>
-                      <input type="checkbox" checked={selectedFinalStudent === value} disabled={studentCompleted} onChange={e => setFinalStudentId(e.target.checked ? value : '')} />
+                    <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 10px', border: `1px solid ${finalStudentIds.includes(value) ? T.teal : T.border}`, borderRadius: 8, cursor: eligible ? 'pointer' : 'not-allowed', opacity: eligible ? 1 : .42, filter: eligible ? 'none' : 'grayscale(1)' }}>
+                      <input type="checkbox" checked={finalStudentIds.includes(value)} disabled={!eligible} onChange={() => toggleFinalStudent(value)} />
                       <span style={{ fontSize: 12, fontWeight: 600 }}>{s.first_name} {s.last_name} ({s.student_id})</span>
-                      {studentCompleted && <span style={{ marginLeft: 'auto', fontSize: 11, color: T.sage }}>Completed</span>}
+                      <span style={{ marginLeft: 'auto', fontSize: 11, color: studentCompleted ? T.sage : eligible ? T.teal : T.slate }}>
+                        {studentCompleted ? 'Completed' : `${completion?.completed_sessions || 0}/${completion?.total_sessions || sessions.length}`}
+                      </span>
                     </label>
                   )
                 })}
               </div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
-                <button className="employee-btn employee-btn-primary employee-btn-sm" onClick={openCompletionRequest} disabled={!selectedFinalStudent || !!selectedFinalStudentCompleted}>
+                <button className="employee-btn employee-btn-primary employee-btn-sm" onClick={() => openFinalAction('reassign')} disabled={finalStudentIds.length === 0}>
                   <i className="fas fa-paper-plane" /> Reassign
                 </button>
-                <button className="employee-btn employee-btn-teal employee-btn-sm" onClick={openCompleteConfirmation} disabled={!selectedFinalStudent || finalizing || !!selectedFinalStudentCompleted}>
-                  {selectedFinalStudentCompleted ? <><i className="fas fa-lock" /> Completed</> : finalizing ? <><i className="fas fa-spinner fa-spin" /> Moving...</> : <><i className="fas fa-check" /> Completed</>}
+                <button className="employee-btn employee-btn-teal employee-btn-sm" onClick={() => openFinalAction('complete')} disabled={finalStudentIds.length === 0 || finalizing}>
+                  <i className="fas fa-check" /> Completed
                 </button>
               </div>
             </div>
           )}
 
-          {completeConfirmOpen && (
-            <Modal open onClose={() => setCompleteConfirmOpen(false)} size="sm" title="Complete Student Course">
+          {finalAction && (
+            <Modal open onClose={() => !finalizing && setFinalAction(null)} size="md" title={finalAction === 'complete' ? 'Complete Selected Students' : 'Send Reassignment Request'}>
               <div style={{ display: 'grid', gap: 16 }}>
                 <div className="employee-alert-info">
-                  <i className="fas fa-user-graduate" /> You are about to mark <strong>{students.find(s => String(s.id) === selectedFinalStudent)?.first_name} {students.find(s => String(s.id) === selectedFinalStudent)?.last_name}</strong> as completed for this batch.
+                  <i className={`fas ${finalAction === 'complete' ? 'fa-user-graduate' : 'fa-paper-plane'}`} /> {finalAction === 'complete' ? 'You are about to mark these students as completed:' : 'Send a reassignment request for these students:'}
+                  <strong style={{ display: 'block', marginTop: 8 }}>{selectedStudents.map(student => `${student.first_name} ${student.last_name || ''}`.trim()).join(', ')}</strong>
                 </div>
-                <p style={{ margin: 0, color: T.slate, fontSize: 13 }}>Please confirm only after the student has completed every session.</p>
+                {finalAction === 'reassign' && <>
+                  <div className="employee-fg" style={{ margin: 0 }}>
+                    <label className="employee-label">Select Counselor <span className="employee-req">*</span></label>
+                    <select className="employee-select" value={selectedCounselor} onChange={e => setSelectedCounselor(e.target.value)}>
+                      <option value="">Choose counselor...</option>
+                      {counselors.map(counselor => <option key={counselor.id} value={counselor.id}>{counselor.first_name} {counselor.last_name || ''}</option>)}
+                    </select>
+                  </div>
+                  <div className="employee-fg" style={{ margin: 0 }}>
+                    <label className="employee-label">Topics Covered <span className="employee-req">*</span></label>
+                    <textarea className="employee-input" rows={3} value={topicsCovered} onChange={e => setTopicsCovered(e.target.value)} placeholder="Describe the completed course topics..." />
+                  </div>
+                  <div className="employee-fg" style={{ margin: 0 }}>
+                    <label className="employee-label">Message to Counselor (optional)</label>
+                    <input className="employee-input" value={message} onChange={e => setMessage(e.target.value)} placeholder="Additional notes..." />
+                  </div>
+                </>}
+                {finalAction === 'complete' && <p style={{ margin: 0, color: T.slate, fontSize: 13 }}>Only students with every session confirmed are included in this action.</p>}
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-                  <button className="employee-btn employee-btn-ghost employee-btn-sm" onClick={() => setCompleteConfirmOpen(false)} disabled={finalizing}>Cancel</button>
-                  <button className="employee-btn employee-btn-teal employee-btn-sm" onClick={async () => { await handleMoveCompleted(); setCompleteConfirmOpen(false) }} disabled={finalizing}>
-                    {finalizing ? <><i className="fas fa-spinner fa-spin" /> Completing...</> : <><i className="fas fa-check" /> Confirm Complete</>}
+                  <button className="employee-btn employee-btn-ghost employee-btn-sm" onClick={() => setFinalAction(null)} disabled={finalizing}>Cancel</button>
+                  <button className={`employee-btn employee-btn-sm ${finalAction === 'complete' ? 'employee-btn-teal' : 'employee-btn-primary'}`} onClick={submitFinalAction} disabled={finalizing || (finalAction === 'reassign' && (!selectedCounselor || !topicsCovered.trim()))}>
+                    {finalizing ? <><i className="fas fa-spinner fa-spin" /> Submitting...</> : finalAction === 'complete' ? <><i className="fas fa-check" /> Confirm Complete</> : <><i className="fas fa-paper-plane" /> Send Request</>}
                   </button>
                 </div>
               </div>
@@ -1975,16 +2045,6 @@ function SessionsModal({ batch, onClose }) {
             ))}
           </div>
 
-          {sessions.length > 0 && students.length > 0 && (
-            <RequestCompletionSection
-              batch={batch}
-              students={students}
-              sessions={sessions}
-              onSuccess={load}
-              openSignal={requestOpenSignal}
-              initialStudentId={selectedFinalStudent}
-            />
-          )}
         </>
       )}
     </Modal>
@@ -2499,10 +2559,6 @@ function MaterialUploadModal({ onClose, onSaved, material = null }) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 export function MaterialLibrary() {
-  const currentMonthValue = () => {
-    const now = new Date()
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
-  }
   const [materials, setMaterials] = useState([])
   const [batches, setBatches] = useState([])
   const [previousBatches, setPreviousBatches] = useState([])
@@ -2512,9 +2568,8 @@ export function MaterialLibrary() {
   const [viewAssignedMaterial, setViewAssignedMaterial] = useState(null)
   const [showAssignmentSummary, setShowAssignmentSummary] = useState(false)
   const [deleteId, setDeleteId] = useState(null)
-  // Show a useful month in the picker, while the first load intentionally
-  // remains unfiltered so staff can see the full library.
-  const [filters, setFilters] = useState(() => ({ search: '', batch: '', month: currentMonthValue() }))
+  // No filter is applied until staff explicitly chooses one and clicks Apply.
+  const [filters, setFilters] = useState({ search: '', batch: '', month: '' })
   const [materialSummary, setMaterialSummary] = useState({
     selected_month: null,
     month_upload_count: 0,
@@ -2595,12 +2650,15 @@ export function MaterialLibrary() {
   }
 
   const clearFilters = () => {
-    const defaults = { search: '', batch: '', month: currentMonthValue() }
+    const defaults = { search: '', batch: '', month: '' }
     setFilters(defaults)
     load({})
   }
 
   const summaryMonth = materialSummary.selected_month
+  const materialCountScope = summaryMonth
+    ? new Date(`${summaryMonth}-01T00:00:00`).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })
+    : 'All time'
   const assignmentSummaryRows = materials.flatMap(material => (
     (material.assigned_batches || []).map(batch => ({
       materialTitle: material.title,
@@ -2621,11 +2679,11 @@ export function MaterialLibrary() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 12, marginBottom: 20 }}>
         <div className="employee-card" style={{ margin: 0, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{ width: 36, height: 36, borderRadius: 9, background: 'rgba(14, 165, 164, .12)', color: T.teal, display: 'grid', placeItems: 'center' }}><i className="fas fa-cloud-upload-alt" /></div>
-          <div><div style={{ fontSize: 12, color: T.slate, fontWeight: 700 }}>Material Upload</div><div style={{ fontSize: 22, color: T.navy, fontWeight: 800 }}>{materialSummary.month_upload_count || 0}</div></div>
+          <div><div style={{ fontSize: 12, color: T.slate, fontWeight: 700 }}>Material Upload</div><div style={{ fontSize: 22, color: T.navy, fontWeight: 800 }}>{materialSummary.month_upload_count || 0}</div><small style={{ color: T.slate }}>{materialCountScope}</small></div>
         </div>
         <button type="button" className="employee-card" onClick={() => setShowAssignmentSummary(true)} style={{ margin: 0, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, width: '100%', border: 'none', textAlign: 'left', cursor: 'pointer' }} title="View material assignment details">
           <div style={{ width: 36, height: 36, borderRadius: 9, background: 'rgba(14, 165, 164, .12)', color: T.teal, display: 'grid', placeItems: 'center' }}><i className="fas fa-share-alt" /></div>
-          <div><div style={{ fontSize: 12, color: T.slate, fontWeight: 700 }}>Material Assigned</div><div style={{ fontSize: 22, color: T.navy, fontWeight: 800 }}>{materialSummary.month_assignment_count || 0}</div></div>
+          <div><div style={{ fontSize: 12, color: T.slate, fontWeight: 700 }}>Material Assigned</div><div style={{ fontSize: 22, color: T.navy, fontWeight: 800 }}>{materialSummary.month_assignment_count || 0}</div><small style={{ color: T.slate }}>{materialCountScope}</small></div>
         </button>
       </div>
 
@@ -3315,14 +3373,8 @@ export function StaffCompletedStudents() {
     course: '',
     dateFrom: '',
     dateTo: '',
+    month: '',
     search: ''
-  })
-
-  // Statistics
-  const [stats, setStats] = useState({
-    totalGraduates: 0,
-    totalSessions: 0,
-    totalBatches: 0
   })
 
   // Available filter options
@@ -3352,13 +3404,6 @@ export function StaffCompletedStudents() {
       setBatches(uniqueBatches)
       setCourses(uniqueCourses)
 
-      const totalSessions = studentsWithData.reduce((sum, s) => sum + (s.completed_sessions_count || s.total_sessions || 0), 0)
-      setStats({
-        totalGraduates: studentsWithData.length,
-        totalSessions: totalSessions,
-        totalBatches: uniqueBatches.length
-      })
-
       applyFilters(studentsWithData, filters)
     } catch (err) {
       console.error("Error loading completed students:", err)
@@ -3377,11 +3422,15 @@ export function StaffCompletedStudents() {
     if (currentFilters.course) {
       filtered = filtered.filter(s => (s.course_name || s.course) === currentFilters.course)
     }
+    const completionDate = (student) => String(student.completion_date || '').slice(0, 10)
     if (currentFilters.dateFrom) {
-      filtered = filtered.filter(s => new Date(s.completion_date) >= new Date(currentFilters.dateFrom))
+      filtered = filtered.filter(s => completionDate(s) && completionDate(s) >= currentFilters.dateFrom)
     }
     if (currentFilters.dateTo) {
-      filtered = filtered.filter(s => new Date(s.completion_date) <= new Date(currentFilters.dateTo))
+      filtered = filtered.filter(s => completionDate(s) && completionDate(s) <= currentFilters.dateTo)
+    }
+    if (currentFilters.month) {
+      filtered = filtered.filter(s => completionDate(s).startsWith(currentFilters.month))
     }
     if (currentFilters.search) {
       const searchLower = currentFilters.search.toLowerCase()
@@ -3404,7 +3453,7 @@ export function StaffCompletedStudents() {
   }
 
   const clearFilters = () => {
-    const resetFilters = { batch: '', course: '', dateFrom: '', dateTo: '', search: '' }
+    const resetFilters = { batch: '', course: '', dateFrom: '', dateTo: '', month: '', search: '' }
     setFilters(resetFilters)
     applyFilters(students, resetFilters)
   }
@@ -3412,7 +3461,15 @@ export function StaffCompletedStudents() {
   const downloadGraduatesPdf = async () => {
     setDownloadingPdf(true)
     try {
-      await downloadPdf('/completed-students/report/', filters, 'my_graduates_report.pdf')
+      const reportFilters = { ...filters }
+      if (filters.month) {
+        const [year, month] = filters.month.split('-').map(Number)
+        const lastDay = new Date(year, month, 0).getDate()
+        reportFilters.dateFrom = `${filters.month}-01`
+        reportFilters.dateTo = `${filters.month}-${String(lastDay).padStart(2, '0')}`
+      }
+      delete reportFilters.month
+      await downloadPdf('/completed-students/report/', reportFilters, 'my_graduates_report.pdf')
       toast.success('Graduates PDF downloaded')
     } catch (err) {
       console.error('Graduates PDF error:', err)
@@ -3449,6 +3506,13 @@ export function StaffCompletedStudents() {
 }
 
   const totalPages = Math.ceil(filteredStudents.length / itemsPerPage)
+  const visibleStats = {
+    totalGraduates: filteredStudents.length,
+    totalSessions: filteredStudents.reduce((sum, student) => (
+      sum + Number(student.completed_sessions_count || student.total_sessions || 0)
+    ), 0),
+    totalBatches: new Set(filteredStudents.map(student => student.batch_number).filter(Boolean)).size,
+  }
   const paginatedStudents = filteredStudents.slice(
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage
@@ -3499,7 +3563,7 @@ export function StaffCompletedStudents() {
             <i className="fas fa-graduation-cap" />
           </div>
           <div>
-            <div className="employee-stat-value" style={{ color: 'white' }}>{stats.totalGraduates}</div>
+            <div className="employee-stat-value" style={{ color: 'white' }}>{visibleStats.totalGraduates}</div>
             <div className="employee-stat-label" style={{ color: 'rgba(255,255,255,0.9)' }}>Total Graduates</div>
           </div>
         </div>
@@ -3509,7 +3573,7 @@ export function StaffCompletedStudents() {
             <i className="fas fa-layer-group" />
           </div>
           <div>
-            <div className="employee-stat-value" style={{ color: 'white' }}>{stats.totalBatches}</div>
+            <div className="employee-stat-value" style={{ color: 'white' }}>{visibleStats.totalBatches}</div>
             <div className="employee-stat-label" style={{ color: 'rgba(255,255,255,0.9)' }}>Batches</div>
           </div>
         </div>
@@ -3519,7 +3583,7 @@ export function StaffCompletedStudents() {
             <i className="fas fa-calendar-check" />
           </div>
           <div>
-            <div className="employee-stat-value" style={{ color: 'white' }}>{stats.totalSessions}</div>
+            <div className="employee-stat-value" style={{ color: 'white' }}>{visibleStats.totalSessions}</div>
             <div className="employee-stat-label" style={{ color: 'rgba(255,255,255,0.9)' }}>Total Sessions</div>
           </div>
         </div>
@@ -3544,6 +3608,22 @@ export function StaffCompletedStudents() {
           </div>
         </div>
 
+        <div style={{ padding: '16px', background: T.canvas, borderBottom: `1px solid ${T.border}` }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <i className="fas fa-filter" style={{ color: T.sage }} />
+            <strong style={{ fontSize: 13 }}>Filters</strong>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, alignItems: 'end' }}>
+            <div><label className="employee-label">Search</label><input className="employee-input" placeholder="Name or student ID" value={filters.search} onChange={e => handleFilterChange('search', e.target.value)} /></div>
+            <div><label className="employee-label">Batch</label><select className="employee-select" value={filters.batch} onChange={e => handleFilterChange('batch', e.target.value)}><option value="">All Batches</option>{batches.map(batch => <option key={batch} value={batch}>{batch}</option>)}</select></div>
+            <div><label className="employee-label">Course</label><select className="employee-select" value={filters.course} onChange={e => handleFilterChange('course', e.target.value)}><option value="">All Courses</option>{courses.map(course => <option key={course} value={course}>{course}</option>)}</select></div>
+            <div><label className="employee-label">Completed From</label><input type="date" className="employee-input" value={filters.dateFrom} onChange={e => handleFilterChange('dateFrom', e.target.value)} /></div>
+            <div><label className="employee-label">Completed To</label><input type="date" className="employee-input" value={filters.dateTo} onChange={e => handleFilterChange('dateTo', e.target.value)} /></div>
+            <div><label className="employee-label">Completion Month</label><input type="month" className="employee-input" value={filters.month} onChange={e => handleFilterChange('month', e.target.value)} /></div>
+            <button className="employee-btn employee-btn-ghost" type="button" onClick={clearFilters}><i className="fas fa-times" /> Clear</button>
+          </div>
+        </div>
+
         {filteredStudents.length === 0 ? (
           <div style={{ padding: 60, textAlign: 'center' }}>
             <i className="fas fa-graduation-cap" style={{ fontSize: 48, color: T.slate, marginBottom: 16, opacity: 0.3 }} />
@@ -3552,59 +3632,6 @@ export function StaffCompletedStudents() {
           </div>
         ) : (
           <>
-            {/* Filter Bar */}
-            <div style={{ padding: '12px 16px', background: '#f8fafc', borderBottom: `1px solid ${T.border}`, display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' }}>
-              <input
-                className="employee-input"
-                style={{ padding: '6px 10px', fontSize: '12px', width: '180px' }}
-                placeholder="🔍 Search by name, ID..."
-                value={filters.search}
-                onChange={(e) => handleFilterChange('search', e.target.value)}
-              />
-              <select
-                className="employee-select"
-                style={{ padding: '6px 10px', fontSize: '12px', width: '130px' }}
-                value={filters.batch}
-                onChange={(e) => handleFilterChange('batch', e.target.value)}
-              >
-                <option value="">All Batches</option>
-                {batches.map(b => <option key={b} value={b}>{b}</option>)}
-              </select>
-              <select
-                className="employee-select"
-                style={{ padding: '6px 10px', fontSize: '12px', width: '130px' }}
-                value={filters.course}
-                onChange={(e) => handleFilterChange('course', e.target.value)}
-              >
-                <option value="">All Courses</option>
-                {courses.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-              <input
-                type="date"
-                className="employee-input"
-                style={{ padding: '6px 10px', fontSize: '12px', width: '130px' }}
-                placeholder="From"
-                value={filters.dateFrom}
-                onChange={(e) => handleFilterChange('dateFrom', e.target.value)}
-              />
-              <span style={{ fontSize: '12px', color: T.slate }}>to</span>
-              <input
-                type="date"
-                className="employee-input"
-                style={{ padding: '6px 10px', fontSize: '12px', width: '130px' }}
-                placeholder="To"
-                value={filters.dateTo}
-                onChange={(e) => handleFilterChange('dateTo', e.target.value)}
-              />
-              <button
-                className="employee-btn employee-btn-sm employee-btn-ghost"
-                onClick={clearFilters}
-                style={{ padding: '6px 12px', fontSize: '12px' }}
-              >
-                <i className="fas fa-times" /> Clear
-              </button>
-            </div>
-
             {/* Table */}
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '650px' }}>
@@ -4308,8 +4335,8 @@ export function TrainerAnnouncements() {
   }, [loadAnnouncements, loadBatches])
 
   useEffect(() => {
-    loadStudents(form.specific_batch)
-  }, [form.specific_batch, loadStudents])
+    loadStudents(form.recipient_type === 'students' ? '' : form.specific_batch)
+  }, [form.recipient_type, form.specific_batch, loadStudents])
 
   const resetForm = () => {
     setForm(emptyForm)
@@ -4324,14 +4351,14 @@ export function TrainerAnnouncements() {
 
   const payload = () => ({
     ...form,
-    specific_batch: form.specific_batch || null,
+    specific_batch: form.recipient_type === 'students' ? null : (form.specific_batch || null),
     specific_student_ids: selectedStudents,
   })
 
   const validate = () => {
     if (!form.title.trim()) return toast.error('Enter title'), false
     if (!form.message.trim()) return toast.error('Enter message'), false
-    if (!form.specific_batch) return toast.error('Select batch'), false
+    if (form.recipient_type !== 'students' && !form.specific_batch) return toast.error('Select batch'), false
     if (form.recipient_type === 'specific_student' && selectedStudents.length === 0) {
       return toast.error('Select at least one student'), false
     }
@@ -4420,7 +4447,9 @@ export function TrainerAnnouncements() {
     return <span style={{ background: m.bg, color: m.color, padding: '4px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, display: 'inline-flex', gap: 5, alignItems: 'center' }}><i className={`fas ${m.icon}`} />{m.label}</span>
   }
 
-  const audienceLabel = (ann) => ann.recipient_type === 'specific_student'
+  const audienceLabel = (ann) => ann.recipient_type === 'students'
+    ? 'All My Students'
+    : ann.recipient_type === 'specific_student'
     ? `${ann.specific_student_names?.length || 0} student${ann.specific_student_names?.length === 1 ? '' : 's'}`
     : (ann.specific_batch_details?.batch_number || ann.specific_batch_name || 'Batch')
 
@@ -4450,6 +4479,7 @@ export function TrainerAnnouncements() {
         <label className="employee-label">Send To</label>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           {[
+            { value: 'students', label: 'All Students', icon: 'fa-users' },
             { value: 'specific_batch', label: 'Specific Batch', icon: 'fa-layer-group' },
             { value: 'specific_student', label: 'Specific Student', icon: 'fa-user-graduate' },
           ].map(item => (
@@ -4464,13 +4494,15 @@ export function TrainerAnnouncements() {
           ))}
         </div>
       </div>
-      <div className="employee-fg">
-        <label className="employee-label">Select Batch <span className="employee-req">*</span></label>
-        <select className="employee-select" value={form.specific_batch} onChange={e => { setSelectedStudents([]); setForm(p => ({ ...p, specific_batch: e.target.value })) }}>
-          <option value="">Choose batch</option>
-          {batches.map(batch => <option key={batch.id} value={batch.id}>{batch.display_text || getBatchDisplayName(batch)}</option>)}
-        </select>
-      </div>
+      {form.recipient_type !== 'students' && (
+        <div className="employee-fg">
+          <label className="employee-label">Select Batch <span className="employee-req">*</span></label>
+          <select className="employee-select" value={form.specific_batch} onChange={e => { setSelectedStudents([]); setForm(p => ({ ...p, specific_batch: e.target.value })) }}>
+            <option value="">Choose batch</option>
+            {batches.map(batch => <option key={batch.id} value={batch.id}>{batch.display_text || getBatchDisplayName(batch)}</option>)}
+          </select>
+        </div>
+      )}
       {form.recipient_type === 'specific_student' && (
         <div className="employee-fg">
           <label className="employee-label">Select Students <span style={{ color: T.teal, marginLeft: 8 }}>{selectedStudents.length} selected</span></label>
