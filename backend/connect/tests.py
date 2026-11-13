@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
+from django.contrib.auth.hashers import check_password, make_password
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, TransactionTestCase, override_settings
@@ -44,6 +45,7 @@ from .models import (
     QuizTest,
     TestResult,
     UserActivity,
+    PublicUser,
 )
 from .services.challenge_ai import (
     ChallengeAIError,
@@ -179,6 +181,33 @@ class AccountEmailWorkflowTests(TestCase):
         user.refresh_from_db()
         self.assertTrue(user.check_password('New-Password-123'))
         self.assertIsNone(cache.get('password_reset_otp_reset.student@example.com'))
+
+    @patch('connect.api_views.send_configured_email')
+    @patch('connect.api_views.random.randint', return_value=123456)
+    def test_public_user_can_request_otp_and_reset_password(self, _random_mock, send_email_mock):
+        public_user = PublicUser.objects.create(
+            name='Public Reset',
+            email='public.reset@example.com',
+            mobile='9000000114',
+            branch='100ft',
+            username='public.reset@example.com',
+            password=make_password('old-password'),
+        )
+
+        forgot_response = self.client.post('/api/auth/forgot-password/', {
+            'email': public_user.email,
+        }, format='json')
+        self.assertEqual(forgot_response.status_code, 200, forgot_response.data)
+        send_email_mock.assert_called_once()
+
+        reset_response = self.client.post('/api/auth/reset-password/', {
+            'email': public_user.email,
+            'otp': '123456',
+            'new_password': 'New-Public-Password-123',
+        }, format='json')
+        self.assertEqual(reset_response.status_code, 200, reset_response.data)
+        public_user.refresh_from_db()
+        self.assertTrue(check_password('New-Public-Password-123', public_user.password))
 
 
 class CompletedStudentOwnershipTests(TestCase):

@@ -1781,6 +1781,10 @@ function SessionsModal({ batch, onClose }) {
     const completion = studentCompletionById.get(String(student.id))
     return Boolean(completion?.eligible_for_final_action) && !completedFinalStudentIds.has(String(student.id))
   }
+  const isEligibleForReassignment = student => {
+    const completion = studentCompletionById.get(String(student.id))
+    return Number(completion?.completed_sessions || 0) > 0 && !completedFinalStudentIds.has(String(student.id))
+  }
   const selectedStudents = students.filter(student => finalStudentIds.includes(String(student.id)))
 
   const toggleFinalStudent = studentId => {
@@ -1793,6 +1797,9 @@ function SessionsModal({ batch, onClose }) {
 
   const openFinalAction = action => {
     if (finalStudentIds.length === 0) return toast.error('Select at least one eligible student')
+    if (action === 'complete' && !selectedStudents.every(isEligibleForFinalAction)) {
+      return toast.error('Only students who completed every session can be marked as completed')
+    }
     setFinalAction(action)
   }
 
@@ -1882,7 +1889,7 @@ function SessionsModal({ batch, onClose }) {
             </div>
           )}
 
-          {canUpdateLogsheet && allMentorSessionsCompleted && students.length > 0 && (
+          {canUpdateLogsheet && completed.length > 0 && students.length > 0 && (
             <div style={{
               marginBottom: 14,
               padding: 16,
@@ -1893,10 +1900,10 @@ function SessionsModal({ batch, onClose }) {
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
                 <div style={{ flex: '1 1 260px' }}>
                   <div style={{ fontWeight: 700, color: T.navy, marginBottom: 4 }}>
-                    Complete students or send reassignment requests
+                    Reassign students or complete the course
                   </div>
                   <div style={{ color: T.slate, fontSize: 12 }}>
-                    Only students who completed every session can be selected. Incomplete students remain visible but unavailable.
+                    A student becomes selectable for reassignment after completing at least one session. Course completion remains available only after every session is completed.
                   </div>
                 </div>
               </div>
@@ -1904,14 +1911,15 @@ function SessionsModal({ batch, onClose }) {
                 {students.map(s => {
                   const value = String(s.id)
                   const completion = studentCompletionById.get(value)
-                  const eligible = isEligibleForFinalAction(s)
+                  const eligible = isEligibleForReassignment(s)
+                  const eligibleForCompletion = isEligibleForFinalAction(s)
                   const studentCompleted = completedFinalStudentIds.has(value)
                   return (
                     <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 10px', border: `1px solid ${finalStudentIds.includes(value) ? T.teal : T.border}`, borderRadius: 8, cursor: eligible ? 'pointer' : 'not-allowed', opacity: eligible ? 1 : .42, filter: eligible ? 'none' : 'grayscale(1)' }}>
                       <input type="checkbox" checked={finalStudentIds.includes(value)} disabled={!eligible} onChange={() => toggleFinalStudent(value)} />
                       <span style={{ fontSize: 12, fontWeight: 600 }}>{s.first_name} {s.last_name} ({s.student_id})</span>
                       <span style={{ marginLeft: 'auto', fontSize: 11, color: studentCompleted ? T.sage : eligible ? T.teal : T.slate }}>
-                        {studentCompleted ? 'Completed' : `${completion?.completed_sessions || 0}/${completion?.total_sessions || sessions.length}`}
+                        {studentCompleted ? 'Completed' : eligibleForCompletion ? 'Ready to complete' : `${completion?.completed_sessions || 0}/${completion?.total_sessions || sessions.length}`}
                       </span>
                     </label>
                   )
@@ -1921,9 +1929,9 @@ function SessionsModal({ batch, onClose }) {
                 <button className="employee-btn employee-btn-primary employee-btn-sm" onClick={() => openFinalAction('reassign')} disabled={finalStudentIds.length === 0}>
                   <i className="fas fa-paper-plane" /> Reassign
                 </button>
-                <button className="employee-btn employee-btn-teal employee-btn-sm" onClick={() => openFinalAction('complete')} disabled={finalStudentIds.length === 0 || finalizing}>
+                {allMentorSessionsCompleted && <button className="employee-btn employee-btn-teal employee-btn-sm" onClick={() => openFinalAction('complete')} disabled={finalStudentIds.length === 0 || finalizing || !selectedStudents.every(isEligibleForFinalAction)}>
                   <i className="fas fa-check" /> Completed
-                </button>
+                </button>}
               </div>
             </div>
           )}
@@ -5136,13 +5144,20 @@ export function ViewTests() {
   const [showAssignModal, setShowAssignModal] = useState(false)
   const [selectedTest, setSelectedTest] = useState(null)
   const [deleteId, setDeleteId] = useState(null)  // Add state for delete confirmation
+  const [viewAssignedTest, setViewAssignedTest] = useState(null)
+  const [showAssignmentSummary, setShowAssignmentSummary] = useState(false)
+  const [filters, setFilters] = useState({ month: '' })
+  const [testSummary, setTestSummary] = useState({ selected_month: null, month_upload_count: 0, month_assignment_count: 0 })
 
   useEffect(() => { loadTests(); loadBatches() }, [])
 
-  const loadTests = async () => {
+  const loadTests = async (nextFilters = {}) => {
     try {
-      const response = await api.get('/tests/')
+      setLoading(true)
+      const query = nextFilters.month ? `?month=${encodeURIComponent(nextFilters.month)}` : ''
+      const response = await api.get(`/tests/${query}`)
       const testsData = response.data.results || response.data || []
+      setTestSummary(response.data.summary || { selected_month: null, month_upload_count: testsData.length, month_assignment_count: 0 })
 
       // Get question counts for each test
       const testsWithCount = await Promise.all(testsData.map(async (test) => {
@@ -5212,6 +5227,7 @@ export function ViewTests() {
       setShowAssignModal(false)
       setSelectedTest(null)
       setSelectedBatchIds([])
+      loadTests(filters)
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to assign test')
     }
@@ -5229,12 +5245,21 @@ export function ViewTests() {
       await api.delete(`/tests/${deleteId}/`)
       toast.success('Test deleted successfully!')
       setDeleteId(null)
-      loadTests()  // Refresh the list
+      loadTests(filters)  // Refresh the list
     } catch (err) {
       console.error('Delete error:', err)
       toast.error(err.response?.data?.error || 'Failed to delete test')
     }
   }
+
+  const clearFilters = () => {
+    const defaults = { month: '' }
+    setFilters(defaults)
+    loadTests(defaults)
+  }
+  const summaryMonth = testSummary.selected_month
+  const countScope = summaryMonth ? new Date(`${summaryMonth}-01T00:00:00`).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }) : 'All time'
+  const assignmentSummaryRows = tests.flatMap(test => (test.assigned_batch_details || []).map(batch => ({ ...batch, testId: test.id, testTitle: test.title }))).filter(item => !summaryMonth || (item.assigned_at || '').slice(0, 7) === summaryMonth)
 
   return (
     <div className="employee-root">
@@ -5248,6 +5273,26 @@ export function ViewTests() {
           </button>
         }
       />
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 12, marginBottom: 20 }}>
+        <div className="employee-card" style={{ margin: 0, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 36, height: 36, borderRadius: 9, background: 'rgba(14, 165, 164, .12)', color: T.teal, display: 'grid', placeItems: 'center' }}><i className="fas fa-file-upload" /></div>
+          <div><div style={{ fontSize: 12, color: T.slate, fontWeight: 700 }}>Test Upload</div><div style={{ fontSize: 22, color: T.navy, fontWeight: 800 }}>{testSummary.month_upload_count || 0}</div><small style={{ color: T.slate }}>{countScope}</small></div>
+        </div>
+        <button type="button" className="employee-card" onClick={() => setShowAssignmentSummary(true)} style={{ margin: 0, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, width: '100%', border: 'none', textAlign: 'left', cursor: 'pointer' }}>
+          <div style={{ width: 36, height: 36, borderRadius: 9, background: 'rgba(14, 165, 164, .12)', color: T.teal, display: 'grid', placeItems: 'center' }}><i className="fas fa-share-alt" /></div>
+          <div><div style={{ fontSize: 12, color: T.slate, fontWeight: 700 }}>Test Assigned</div><div style={{ fontSize: 22, color: T.navy, fontWeight: 800 }}>{testSummary.month_assignment_count || 0}</div><small style={{ color: T.slate }}>{countScope}</small></div>
+        </button>
+      </div>
+
+      <div className="employee-card" style={{ marginBottom: 20 }}>
+        <SH title="Filters" />
+        <div style={{ padding: 18, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'end' }}>
+          <div><label className="employee-label">Month</label><input className="employee-input" type="month" value={filters.month} onChange={e => setFilters({ month: e.target.value })} /></div>
+          <button className="employee-btn employee-btn-primary" onClick={() => loadTests(filters)}><i className="fas fa-search" /> Apply</button>
+          <button className="employee-btn employee-btn-ghost" onClick={clearFilters}><i className="fas fa-times" /> Clear</button>
+        </div>
+      </div>
 
       <div className="employee-card">
         <SH title={`My Tests (${tests.length})`} />
@@ -5263,6 +5308,7 @@ export function ViewTests() {
                   <th>Type</th>
                   <th>Questions / Paper</th>
                   <th>Created</th>
+                  <th>Assigns</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -5278,6 +5324,9 @@ export function ViewTests() {
                         : <Badge text={test.question_count || 0} variant={test.question_count > 0 ? 'success' : 'warning'} />}
                     </td>
                     <td style={{ fontSize: 12 }}>{new Date(test.created_at).toLocaleDateString('en-IN')}</td>
+                    <td style={{ textAlign: 'center' }}>
+                      {(test.assigned_batch_details || []).length ? <button className="employee-btn employee-btn-sm employee-btn-ghost" onClick={() => setViewAssignedTest(test)}><i className="fas fa-eye" /> View ({test.assigned_batch_details.length})</button> : <Badge text="Not assigned" variant="warning" />}
+                    </td>
                     <td>
                       <div style={{ display: 'flex', gap: 8 }}>
                         <button
@@ -5358,6 +5407,9 @@ export function ViewTests() {
           </div>
         </Modal>
       )}
+
+      {viewAssignedTest && <Modal open onClose={() => setViewAssignedTest(null)} title="Assigned Batches" size="md"><div style={{ display: 'grid', gap: 10 }}>{(viewAssignedTest.assigned_batch_details || []).map(batch => <div key={batch.id} style={{ padding: '12px 14px', border: `1px solid ${T.border}`, borderRadius: 10 }}><strong>{getBatchDisplayName(batch)}</strong><div className="employee-hint">Assigned: {batch.assigned_at ? new Date(batch.assigned_at).toLocaleDateString('en-IN') : '-'}</div></div>)}</div></Modal>}
+      {showAssignmentSummary && <Modal open onClose={() => setShowAssignmentSummary(false)} title="Test Assignment Details" size="lg">{assignmentSummaryRows.length ? <div style={{ overflowX: 'auto' }}><table className="employee-table" style={{ minWidth: 600 }}><thead><tr><th>Test</th><th>Batch</th><th>Assigned Date</th></tr></thead><tbody>{assignmentSummaryRows.map((item, index) => <tr key={`${item.testId}-${item.id}-${index}`}><td>{item.testTitle}</td><td>{getBatchDisplayName(item)}</td><td>{item.assigned_at ? new Date(item.assigned_at).toLocaleString('en-IN') : '-'}</td></tr>)}</tbody></table></div> : <Empty msg="No test assignments found for this month" icon="fa-share-alt" />}</Modal>}
 
       {/* Delete Confirmation Modal */}
       {deleteId && (
@@ -5913,6 +5965,10 @@ export function ManageQuizzes() {
   const [detailQuiz, setDetailQuiz] = useState(null)
   const [scheduleAt, setScheduleAt] = useState('')
   const [quizSearch, setQuizSearch] = useState('')
+  const [filters, setFilters] = useState({ month: '' })
+  const [quizSummary, setQuizSummary] = useState({ selected_month: null, month_upload_count: 0, month_assignment_count: 0 })
+  const [viewAssignedQuiz, setViewAssignedQuiz] = useState(null)
+  const [showAssignmentSummary, setShowAssignmentSummary] = useState(false)
 
   useEffect(() => {
     loadQuizzes()
@@ -5921,14 +5977,17 @@ export function ManageQuizzes() {
     }
   }, [isAdminQuiz])
 
-  const loadQuizzes = async () => {
+  const loadQuizzes = async (nextFilters = {}) => {
     try {
       // This endpoint should return ONLY quizzes uploaded by the logged-in staff
-      const response = await api.get('/quiz/')
+      setLoading(true)
+      const query = !isAdminQuiz && nextFilters.month ? `?month=${encodeURIComponent(nextFilters.month)}` : ''
+      const response = await api.get(`/quiz/${query}`)
       const allQuizzes = response.data.results || response.data || []
 
       // Filter on frontend as backup (but backend should already filter)
       setQuizzes(allQuizzes)
+      setQuizSummary(response.data.summary || { selected_month: null, month_upload_count: allQuizzes.length, month_assignment_count: 0 })
     } catch (err) {
       console.error('Failed to load quizzes:', err)
       toast.error('Failed to load quizzes')
@@ -5942,7 +6001,7 @@ export function ManageQuizzes() {
       await api.patch(`/quiz/${quizId}/toggle-publish/`, { action, scheduled_at })
       toast.success(action === 'schedule' ? 'Quiz scheduled successfully!' : 'Quiz published successfully!')
       setPublishQuiz(null); setScheduleAt('')
-      loadQuizzes()
+      loadQuizzes(filters)
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to update quiz status')
     }
@@ -5964,7 +6023,7 @@ export function ManageQuizzes() {
     try {
       await api.delete(`/quiz/${quizId}/delete/`)
       toast.success('Quiz deleted successfully!')
-      loadQuizzes()
+      loadQuizzes(filters)
     } catch (err) {
       toast.error('Failed to delete quiz')
     }
@@ -5988,7 +6047,7 @@ export function ManageQuizzes() {
       toast.success('Quiz assigned to selected batches')
       setAssignQuiz(null)
       setSelectedBatchIds([])
-      await loadQuizzes()
+      await loadQuizzes(filters)
     } catch (err) {
       toast.error(err.response?.data?.error || 'Quiz assignment failed')
     } finally {
@@ -6011,6 +6070,15 @@ export function ManageQuizzes() {
     return text.includes(quizSearch.trim().toLowerCase())
   })
 
+  const clearFilters = () => {
+    const defaults = { month: '' }
+    setFilters(defaults)
+    loadQuizzes(defaults)
+  }
+  const summaryMonth = quizSummary.selected_month
+  const countScope = summaryMonth ? new Date(`${summaryMonth}-01T00:00:00`).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }) : 'All time'
+  const assignmentSummaryRows = quizzes.flatMap(quiz => (quiz.assigned_batch_details || []).map(batch => ({ ...batch, quizId: quiz.id, quizTitle: quiz.title }))).filter(item => !summaryMonth || (item.assigned_at || '').slice(0, 7) === summaryMonth)
+
   return (
     <div className="employee-root">
       <Styles />
@@ -6023,6 +6091,19 @@ export function ManageQuizzes() {
           </button>
         }
       />
+      {!isAdminQuiz && <>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 12, marginBottom: 20 }}>
+          <div className="employee-card" style={{ margin: 0, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 9, background: 'rgba(14, 165, 164, .12)', color: T.teal, display: 'grid', placeItems: 'center' }}><i className="fas fa-file-upload" /></div>
+            <div><div style={{ fontSize: 12, color: T.slate, fontWeight: 700 }}>Quiz Upload</div><div style={{ fontSize: 22, color: T.navy, fontWeight: 800 }}>{quizSummary.month_upload_count || 0}</div><small style={{ color: T.slate }}>{countScope}</small></div>
+          </div>
+          <button type="button" className="employee-card" onClick={() => setShowAssignmentSummary(true)} style={{ margin: 0, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, width: '100%', border: 'none', textAlign: 'left', cursor: 'pointer' }}>
+            <div style={{ width: 36, height: 36, borderRadius: 9, background: 'rgba(14, 165, 164, .12)', color: T.teal, display: 'grid', placeItems: 'center' }}><i className="fas fa-share-alt" /></div>
+            <div><div style={{ fontSize: 12, color: T.slate, fontWeight: 700 }}>Quiz Assigned</div><div style={{ fontSize: 22, color: T.navy, fontWeight: 800 }}>{quizSummary.month_assignment_count || 0}</div><small style={{ color: T.slate }}>{countScope}</small></div>
+          </button>
+        </div>
+        <div className="employee-card" style={{ marginBottom: 20 }}><SH title="Filters" /><div style={{ padding: 18, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'end' }}><div><label className="employee-label">Month</label><input className="employee-input" type="month" value={filters.month} onChange={e => setFilters({ month: e.target.value })} /></div><button className="employee-btn employee-btn-primary" onClick={() => loadQuizzes(filters)}><i className="fas fa-search" /> Apply</button><button className="employee-btn employee-btn-ghost" onClick={clearFilters}><i className="fas fa-times" /> Clear</button></div></div>
+      </>}
       <div className="employee-card">
         <SH title={`My Quizzes (${filteredQuizzes.length})`} />
         <div style={{ padding: '0 18px 16px', display: 'flex', justifyContent: 'flex-end' }}>
@@ -6048,6 +6129,7 @@ export function ManageQuizzes() {
                   <th>Questions / Paper</th>
                   <th>Duration</th>
                   <th>Status</th>
+                  {!isAdminQuiz && <th>Assigns</th>}
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -6063,6 +6145,7 @@ export function ManageQuizzes() {
                         variant={quiz.is_published ? 'success' : 'warning'}
                       />
                     </td>
+                    {!isAdminQuiz && <td style={{ textAlign: 'center' }}>{(quiz.assigned_batch_details || []).length ? <button className="employee-btn employee-btn-sm employee-btn-ghost" onClick={() => setViewAssignedQuiz(quiz)}><i className="fas fa-eye" /> View ({quiz.assigned_batch_details.length})</button> : <Badge text="Not assigned" variant="warning" />}</td>}
                     <td>
                       <div style={{ display: 'flex', gap: 8 }}>
                         {isAdminQuiz ? <button
@@ -6143,6 +6226,9 @@ export function ManageQuizzes() {
           </div>
         </Modal>
       )}
+
+      {!isAdminQuiz && viewAssignedQuiz && <Modal open onClose={() => setViewAssignedQuiz(null)} title="Assigned Batches" size="md"><div style={{ display: 'grid', gap: 10 }}>{(viewAssignedQuiz.assigned_batch_details || []).map(batch => <div key={batch.id} style={{ padding: '12px 14px', border: `1px solid ${T.border}`, borderRadius: 10 }}><strong>{getBatchDisplayName(batch)}</strong><div className="employee-hint">Assigned: {batch.assigned_at ? new Date(batch.assigned_at).toLocaleDateString('en-IN') : '-'}</div></div>)}</div></Modal>}
+      {!isAdminQuiz && showAssignmentSummary && <Modal open onClose={() => setShowAssignmentSummary(false)} title="Quiz Assignment Details" size="lg">{assignmentSummaryRows.length ? <div style={{ overflowX: 'auto' }}><table className="employee-table" style={{ minWidth: 600 }}><thead><tr><th>Quiz</th><th>Batch</th><th>Assigned Date</th></tr></thead><tbody>{assignmentSummaryRows.map((item, index) => <tr key={`${item.quizId}-${item.id}-${index}`}><td>{item.quizTitle}</td><td>{getBatchDisplayName(item)}</td><td>{item.assigned_at ? new Date(item.assigned_at).toLocaleString('en-IN') : '-'}</td></tr>)}</tbody></table></div> : <Empty msg="No quiz assignments found for this month" icon="fa-share-alt" />}</Modal>}
 
       <Modal open={!!detailQuiz} onClose={() => setDetailQuiz(null)} title="Quiz Details" size="xl">
         {detailQuiz && (

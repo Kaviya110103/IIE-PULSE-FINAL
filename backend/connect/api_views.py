@@ -3739,26 +3739,6 @@ def _batch_session_state_by_number(batch):
                 student_status='pending',
             )
 
-    daily_rows = DailySessionCompletion.objects.filter(
-        session__batch=batch,
-        completed=True,
-    ).select_related('session')
-    for row in daily_rows:
-        state = state_by_number.setdefault(row.session.session_number, {
-            'staff_completed': False,
-            'staff_completed_at': None,
-            'completed': False,
-            'completed_date': None,
-            'student_status': 'not_started',
-            'student_confirmed_at': None,
-        })
-        _merge_session_state(
-            state,
-            staff_completed=True,
-            staff_completed_at=row.completed_at,
-            student_status='pending',
-        )
-
     return state_by_number
 
 
@@ -3935,96 +3915,17 @@ def _sync_reassigned_student_progress_for_batch(batch):
 
 
 def _reconcile_batch_completion_audit(batch):
-    """Repair legacy session rows from the trainer completion audit.
+    """Retained as a safe compatibility hook for old callers.
 
-    Earlier releases could save a completed ``DailySessionCompletion`` row
-    without updating the matching CourseSession and student status rows.  The
-    staff view consequently read the audit as completed while a student still
-    saw "Waiting for Trainer".  The audit is trainer-owned, so it is safe to
-    use for this one-way repair; student progress is deliberately never used
-    to promote a trainer completion.
+    A page read must never change completion state.  The historical audit is
+    intentionally not reconciled into CourseSession records here.
     """
-    if not batch:
-        return False
-
-    daily_rows = list(
-        DailySessionCompletion.objects.filter(
-            session__batch=batch,
-            completed=True,
-        ).select_related('session', 'faculty').order_by('session_id', '-completed_at', '-completion_date', '-id')
-    )
-    if not daily_rows:
-        return False
-
-    latest_by_session = {}
-    for row in daily_rows:
-        latest_by_session.setdefault(row.session_id, row)
-
-    repaired = False
-    repaired_sessions = []
-    for session_id, row in latest_by_session.items():
-        session = row.session
-        completed_at = row.completed_at
-        if completed_at is None:
-            completed_at = timezone.make_aware(datetime.combine(row.completion_date, datetime.min.time()))
-
-        updates = []
-        if not session.staff_completed:
-            session.staff_completed = True
-            updates.append('staff_completed')
-        if not session.completed_date:
-            session.completed_date = completed_at
-            updates.append('completed_date')
-        if not session.completed_by_id and row.faculty_id:
-            session.completed_by = row.faculty
-            updates.append('completed_by')
-        if updates:
-            session.save(update_fields=[*updates, 'updated_at'])
-            repaired = True
-        repaired_sessions.append((session, completed_at))
-
-    # Bring only stale rows forward from the same audit-backed state. Existing
-    # student confirmations and doubts stay untouched, and routine page loads
-    # do not rewrite every student/session row in the batch.
-    for student in active_students_for_batch(batch):
-        for session, completed_at in repaired_sessions:
-            progress, _ = Student_Session_Progress.objects.get_or_create(
-                student=student,
-                session=session,
-            )
-            progress_updates = []
-            if not progress.staff_completed:
-                progress.staff_completed = True
-                progress_updates.append('staff_completed')
-            if not progress.staff_completed_at:
-                progress.staff_completed_at = completed_at
-                progress_updates.append('staff_completed_at')
-            if progress.student_status == 'not_started':
-                progress.student_status = 'pending'
-                progress_updates.append('student_status')
-            if progress_updates:
-                progress.save(update_fields=[*progress_updates, 'updated_at'])
-                repaired = True
-
-            status_obj, _ = StudentSessionStatus.objects.get_or_create(
-                student=student,
-                session=session,
-            )
-            status_updates = []
-            if not status_obj.staff_completed:
-                status_obj.staff_completed = True
-                status_updates.append('staff_completed')
-            if not status_obj.staff_completed_at:
-                status_obj.staff_completed_at = completed_at
-                status_updates.append('staff_completed_at')
-            if status_obj.student_status not in {'completed', 'doubt', 'pending'}:
-                status_obj.student_status = 'pending'
-                status_updates.append('student_status')
-            if status_updates:
-                status_obj.save(update_fields=status_updates)
-                repaired = True
-
-    return repaired
+    # DailySessionCompletion is a historical activity audit, not the source of
+    # truth for a session checkbox. Earlier code promoted audit rows during
+    # ordinary page reads, which made sessions look completed without a trainer
+    # explicitly marking them. Completion is now changed only by the dedicated
+    # staff-complete/staff-unmark endpoints.
+    return False
 
 
 # -- ATTENDANCE ----------------------------------------------------------------
@@ -5605,15 +5506,67 @@ class TestListCreateView(generics.ListCreateAPIView):
         
         # Superuser/Admin can see all tests
         if user.is_superuser or user.is_staff:
-            return QuizTest.objects.all().order_by('-created_at')
-        
-        # Staff/Trainer/Mentor - Only see tests they created
-        try:
-            emp = Employee.objects.get(user=user)
-            # Filter tests where created_by is the logged-in employee
-            return QuizTest.objects.filter(created_by=emp).order_by('-created_at')
-        except Employee.DoesNotExist:
-            return QuizTest.objects.none()
+            qs = QuizTest.objects.all().order_by('-created_at')
+        else:
+            # Staff/Trainer/Mentor - Only see tests they created.
+            try:
+                emp = Employee.objects.get(user=user)
+                qs = QuizTest.objects.filter(created_by=emp).order_by('-created_at')
+            except Employee.DoesNotExist:
+                return QuizTest.objects.none()
+
+        month = (self.request.query_params.get('month') or '').strip()
+        if month:
+            try:
+                month_start = datetime.strptime(month, '%Y-%m').date().replace(day=1)
+                month_end = (
+                    month_start.replace(year=month_start.year + 1, month=1)
+                    if month_start.month == 12
+                    else month_start.replace(month=month_start.month + 1)
+                )
+                start_dt = timezone.make_aware(datetime.combine(month_start, datetime.min.time()))
+                end_dt = timezone.make_aware(datetime.combine(month_end, datetime.min.time()))
+                qs = qs.filter(
+                    Q(created_at__gte=start_dt, created_at__lt=end_dt) |
+                    Q(assignedtest__assigned_date__gte=start_dt, assignedtest__assigned_date__lt=end_dt)
+                ).distinct()
+            except ValueError:
+                return QuizTest.objects.none()
+        return qs.prefetch_related('assignedtest_set__batch')
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        emp = Employee.objects.filter(user=request.user).first()
+        all_tests = QuizTest.objects.filter(created_by=emp) if emp else queryset
+        all_assignments = AssignedTest.objects.filter(test__created_by=emp) if emp else AssignedTest.objects.all()
+        month = (request.query_params.get('month') or '').strip()
+        summary_tests = all_tests
+        summary_assignments = all_assignments
+        if month:
+            try:
+                month_start = datetime.strptime(month, '%Y-%m').date().replace(day=1)
+                month_end = (
+                    month_start.replace(year=month_start.year + 1, month=1)
+                    if month_start.month == 12
+                    else month_start.replace(month=month_start.month + 1)
+                )
+                start_dt = timezone.make_aware(datetime.combine(month_start, datetime.min.time()))
+                end_dt = timezone.make_aware(datetime.combine(month_end, datetime.min.time()))
+                summary_tests = all_tests.filter(created_at__gte=start_dt, created_at__lt=end_dt)
+                summary_assignments = all_assignments.filter(assigned_date__gte=start_dt, assigned_date__lt=end_dt)
+            except ValueError:
+                return Response({'error': 'Month must use YYYY-MM format.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            'results': self.get_serializer(queryset, many=True).data,
+            'summary': {
+                'selected_month': month or None,
+                'month_upload_count': summary_tests.count(),
+                'month_assignment_count': summary_assignments.count(),
+                'overall_upload_count': all_tests.count(),
+                'overall_assignment_count': all_assignments.count(),
+            },
+        })
     
     def perform_create(self, serializer):
         try:
@@ -6328,29 +6281,136 @@ class QuizListView(generics.ListAPIView):
         
         # Admin global quizzes and staff batch quizzes are separate workflows.
         if user.is_superuser or user.is_staff:
-            return Quiz.objects.filter(quiz_scope='admin_global').prefetch_related('assigned_batches').order_by('-created_at')
-        
-        try:
-            emp = Employee.objects.get(user=user)
-            return Quiz.objects.filter(
-                created_by=emp,
-                quiz_scope='staff_batch',
-            ).prefetch_related('assigned_batches').distinct().order_by('-created_at')
-            
-        except Employee.DoesNotExist:
+            qs = Quiz.objects.filter(quiz_scope='admin_global').prefetch_related('assigned_batches').order_by('-created_at')
+        else:
             try:
-                student = Students.objects.get(user=user)
-                batch_ids = [batch.id for batch in _student_current_content_batches(student)]
-                return Quiz.objects.filter(
-                    (
-                        Q(quiz_scope='staff_batch') &
-                        (Q(assigned_batches__id__in=batch_ids) | Q(batch_id__in=batch_ids))
-                    ) |
-                    Q(quiz_scope='admin_global', audience__in=['students', 'both']),
-                    is_published=True,
-                ).distinct().order_by('-created_at')
-            except Students.DoesNotExist:
+                emp = Employee.objects.get(user=user)
+                qs = Quiz.objects.filter(
+                    created_by=emp,
+                    quiz_scope='staff_batch',
+                ).prefetch_related('assigned_batches').distinct().order_by('-created_at')
+            except Employee.DoesNotExist:
+                try:
+                    student = Students.objects.get(user=user)
+                    batch_ids = [batch.id for batch in _student_current_content_batches(student)]
+                    qs = Quiz.objects.filter(
+                        (
+                            Q(quiz_scope='staff_batch') &
+                            (Q(assigned_batches__id__in=batch_ids) | Q(batch_id__in=batch_ids))
+                        ) |
+                        Q(quiz_scope='admin_global', audience__in=['students', 'both']),
+                        is_published=True,
+                    ).distinct().order_by('-created_at')
+                except Students.DoesNotExist:
+                    return Quiz.objects.none()
+
+        month = (self.request.query_params.get('month') or '').strip()
+        if month:
+            try:
+                month_start = datetime.strptime(month, '%Y-%m').date().replace(day=1)
+                month_end = (
+                    month_start.replace(year=month_start.year + 1, month=1)
+                    if month_start.month == 12
+                    else month_start.replace(month=month_start.month + 1)
+                )
+                start_dt = timezone.make_aware(datetime.combine(month_start, datetime.min.time()))
+                end_dt = timezone.make_aware(datetime.combine(month_end, datetime.min.time()))
+                qs = qs.filter(
+                    Q(created_at__gte=start_dt, created_at__lt=end_dt) |
+                    Q(updated_at__gte=start_dt, updated_at__lt=end_dt, assigned_batches__isnull=False)
+                ).distinct()
+            except ValueError:
                 return Quiz.objects.none()
+        return qs
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        emp = Employee.objects.filter(user=request.user).first()
+        all_quizzes = Quiz.objects.filter(created_by=emp, quiz_scope='staff_batch') if emp else queryset
+        month = (request.query_params.get('month') or '').strip()
+        summary_quizzes = all_quizzes
+        summary_assignments = all_quizzes.filter(assigned_batches__isnull=False)
+        if month:
+            try:
+                month_start = datetime.strptime(month, '%Y-%m').date().replace(day=1)
+                month_end = (
+                    month_start.replace(year=month_start.year + 1, month=1)
+                    if month_start.month == 12
+                    else month_start.replace(month=month_start.month + 1)
+                )
+                start_dt = timezone.make_aware(datetime.combine(month_start, datetime.min.time()))
+                end_dt = timezone.make_aware(datetime.combine(month_end, datetime.min.time()))
+                summary_quizzes = all_quizzes.filter(created_at__gte=start_dt, created_at__lt=end_dt)
+                summary_assignments = all_quizzes.filter(
+                    assigned_batches__isnull=False,
+                    updated_at__gte=start_dt,
+                    updated_at__lt=end_dt,
+                )
+            except ValueError:
+                return Response({'error': 'Month must use YYYY-MM format.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            'results': self.get_serializer(queryset, many=True).data,
+            'summary': {
+                'selected_month': month or None,
+                'month_upload_count': summary_quizzes.count(),
+                'month_assignment_count': summary_assignments.count(),
+                'overall_upload_count': all_quizzes.count(),
+                'overall_assignment_count': all_quizzes.filter(assigned_batches__isnull=False).count(),
+            },
+        })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def staff_sidebar_alerts(request):
+    """Return per-module staff activity markers for sidebar notification dots."""
+    employee = Employee.objects.filter(user=request.user).first()
+    if not employee:
+        return Response({'events': {}})
+
+    batch_ids = Batches.objects.filter(
+        Q(faculty=employee) | Q(trainer_assignments__trainer=employee)
+    ).values_list('id', flat=True).distinct()
+    student_ids = Students.objects.filter(assigned_staff=employee).values_list('id', flat=True)
+    student_user_ids = Students.objects.filter(assigned_staff=employee).exclude(user__isnull=True).values_list('user_id', flat=True)
+
+    def event(queryset, timestamp_field, count=None):
+        latest = queryset.order_by(f'-{timestamp_field}').values_list(timestamp_field, flat=True).first()
+        return {
+            'count': queryset.count() if count is None else count,
+            'latest_at': latest.isoformat() if latest else None,
+        }
+
+    quiz_attempts = QuizAttempt.objects.filter(
+        is_completed=True,
+    ).filter(Q(quiz__created_by=employee) | Q(quiz__assigned_batches__id__in=batch_ids)).distinct()
+    test_results = TestResult.objects.filter(test__assignedtest__batch_id__in=batch_ids).distinct()
+    leaves = StudentLeaveApplication.objects.filter(assigned_staff=employee, status='pending')
+    # A reassigned or parallel-batch student's session can retain its original
+    # batch relation. The current assigned trainer must still receive the doubt.
+    doubts = Student_Session_Progress.objects.filter(
+        Q(session__batch_id__in=batch_ids) | Q(student__assigned_staff=employee),
+        has_doubt=True,
+        doubt_resolved=False,
+    ).distinct()
+    support = StudentSupportRequest.objects.filter(student_id__in=student_user_ids).exclude(status='resolved')
+    announcements = SessionNotification.objects.filter(
+        to_user=request.user, notification_type='announcement', is_read=False,
+    )
+
+    return Response({'events': {
+        'quiz_results': event(quiz_attempts, 'submitted_at'),
+        'test_results': event(test_results, 'submitted_at'),
+        'leave_management': event(leaves, 'updated_at'),
+        'announcements': event(announcements, 'created_at'),
+        # updated_at also covers legacy doubt records where doubt_raised_at was
+        # not populated when the student raised the doubt.
+        'student_doubts': event(doubts, 'updated_at'),
+        'support_requests': event(support, 'updated_at'),
+        'my_students': event(Students.objects.filter(id__in=student_ids), 'updated_at'),
+        'my_batches': event(Batches.objects.filter(id__in=batch_ids), 'created_at'),
+    }})
 
 
 @api_view(['POST'])
@@ -7396,16 +7456,16 @@ def student_sessions(request):
                 # student's desk time out while another student's works.
                 _sync_reassigned_student_progress_for_batch(item)
                 _reconcile_batch_completion_audit(item)
-            raw_sessions = CourseSession.objects.filter(batch__in=course_batches).order_by('session_number', 'batch_id')
+            raw_sessions = CourseSession.objects.filter(
+                batch__in=course_batches
+            ).select_related('completed_by').order_by('session_number', 'batch_id')
             by_number = {}
             for item in raw_sessions:
                 current = by_number.get(item.session_number)
-                item_done = bool(item.staff_completed or DailySessionCompletion.objects.filter(
-                    session=item, completed=True
-                ).exists())
-                current_done = bool(current and (current.staff_completed or DailySessionCompletion.objects.filter(
-                    session=current, completed=True
-                ).exists()))
+                # CourseSession is the single source of truth for the trainer
+                # checkbox. DailySessionCompletion is only an activity audit.
+                item_done = bool(item.staff_completed)
+                current_done = bool(current and current.staff_completed)
                 if current is None or (item_done and not current_done):
                     by_number[item.session_number] = item
             batch = course_batches[0]
@@ -7416,17 +7476,38 @@ def student_sessions(request):
                 return Response({'error': 'You are not assigned to this batch.'}, status=403)
             _sync_reassigned_student_progress_for_batch(batch)
             _reconcile_batch_completion_audit(batch)
-            sessions = CourseSession.objects.filter(batch=batch).order_by('session_number')
+            sessions = CourseSession.objects.filter(batch=batch).select_related('completed_by').order_by('session_number')
         else:
             batch = student.assigned_batch if student.assigned_batch in batches else batches[0]
             _sync_reassigned_student_progress_for_batch(batch)
             _reconcile_batch_completion_audit(batch)
-            sessions = CourseSession.objects.filter(batch=batch).order_by('session_number')
+            sessions = CourseSession.objects.filter(batch=batch).select_related('completed_by').order_by('session_number')
         data = []
+        sessions = list(sessions)
+        session_ids = [session.id for session in sessions]
+        progress_by_session = {
+            item.session_id: item
+            for item in Student_Session_Progress.objects.filter(
+                student=student,
+                session_id__in=session_ids,
+            )
+        }
+        status_by_session = {
+            item.session_id: item
+            for item in StudentSessionStatus.objects.filter(
+                student=student,
+                session_id__in=session_ids,
+            )
+        }
+        response_by_progress = {}
+        for response in DoubtResponse.objects.filter(
+            doubt_id__in=[item.id for item in progress_by_session.values()]
+        ).order_by('doubt_id', '-created_at'):
+            response_by_progress.setdefault(response.doubt_id, response)
 
         for session in sessions:
-            progress = Student_Session_Progress.objects.filter(student=student, session=session).first()
-            status_obj = StudentSessionStatus.objects.filter(student=student, session=session).first()
+            progress = progress_by_session.get(session.id)
+            status_obj = status_by_session.get(session.id)
 
             student_status = 'not_started'
             doubt_response = None
@@ -7436,7 +7517,7 @@ def student_sessions(request):
             # progress takes priority over status_obj
             if progress:
                 student_status = progress.student_status
-                latest_response = DoubtResponse.objects.filter(doubt=progress).order_by('-created_at').first()
+                latest_response = response_by_progress.get(progress.id)
                 if latest_response:
                     has_response = True
                     doubt_response = latest_response.message
@@ -7445,13 +7526,9 @@ def student_sessions(request):
                 student_status = status_obj.student_status
 
             # Trainer completion must only come from the trainer-owned session
-            # record (or its audit row). A student completing their own step
-            # must never automatically tick a trainer session as complete.
-            student_progress_staff_done = bool(
-                session.staff_completed or DailySessionCompletion.objects.filter(
-                    session=session, completed=True
-                ).exists()
-            )
+            # record. A historical daily audit and a student confirmation must
+            # never automatically tick a trainer session as complete.
+            student_progress_staff_done = bool(session.staff_completed)
 
             # Repair legacy student rows from the authoritative trainer state.
             # This prevents a valid trainer completion from leaving a student
@@ -7627,15 +7704,9 @@ def get_batch_sessions_with_logsheet(request, batch_id):
         for session in sessions:
             session_dict = CourseSessionSerializer(session).data
 
-            # Never derive trainer completion from student progress. That made
-            # a student confirmation appear as if the trainer had completed a
-            # session. The CourseSession/DailySessionCompletion records are
-            # created only by the trainer completion workflow.
-            session_dict['staff_completed'] = bool(
-                session.staff_completed or DailySessionCompletion.objects.filter(
-                    session=session, completed=True
-                ).exists()
-            )
+            # Do not treat the historical daily audit as a completion switch.
+            # Only the explicit trainer action updates CourseSession.
+            session_dict['staff_completed'] = bool(session.staff_completed)
 
             sessions_data.append(session_dict)
 
@@ -9875,12 +9946,12 @@ def staff_batch_detail_report(request, batch_id):
         assigned_date__gte=start_dt,
         assigned_date__lt=end_dt,
     ).select_related('test', 'test__created_by')
-    staff_completion_qs = DailySessionCompletion.objects.filter(
-        session__batch=batch,
-        completed=True,
-        completion_date__gte=start_date,
-        completion_date__lte=today,
-    ).select_related('session', 'faculty')
+    staff_completion_qs = CourseSession.objects.filter(
+        batch=batch,
+        staff_completed=True,
+        completed_date__date__gte=start_date,
+        completed_date__date__lte=today,
+    ).select_related('completed_by')
     student_progress_qs = Student_Session_Progress.objects.filter(
         session__batch=batch,
         updated_at__gte=start_dt,
@@ -9977,7 +10048,7 @@ def staff_batch_detail_report(request, batch_id):
 
     staff_session_ids_by_day = {}
     for item in staff_completion_qs:
-        staff_session_ids_by_day.setdefault(item.completion_date, set()).add(item.session_id)
+        staff_session_ids_by_day.setdefault(local_date(item.completed_date), set()).add(item.id)
     for day, ids in staff_session_ids_by_day.items():
         if day in day_map:
             day_map[day]['staff_completed_sessions'] = len(ids)
@@ -9997,10 +10068,6 @@ def staff_batch_detail_report(request, batch_id):
 
     total_sessions = sessions_qs.count()
     staff_completed_session_ids = set(sessions_qs.filter(staff_completed=True).values_list('id', flat=True))
-    staff_completed_session_ids.update(DailySessionCompletion.objects.filter(
-        session_id__in=session_ids,
-        completed=True,
-    ).values_list('session_id', flat=True))
     student_done_count = Student_Session_Progress.objects.filter(
         student_id__in=student_ids,
         session_id__in=session_ids,
@@ -10309,12 +10376,9 @@ def _tracking_batch_completion(batch, staff, batch_students=None):
     if not total_sessions or not student_count:
         return {'completed_sessions': 0, 'total_sessions': total_sessions, 'percentage': 0}
 
-    staff_done_session_ids = set(CourseSession.objects.filter(id__in=session_ids, staff_completed=True).values_list('id', flat=True))
-    staff_done_session_ids.update(DailySessionCompletion.objects.filter(
-        faculty=staff,
-        session_id__in=session_ids,
-        completed=True,
-    ).values_list('session_id', flat=True))
+    staff_done_session_ids = set(
+        CourseSession.objects.filter(id__in=session_ids, staff_completed=True).values_list('id', flat=True)
+    )
 
     staff_progress_counts = {
         row['session_id']: row['done_count']
@@ -10324,10 +10388,6 @@ def _tracking_batch_completion(batch, staff, batch_students=None):
             staff_completed=True,
         ).values('session_id').annotate(done_count=Count('student_id', distinct=True))
     }
-    staff_done_session_ids.update(
-        session_id for session_id, count in staff_progress_counts.items() if count == student_count
-    )
-
     student_completed_counts = {
         row['session_id']: row['done_count']
         for row in Student_Session_Progress.objects.filter(
@@ -10405,11 +10465,10 @@ def _tracking_staff_card_summary(staff):
     batch_count = batches.count()
     students = active_students_for_staff(staff)
     sessions_total = CourseSession.objects.filter(batch__in=batches).count()
-    sessions_completed = max(
-        DailySessionCompletion.objects.filter(faculty=staff, session__batch__in=batches, completed=True).values('session_id').distinct().count(),
-        CourseSession.objects.filter(batch__in=batches, staff_completed=True).count(),
-        Student_Session_Progress.objects.filter(session__batch__in=batches, staff_completed=True).values('session_id').distinct().count(),
-    )
+    sessions_completed = CourseSession.objects.filter(
+        batch__in=batches,
+        staff_completed=True,
+    ).count()
     login_qs = UserActivity.objects.filter(employee=staff, user_type='employee').order_by('-login_time')
     last_login = login_qs.first()
     login_usage = _tracking_login_usage(staff)
@@ -13547,31 +13606,18 @@ def _completion_report_payload(completed_student=None, *, student=None, batch=No
             student=student, session__in=sessions
         )
     } if student and sessions else {}
-    daily_by_session = {}
-    if sessions:
-        for item in DailySessionCompletion.objects.filter(session__in=sessions, completed=True).order_by('-completed_at', '-completion_date'):
-            daily_by_session.setdefault(item.session_id, item)
-
     session_rows = []
     for session in sessions:
         progress = progress_by_session.get(session.id)
         legacy = legacy_by_session.get(session.id)
-        daily = daily_by_session.get(session.id)
-        trainer_done = bool(
-            session.staff_completed or
-            (progress and (progress.staff_completed or progress.completed or progress.student_status == 'completed')) or
-            (legacy and (legacy.staff_completed or legacy.student_status == 'completed')) or
-            daily
-        )
+        # Reports follow the same completion source as the logsheet UI.
+        # Progress rows and historical daily audits must not make a trainer
+        # session appear completed before the trainer marks it.
+        trainer_done = bool(session.staff_completed)
         student_done = bool(progress and (progress.completed or progress.student_status == 'completed')) or bool(
             legacy and legacy.student_status == 'completed'
         )
-        trainer_date = (
-            (progress.staff_completed_at if progress else None) or
-            (legacy.staff_completed_at if legacy else None) or
-            (daily.completed_at if daily else None) or
-            session.completed_date
-        )
+        trainer_date = session.completed_date
         student_date = (
             (progress.student_confirmed_at if progress else None) or
             (progress.completed_date if progress else None) or
@@ -14118,16 +14164,48 @@ def forgot_password(request):
         user__isnull=False,
     ).select_related('user').first()
 
-    if not student:
-        logger.info('Password reset requested for unknown student email: %s', email)
+    employee = None
+    public_user = None
+    account_type = 'student'
+    user = student.user if student else None
+
+    if not user:
+        employee = Employee.objects.filter(
+            Q(email__iexact=email) | Q(user__email__iexact=email) | Q(user__username__iexact=email)
+        ).select_related('user').first()
+        if employee:
+            account_type = 'employee'
+            user = employee.user
+
+    if not user:
+        user = User.objects.filter(Q(email__iexact=email) | Q(username__iexact=email)).first()
+        if user:
+            account_type = 'user'
+
+    if not user:
+        public_user = PublicUser.objects.filter(
+            Q(email__iexact=email) | Q(username__iexact=email)
+        ).first()
+        if public_user:
+            account_type = 'public'
+
+    if not user and not public_user:
+        logger.info('Password reset requested for unknown email: %s', email)
         return Response({'error': 'No account found with this email'}, status=404)
 
-    user = student.user
     otp = str(random.randint(100000, 999999))
+    recipient_name = (
+        (student.first_name if student else '') or
+        (employee.first_name if employee else '') or
+        (public_user.name if public_user else '') or
+        (user.first_name if user else '') or
+        (user.username if user else '') or
+        email
+    )
 
     try:
         portal_url = get_portal_url(request)
-        message = f"""Dear {student.first_name or user.first_name or user.username},
+        message = f"""Dear {recipient_name},
 
 Your OTP for password reset is:
 
@@ -14141,7 +14219,7 @@ Best regards,
 IIE Pulse Team
 {portal_url}
 """
-        send_configured_email(
+        delivery = send_configured_email(
             to_email=email,
             subject='IIE Pulse - Password Reset OTP',
             html_content=f"<pre style=\"font-family: Arial, sans-serif; white-space: pre-wrap;\">{escape(message)}</pre>",
@@ -14157,8 +14235,19 @@ IIE Pulse Team
         logger.exception('Unexpected password reset email failure for %s', email)
         return Response({'error': 'Unable to send OTP right now. Please try again later.'}, status=502)
 
-    cache.set(f'password_reset_otp_{email}', {'otp': otp, 'user_id': user.id}, timeout=600)
-    logger.info('Password reset OTP sent for student_id=%s email=%s', student.student_id, email)
+    cache.set(f'password_reset_otp_{email}', {
+        'otp': otp,
+        'account_type': account_type,
+        'account_id': public_user.id if public_user else user.id,
+        # Retain this for reset OTPs issued by earlier releases.
+        'user_id': user.id if user else None,
+    }, timeout=600)
+    logger.info(
+        'Password reset OTP accepted by provider for account_type=%s email=%s delivery=%s',
+        account_type,
+        email,
+        delivery.get('messageId') if isinstance(delivery, dict) else 'accepted',
+    )
     return Response({'message': 'OTP sent successfully'})
 
 
@@ -14184,30 +14273,56 @@ def reset_password(request):
         logger.info('Password reset attempted with invalid OTP for %s', email)
         return Response({'error': 'Invalid OTP'}, status=400)
 
-    user = User.objects.filter(id=cached_state.get('user_id')).first()
+    account_type = cached_state.get('account_type', 'student')
+    account_id = cached_state.get('account_id') or cached_state.get('user_id')
+    user = None
+    public_user = None
 
-    if not user:
-        cache.delete(f'password_reset_otp_{email}')
-        logger.warning('Password reset OTP state referenced missing user for %s', email)
-        return Response({'error': 'User not found'}, status=404)
+    if account_type == 'public':
+        public_user = PublicUser.objects.filter(
+            id=account_id,
+        ).filter(Q(email__iexact=email) | Q(username__iexact=email)).first()
+        if not public_user:
+            cache.delete(f'password_reset_otp_{email}')
+            return Response({'error': 'Public user account not found for this reset request'}, status=404)
+    else:
+        user = User.objects.filter(id=account_id).first()
+        if not user:
+            cache.delete(f'password_reset_otp_{email}')
+            logger.warning('Password reset OTP state referenced missing user for %s', email)
+            return Response({'error': 'User not found'}, status=404)
 
-    student_exists = Students.objects.filter(
-        Q(email__iexact=email) | Q(user__email__iexact=email) | Q(user__username__iexact=email),
-        user=user,
-    ).exists()
-    if not student_exists:
-        logger.warning('Password reset blocked because OTP user/email did not match a student account: %s', email)
-        return Response({'error': 'Student account not found for this reset request'}, status=404)
+        if account_type == 'student':
+            account_matches = Students.objects.filter(
+                Q(email__iexact=email) | Q(user__email__iexact=email) | Q(user__username__iexact=email),
+                user=user,
+            ).exists()
+        elif account_type == 'employee':
+            account_matches = Employee.objects.filter(
+                Q(email__iexact=email) | Q(user__email__iexact=email) | Q(user__username__iexact=email),
+                user=user,
+            ).exists()
+        else:
+            account_matches = bool(
+                (user.email or '').lower() == email or (user.username or '').lower() == email
+            )
+        if not account_matches:
+            logger.warning('Password reset blocked because OTP account/email did not match: %s', email)
+            return Response({'error': 'Account not found for this reset request'}, status=404)
 
     try:
         validate_password(new_password, user)
     except ValidationError as exc:
         return Response({'error': ' '.join(exc.messages)}, status=400)
 
-    user.set_password(new_password)
-    user.save()
+    if public_user:
+        public_user.password = make_password(new_password)
+        public_user.save(update_fields=['password', 'updated_at'])
+    else:
+        user.set_password(new_password)
+        user.save()
     cache.delete(f'password_reset_otp_{email}')
-    logger.info('Password reset completed successfully for %s', email)
+    logger.info('Password reset completed successfully for account_type=%s email=%s', account_type, email)
 
     return Response({'message': 'Password reset successfully'})
 
