@@ -535,6 +535,7 @@ class TestSerializer(serializers.ModelSerializer):
     created_by_name = serializers.SerializerMethodField()
     course_name = serializers.CharField(source='course.course_name', read_only=True)
     question_paper_url = serializers.SerializerMethodField()
+    assigned_batch_details = serializers.SerializerMethodField()
     
     class Meta:
         model = QuizTest
@@ -543,6 +544,7 @@ class TestSerializer(serializers.ModelSerializer):
             'course', 'course_name', 'test_date', 'start_time',
             'duration_minutes', 'instructions', 'question_paper',
             'question_paper_url', 'created_by', 'created_by_name', 'created_at',
+            'assigned_batch_details',
         ]
         read_only_fields = ['created_by', 'created_at']
     
@@ -557,6 +559,18 @@ class TestSerializer(serializers.ModelSerializer):
             return None
         url = obj.question_paper.url
         return request.build_absolute_uri(url) if request else url
+
+    def get_assigned_batch_details(self, obj):
+        return [
+            {
+                'id': assignment.batch_id,
+                'batch_number': assignment.batch.batch_number,
+                'batch_code': assignment.batch.batch_code,
+                'display_name': assignment.batch.batch_code or assignment.batch.batch_number,
+                'assigned_at': assignment.assigned_date,
+            }
+            for assignment in obj.assignedtest_set.select_related('batch').order_by('-assigned_date')
+        ]
 
 class AssignedTestSerializer(serializers.ModelSerializer):
     test_name = serializers.CharField(source='test.title', read_only=True)
@@ -976,6 +990,10 @@ class QuizSerializer(serializers.ModelSerializer):
                 'batch_number': batch.batch_number,
                 'batch_code': batch.batch_code,
                 'display_name': batch.batch_code or batch.batch_number,
+                # Quiz assignments historically use a direct M2M relation.
+                # updated_at is therefore the best compatible assignment time
+                # for existing and newly assigned quizzes.
+                'assigned_at': obj.updated_at,
             }
             for batch in batches
         ]

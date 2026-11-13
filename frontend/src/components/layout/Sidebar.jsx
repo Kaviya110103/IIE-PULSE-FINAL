@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
+import api from '../../api/client'
 
 const S = {
   sidebar: {
@@ -43,7 +44,7 @@ const S = {
     transition: 'all .15s', userSelect: 'none',
   }),
   subItem: (active) => ({
-    display: 'block', padding: '6px 16px 6px 44px', fontSize: 12,
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '6px 16px 6px 44px', fontSize: 12,
     color: active ? '#fff' : 'rgba(255,255,255,.55)',
     textDecoration: 'none', fontWeight: active ? 600 : 400,
     background: active ? 'rgba(21,114,232,.2)' : 'transparent',
@@ -62,23 +63,30 @@ function Icon({ name }) {
   return <i className={`fas ${name}`} style={{ width: 18, textAlign: 'center', fontSize: 14 }} />
 }
 
-function NavItem({ to, icon, label }) {
+function NotificationDot({ show }) {
+  return show ? <span aria-label="New unread item" title="New unread item" style={{ width: 10, height: 10, borderRadius: '50%', background: '#ff3158', border: '1px solid #ff9bad', boxShadow: '0 0 7px rgba(255,49,88,.9)', flexShrink: 0 }} /> : null
+}
+
+function NavItem({ to, icon, label, dot = false, onOpen }) {
   return (
     <NavLink to={to} end={to.split('/').filter(Boolean).length <= 1}
+      onClick={onOpen}
       style={({ isActive }) => S.navLink(isActive)}>
       <Icon name={icon} />
-      <span>{label}</span>
+      <span style={{ flex: 1 }}>{label}</span>
+      <NotificationDot show={dot} />
     </NavLink>
   )
 }
 
-function NavGroup({ icon, label, children }) {
+function NavGroup({ icon, label, children, dot = false, onOpen }) {
   const [open, setOpen] = useState(false)
   return (
     <>
-      <div style={S.groupHeader(open)} onClick={() => setOpen(o => !o)}>
+      <div style={S.groupHeader(open)} onClick={() => { setOpen(o => !o); onOpen?.() }}>
         <Icon name={icon} />
         <span style={{ flex: 1 }}>{label}</span>
+        <NotificationDot show={dot} />
         <i className="fas fa-chevron-right" style={{
           fontSize: 10, transition: 'transform .2s',
           transform: open ? 'rotate(90deg)' : 'none',
@@ -90,10 +98,10 @@ function NavGroup({ icon, label, children }) {
   )
 }
 
-function SubLink({ to, label }) {
+function SubLink({ to, label, dot = false, onOpen }) {
   return (
-    <NavLink to={to} style={({ isActive }) => S.subItem(isActive)}>
-      {label}
+    <NavLink to={to} onClick={onOpen} style={({ isActive }) => S.subItem(isActive)}>
+      <span>{label}</span><NotificationDot show={dot} />
     </NavLink>
   )
 }
@@ -213,22 +221,22 @@ function CounselorNav() {
 }
 
 // ── EMPLOYEE NAV ───────────────────────────────────────────────────────────
-function EmployeeNav() {
+function EmployeeNav({ alerts = {}, onSeen = () => {} }) {
   return (
     <>
       <NavItem to="/employee" icon="fa-home" label="Dashboard" />
       <SectionLabel label="My Activities" />
-      <NavGroup icon="fa-user-graduate" label="My Students">
-        <SubLink to="/employee/students" label="View Students" />
+      <NavGroup icon="fa-user-graduate" label="My Students" dot={alerts.my_students}>
+        <SubLink to="/employee/students" label="View Students" onOpen={() => onSeen('my_students')} />
         <SubLink to="/employee/reassigned-students" label="Reassigned Students" />
         <SubLink to="/employee/attendance" label="Attendance" />
       </NavGroup>
-      <NavGroup icon="fa-users" label="My Batches">
-        <SubLink to="/employee/batches" label="View Batches" />
+      <NavGroup icon="fa-users" label="My Batches" dot={alerts.my_batches}>
+        <SubLink to="/employee/batches" label="View Batches" onOpen={() => onSeen('my_batches')} />
       </NavGroup>
-      <NavItem to="/employee/doubts" icon="fa-question-circle" label="Student Doubts" />
-      <NavItem to="/employee/trainer-announcements" icon="fa-paper-plane" label="My Announcements" />
-      <NavItem to="/employee/announcements" icon="fa-bullhorn" label="Admin Announcements" />
+      <NavItem to="/employee/doubts" icon="fa-question-circle" label="Student Doubts" dot={alerts.student_doubts} onOpen={() => onSeen('student_doubts')} />
+      <NavItem to="/employee/trainer-announcements" icon="fa-paper-plane" label="My Announcements" dot={alerts.announcements} onOpen={() => onSeen('announcements')} />
+      <NavItem to="/employee/announcements" icon="fa-bullhorn" label="Admin Announcements" dot={alerts.announcements} onOpen={() => onSeen('announcements')} />
       <NavItem to="/employee/branch-announcements" icon="fa-map-marker-alt" label="Branch Announcements" />
       <NavItem to="/employee/monitoring/students" icon="fa-user-clock" label="Student Login Records" />
       <NavItem to="/employee/daily-activity-results" icon="fa-bolt" label="Daily Activity Result" />
@@ -237,21 +245,21 @@ function EmployeeNav() {
       <NavGroup icon="fa-pencil-alt" label="Technical Tests">
         <SubLink to="/employee/tests/create" label="Create Technical Test" />
         <SubLink to="/employee/tests" label="Manage Technical Tests" />
-        <SubLink to="/employee/test-results" label="Test Results" />
+        <SubLink to="/employee/test-results" label="Test Results" dot={alerts.test_results} onOpen={() => onSeen('test_results')} />
       </NavGroup>
       <NavGroup icon="fa-pencil-alt" label="Quizzes">
         <SubLink to="/employee/quiz/upload" label="Upload Quiz" />
         <SubLink to="/employee/quiz" label="Manage Quizzes" />
-        <SubLink to="/employee/quiz-results" label="Quiz Results" />
+        <SubLink to="/employee/quiz-results" label="Quiz Results" dot={alerts.quiz_results} onOpen={() => onSeen('quiz_results')} />
       </NavGroup>
-      <NavGroup icon="fa-calendar-alt" label="Leave Management">
-        <SubLink to="/employee/student-leave/pending" label="Student Leave Requests" />
+      <NavGroup icon="fa-calendar-alt" label="Leave Management" dot={alerts.leave_management}>
+        <SubLink to="/employee/student-leave/pending" label="Student Leave Requests" onOpen={() => onSeen('leave_management')} />
         {/* <SubLink to="/employee/student-leave/history" label="Student Leave History" /> */}
         <SubLink to="/employee/leave/apply" label="Apply Leave" />
         {/* <SubLink to="/employee/leave/history" label="My Leave History" /> */}
       </NavGroup>
-      <NavGroup icon="fa-headset" label="Support Request">
-        <SubLink to="/employee/support/new" label="Support Request" />
+      <NavGroup icon="fa-headset" label="Support Request" dot={alerts.support_requests}>
+        <SubLink to="/employee/support/new" label="Support Request" onOpen={() => onSeen('support_requests')} />
         {/* <SubLink to="/employee/support" label="Support Request Status" /> */}
       </NavGroup>
       <NavItem to="/employee/completed" icon="fa-graduation-cap" label="My Graduates" />
@@ -326,6 +334,43 @@ function PublicNav() {
 // ── MAIN EXPORT ────────────────────────────────────────────────────────────
 export default function Sidebar({ role, isOpen = true }) {
   const { user, logout } = useAuth()
+  const [employeeAlerts, setEmployeeAlerts] = useState({})
+  const employeeAlertIdentity = user?.employee_id || user?.id || user?.username
+
+  useEffect(() => {
+    // Employee login payload exposes employee_id (not user.id), so use a
+    // stable fallback identity to make sure the alert request always runs.
+    if (role !== 'employee' || !employeeAlertIdentity) return undefined
+    let active = true
+    const storageKey = `iie-pulse:staff-sidebar-seen:${employeeAlertIdentity}`
+    const loadAlerts = () => api.get('/staff/sidebar-alerts/').then(({ data }) => {
+      if (!active) return
+      const seen = JSON.parse(window.localStorage.getItem(storageKey) || '{}')
+      const next = {}
+      Object.entries(data?.events || {}).forEach(([key, event]) => {
+        next[key] = Boolean(event?.count) && (!seen[key] || (event.latest_at && event.latest_at > seen[key]))
+      })
+      setEmployeeAlerts(next)
+    }).catch(() => active && setEmployeeAlerts({}))
+
+    loadAlerts()
+    const refreshTimer = window.setInterval(loadAlerts, 15000)
+    window.addEventListener('focus', loadAlerts)
+    return () => {
+      active = false
+      window.clearInterval(refreshTimer)
+      window.removeEventListener('focus', loadAlerts)
+    }
+  }, [role, employeeAlertIdentity])
+
+  const markEmployeeAlertSeen = (key) => {
+    if (role !== 'employee' || !employeeAlertIdentity) return
+    const storageKey = `iie-pulse:staff-sidebar-seen:${employeeAlertIdentity}`
+    const seen = JSON.parse(window.localStorage.getItem(storageKey) || '{}')
+    seen[key] = new Date().toISOString()
+    window.localStorage.setItem(storageKey, JSON.stringify(seen))
+    setEmployeeAlerts(current => ({ ...current, [key]: false }))
+  }
 
   const navMap = { admin: AdminNav, counselor: CounselorNav, employee: EmployeeNav, student: StudentNav, public: PublicNav }
   const Nav = navMap[role] || AdminNav
@@ -362,7 +407,7 @@ export default function Sidebar({ role, isOpen = true }) {
 
       {/* Nav items */}
       <nav style={{ flex: 1, paddingBottom: 8 }}>
-        <Nav />
+        <Nav alerts={employeeAlerts} onSeen={markEmployeeAlertSeen} />
       </nav>
 
       {/* Logout */}
