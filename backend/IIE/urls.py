@@ -46,6 +46,7 @@ urlpatterns = [
     path('api/staff/daily-activity-results/', v.staff_daily_activity_results),
     path('api/challenge/questions/generate/', v.generate_challenge_questions),
     path('api/dashboard/counselor/', v.CounselorDashboardView.as_view()),
+    path('api/staff/sidebar-alerts/', v.staff_sidebar_alerts),
 
     # â”€â”€ ID GENERATORS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     path('api/generate/staff-id/', v.get_next_staff_id),
