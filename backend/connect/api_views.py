@@ -3926,17 +3926,69 @@ def _sync_reassigned_student_progress_for_batch(batch):
 
 
 def _reconcile_batch_completion_audit(batch):
-    """Retained as a safe compatibility hook for old callers.
+    """Repair explicit legacy trainer completions after a session-state upgrade.
 
-    A page read must never change completion state.  The historical audit is
-    intentionally not reconciled into CourseSession records here.
+    Earlier releases persisted a trainer action in ``DailySessionCompletion``
+    but did not always copy it to ``CourseSession.staff_completed``.  Those
+    rows are real trainer completions, and without this compatibility repair a
+    deployed update makes students see "Waiting for Trainer" again.  Only
+    audits explicitly saved with ``completed=True`` qualify; pending activity
+    rows and attendance data are never used to complete a session.
     """
-    # DailySessionCompletion is a historical activity audit, not the source of
-    # truth for a session checkbox. Earlier code promoted audit rows during
-    # ordinary page reads, which made sessions look completed without a trainer
-    # explicitly marking them. Completion is now changed only by the dedicated
-    # staff-complete/staff-unmark endpoints.
-    return False
+    if not batch:
+        return 0
+
+    legacy_rows = {
+        item.session_id: item
+        for item in DailySessionCompletion.objects.filter(
+            session__batch=batch,
+            completed=True,
+        ).select_related('faculty').order_by('session_id', '-completed_at', '-id')
+    }
+    if not legacy_rows:
+        return 0
+
+    repaired = 0
+    for session in CourseSession.objects.filter(
+        batch=batch,
+        id__in=legacy_rows.keys(),
+        staff_completed=False,
+    ):
+        audit = legacy_rows[session.id]
+        completed_at = audit.completed_at or timezone.make_aware(
+            datetime.combine(audit.completion_date, datetime.min.time())
+        )
+        session.staff_completed = True
+        session.completed_date = completed_at
+        session.completed_by = audit.faculty
+        session.save(update_fields=['staff_completed', 'completed_date', 'completed_by', 'updated_at'])
+
+        # Preserve a student's already-completed confirmation while making
+        # the trainer state visible for legacy pending/not-started records.
+        for student in active_students_for_batch(batch):
+            progress, _ = Student_Session_Progress.objects.get_or_create(
+                student=student,
+                session=session,
+            )
+            if not progress.staff_completed:
+                progress.staff_completed = True
+                progress.staff_completed_at = completed_at
+                if progress.student_status == 'not_started':
+                    progress.student_status = 'pending'
+                progress.save(update_fields=['staff_completed', 'staff_completed_at', 'student_status', 'updated_at'])
+
+            status_obj, _ = StudentSessionStatus.objects.get_or_create(
+                student=student,
+                session=session,
+            )
+            if not status_obj.staff_completed:
+                status_obj.staff_completed = True
+                status_obj.staff_completed_at = completed_at
+                if status_obj.student_status == 'not_started':
+                    status_obj.student_status = 'pending'
+                status_obj.save(update_fields=['staff_completed', 'staff_completed_at', 'student_status'])
+        repaired += 1
+    return repaired
 
 
 # -- ATTENDANCE ----------------------------------------------------------------
@@ -12665,13 +12717,18 @@ def student_quizzes(request):
         _publish_due_quizzes()
         student = Students.objects.get(user=request.user)
         student_batches_list = _student_current_content_batches(student)
-        if not student_batches_list:
+        student_batch_ids = list({batch.id for batch in student_batches_list if batch and batch.id})
+        if not student_batch_ids:
             return Response({'results': []})
         
+        # Use the complete active enrollment ID set. A student can belong to
+        # more than one course or parallel batch, and each batch can receive a
+        # different staff quiz. Filtering through the legacy primary batch
+        # would silently hide quizzes from the student's other active batches.
         quizzes = Quiz.objects.filter(
             (
                 Q(quiz_scope='staff_batch') &
-                (Q(assigned_batches__in=student_batches_list) | Q(batch__in=student_batches_list))
+                (Q(assigned_batches__id__in=student_batch_ids) | Q(batch_id__in=student_batch_ids))
             ) |
             Q(quiz_scope='admin_global', audience__in=['students', 'both']),
             is_published=True
@@ -12717,7 +12774,7 @@ def student_quizzes(request):
                 'status': 'completed' if is_completed else 'available',
                 'last_attempt_id': best_score.id if best_score else None,
                 'completed_at': best_score.submitted_at if best_score else None,
-                'batch_id': quiz.batch_id or next((batch.id for batch in quiz.assigned_batches.all() if batch.id in {item.id for item in student_batches_list}), None),
+                'batch_id': quiz.batch_id or next((batch.id for batch in quiz.assigned_batches.all() if batch.id in student_batch_ids), None),
                 'batch_number': quiz.batch.batch_number if quiz.batch else ', '.join(batch.batch_number for batch in quiz.assigned_batches.all()),
                 'course_name': quiz.batch.course_name.course_name if quiz.batch and quiz.batch.course_name else '',
                 'questions': questions_data

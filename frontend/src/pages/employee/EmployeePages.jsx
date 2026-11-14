@@ -6269,6 +6269,7 @@ export function ManageQuizzes() {
 
 export function StaffQuizResults() {
   const [results, setResults] = useState([])
+  const [searchTerm, setSearchTerm] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [review, setReview] = useState(null)
@@ -6314,6 +6315,19 @@ export function StaffQuizResults() {
 
   const formatPercent = (value) => Number(value || 0).toFixed(1)
 
+  const filteredResults = results.filter((result) => {
+    const term = searchTerm.trim().toLowerCase()
+    if (!term) return true
+    return [
+      result.student_name,
+      result.student?.first_name,
+      result.student_id,
+      result.student?.student_id,
+      result.quiz_title,
+      result.quiz?.title,
+    ].some((value) => String(value || '').toLowerCase().includes(term))
+  })
+
   const loadReview = async (attemptId) => {
     if (!attemptId || String(attemptId).startsWith('public-')) {
       toast.error('Question-wise review is not available for this result')
@@ -6354,14 +6368,25 @@ export function StaffQuizResults() {
 
       <div className="employee-card">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <SH title="Quiz Results" count={results.length} />
-          <button className="employee-btn employee-btn-sm employee-btn-primary" onClick={loadResults}>
-            <i className="fas fa-sync-alt" /> Refresh
-          </button>
+          <SH title="Quiz Results" count={filteredResults.length} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <div className="employee-search" style={{ minWidth: 230 }}>
+              <i className="fas fa-search" />
+              <input
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                placeholder="Search student, ID or quiz"
+                aria-label="Search quiz results"
+              />
+            </div>
+            <button className="employee-btn employee-btn-sm employee-btn-primary" onClick={loadResults}>
+              <i className="fas fa-sync-alt" /> Refresh
+            </button>
+          </div>
         </div>
 
-        {results.length === 0 ? (
-          <Empty msg="No quiz results available yet" icon="fa-chart-line" />
+        {filteredResults.length === 0 ? (
+          <Empty msg={results.length ? 'No quiz results match your search' : 'No quiz results available yet'} icon="fa-chart-line" />
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table className="employee-table">
@@ -6379,7 +6404,7 @@ export function StaffQuizResults() {
                 </tr>
               </thead>
               <tbody>
-                {results.map((result, idx) => {
+                {filteredResults.map((result, idx) => {
                   const percentage = Number(result.percentage || 0)
                   const isPassed = result.is_passed
                   const canReview = !String(result.id || '').startsWith('public-')

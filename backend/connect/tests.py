@@ -1223,6 +1223,34 @@ class ParallelCourseWorkflowTests(TransactionTestCase):
         material_ids = {item['id'] for item in response.json()['results']}
         self.assertSetEqual(material_ids, {first.id, second.id})
 
+    def test_student_sees_separately_uploaded_quizzes_from_every_parallel_batch(self):
+        morning_quiz = Quiz.objects.create(
+            title='Morning parallel quiz', quiz_scope='staff_batch',
+            created_by=self.trainer_one, is_published=True,
+        )
+        morning_quiz.assigned_batches.add(self.batch_one)
+        evening_quiz = Quiz.objects.create(
+            title='Evening parallel quiz', quiz_scope='staff_batch',
+            created_by=self.trainer_two, is_published=True,
+        )
+        evening_quiz.assigned_batches.add(self.batch_two)
+        for quiz in (morning_quiz, evening_quiz):
+            QuizQuestion.objects.create(
+                quiz=quiz,
+                question_number=1,
+                question_text='Parallel quiz question?',
+                option_a='Yes',
+                option_b='No',
+                correct_answer='A',
+            )
+
+        self.client.force_authenticate(user=self.student_user)
+        response = self.client.get('/api/quiz/student/')
+
+        self.assertEqual(response.status_code, 200)
+        quiz_titles = {item['title'] for item in response.json()['results']}
+        self.assertSetEqual(quiz_titles, {morning_quiz.title, evening_quiz.title})
+
     def test_download_restores_a_missing_legacy_material_file(self):
         with tempfile.TemporaryDirectory() as media_root:
             with override_settings(MEDIA_ROOT=media_root):
