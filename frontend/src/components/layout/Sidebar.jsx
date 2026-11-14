@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { NavLink } from 'react-router-dom'
+import { NavLink, useLocation } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import api from '../../api/client'
 
@@ -64,7 +64,7 @@ function Icon({ name }) {
 }
 
 function NotificationDot({ show }) {
-  return show ? <span aria-label="New unread item" title="New unread item" style={{ width: 10, height: 10, borderRadius: '50%', background: '#ff3158', border: '1px solid #ff9bad', boxShadow: '0 0 7px rgba(255,49,88,.9)', flexShrink: 0 }} /> : null
+  return show ? <span aria-label="New unread item" title="New unread item" style={{ width: 10, height: 10, borderRadius: '50%', background: '#22c55e', border: '1px solid #86efac', boxShadow: '0 0 7px rgba(34,197,94,.8)', flexShrink: 0 }} /> : null
 }
 
 function NavItem({ to, icon, label, dot = false, onOpen }) {
@@ -334,8 +334,19 @@ function PublicNav() {
 // ── MAIN EXPORT ────────────────────────────────────────────────────────────
 export default function Sidebar({ role, isOpen = true }) {
   const { user, logout } = useAuth()
+  const location = useLocation()
   const [employeeAlerts, setEmployeeAlerts] = useState({})
+  const [employeeAlertEvents, setEmployeeAlertEvents] = useState({})
   const employeeAlertIdentity = user?.employee_id || user?.id || user?.username
+
+  const markEmployeeAlertSeen = (key, seenAt) => {
+    if (role !== 'employee' || !employeeAlertIdentity) return
+    const storageKey = `iie-pulse:staff-sidebar-seen:${employeeAlertIdentity}`
+    const seen = JSON.parse(window.localStorage.getItem(storageKey) || '{}')
+    seen[key] = seenAt || employeeAlertEvents[key]?.latest_at || new Date().toISOString()
+    window.localStorage.setItem(storageKey, JSON.stringify(seen))
+    setEmployeeAlerts(current => ({ ...current, [key]: false }))
+  }
 
   useEffect(() => {
     // Employee login payload exposes employee_id (not user.id), so use a
@@ -346,10 +357,14 @@ export default function Sidebar({ role, isOpen = true }) {
     const loadAlerts = () => api.get('/staff/sidebar-alerts/').then(({ data }) => {
       if (!active) return
       const seen = JSON.parse(window.localStorage.getItem(storageKey) || '{}')
+        const events = data?.events || {}
       const next = {}
-      Object.entries(data?.events || {}).forEach(([key, event]) => {
-        next[key] = Boolean(event?.count) && (!seen[key] || (event.latest_at && event.latest_at > seen[key]))
-      })
+        Object.entries(events).forEach(([key, event]) => {
+          const latestAt = event?.latest_at ? Date.parse(event.latest_at) : 0
+          const seenAt = seen[key] ? Date.parse(seen[key]) : 0
+          next[key] = Boolean(event?.count) && (!seenAt || latestAt > seenAt)
+        })
+        setEmployeeAlertEvents(events)
       setEmployeeAlerts(next)
     }).catch(() => active && setEmployeeAlerts({}))
 
@@ -363,14 +378,22 @@ export default function Sidebar({ role, isOpen = true }) {
     }
   }, [role, employeeAlertIdentity])
 
-  const markEmployeeAlertSeen = (key) => {
-    if (role !== 'employee' || !employeeAlertIdentity) return
-    const storageKey = `iie-pulse:staff-sidebar-seen:${employeeAlertIdentity}`
-    const seen = JSON.parse(window.localStorage.getItem(storageKey) || '{}')
-    seen[key] = new Date().toISOString()
-    window.localStorage.setItem(storageKey, JSON.stringify(seen))
-    setEmployeeAlerts(current => ({ ...current, [key]: false }))
-  }
+  useEffect(() => {
+    if (role !== 'employee') return
+    const routeAlertMap = [
+      ['/employee/students', 'my_students'],
+      ['/employee/batches', 'my_batches'],
+      ['/employee/doubts', 'student_doubts'],
+      ['/employee/trainer-announcements', 'announcements'],
+      ['/employee/announcements', 'announcements'],
+      ['/employee/test-results', 'test_results'],
+      ['/employee/quiz-results', 'quiz_results'],
+      ['/employee/student-leave', 'leave_management'],
+      ['/employee/support', 'support_requests'],
+    ]
+    const matchingRoute = routeAlertMap.find(([path]) => location.pathname.startsWith(path))
+    if (matchingRoute) markEmployeeAlertSeen(matchingRoute[1])
+  }, [location.pathname, role, employeeAlertIdentity, employeeAlertEvents])
 
   const navMap = { admin: AdminNav, counselor: CounselorNav, employee: EmployeeNav, student: StudentNav, public: PublicNav }
   const Nav = navMap[role] || AdminNav

@@ -949,11 +949,15 @@ def generate_student_id(branch):
         'kunniyamuthur': 'KUNIYA',
     }
 
-    prefix = branch_prefix_map.get(branch.lower(), 'STU')
-    pattern = f"{prefix}-STU"
+    prefix = branch_prefix_map.get((branch or '').lower(), 'STU')
+    legacy_pattern = f"{prefix}-STU"
+    current_pattern = f"IIE-{prefix}-STU"
 
+    # Keep the sequence continuous while moving new IDs to the IIE-prefixed
+    # format. Existing student records retain their original IDs.
     existing_ids = Students.objects.filter(
-        student_id__startswith=pattern
+        Q(student_id__startswith=legacy_pattern) |
+        Q(student_id__startswith=current_pattern)
     ).values_list('student_id', flat=True)
 
     max_number = 0
@@ -964,7 +968,7 @@ def generate_student_id(branch):
             max_number = max(max_number, int(match.group(1)))
 
     next_number = max_number + 1
-    return f"{prefix}-STU{next_number:03d}"
+    return f"IIE-{prefix}-STU{next_number:03d}"
 
 # -- AUTH ---------------------------------------------------------------------
 
@@ -981,8 +985,15 @@ class LoginView(APIView):
         user_type = serializer.validated_data['user_type']
 
         if user_type == 'student':
+            student_id_query = Q(student_id__iexact=username)
+            if not username.upper().startswith('IIE-'):
+                # Continue accepting an old printed ID after the database
+                # records have been moved to the IIE-prefixed format.
+                student_id_query |= Q(student_id__iexact=f'IIE-{username}')
             student = Students.objects.filter(
-                Q(student_id__iexact=username) | Q(email__iexact=username) | Q(user__username__iexact=username)
+                student_id_query |
+                Q(email__iexact=username) |
+                Q(user__username__iexact=username)
             ).select_related('user').first()
             if student:
                 username = student.user.username
@@ -4105,6 +4116,7 @@ def _send_batch_duration_notifications(batch, staff, from_user, attendance_date)
 
     batch_name = batch.batch_number or str(batch)
     mentor_name = _mentor_name(staff)
+    date_key = attendance_date.strftime('%Y-%m-%d')
     sent_count = 0
 
     # Send one reminder as soon as attendance is marked in the final ten days.
@@ -4413,7 +4425,14 @@ def mark_attendance(request):
         except Students.DoesNotExist:
             pass
     if created:
-        batch_duration_alerts = _send_batch_duration_notifications(batch, selected_staff, request.user, attendance_date)
+        try:
+            batch_duration_alerts = _send_batch_duration_notifications(
+                batch, selected_staff, request.user, attendance_date
+            )
+        except Exception:
+            # Attendance has already been stored. Notification delivery must
+            # never turn a successful attendance save into a client error.
+            logger.exception('Attendance saved but batch duration notification failed.')
     return Response({
         'message': f'{len(created)} records saved.',
         'records': created,

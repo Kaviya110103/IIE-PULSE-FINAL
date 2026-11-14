@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect } from 'react'
-import api, { getApiErrorMessage, logoutSession, resetInactivityTimer } from '../api/client'
+import api, { clearAuthStorage, getApiErrorMessage, logoutSession, resetInactivityTimer } from '../api/client'
 
 const AuthContext = createContext(null)
 
@@ -70,7 +70,7 @@ export function AuthProvider({ children }) {
         resetInactivityTimer()
         if (!cancelled) setUser(storedUser)
       } catch {
-        localStorage.clear()
+        clearAuthStorage()
         if (!cancelled) setUser(null)
       } finally {
         if (!cancelled) setLoading(false)
@@ -127,7 +127,7 @@ export function AuthProvider({ children }) {
       try {
         await api.post('/public-users/logout/', { username: user.username })
       } finally {
-        localStorage.clear()
+        clearAuthStorage()
         setUser(null)
         window.location.replace('/login')
       }
