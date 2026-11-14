@@ -141,7 +141,7 @@ class BatchTrainerAssignment ( models.Model ) :
         
         
 class Students ( models.Model ) :
-    student_id = models.CharField ( max_length = 20 , unique = True )
+    student_id = models.CharField ( max_length = 30 , unique = True )
     email = models.EmailField ( unique = True )
     first_name = models.CharField ( max_length = 100 )
     last_name = models.CharField ( max_length = 100 , blank = True )
@@ -1555,8 +1555,8 @@ class CompletedStudent(models.Model):
     ]
     
     # Original student details
-    original_student_id = models.CharField(max_length=20)
-    student_id = models.CharField(max_length=20)
+    original_student_id = models.CharField(max_length=30)
+    student_id = models.CharField(max_length=30)
     email = models.EmailField()
     first_name = models.CharField(max_length=100)
     last_name = models.CharField(max_length=100, blank=True)

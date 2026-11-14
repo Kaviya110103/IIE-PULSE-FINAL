@@ -208,6 +208,15 @@ class BatchSerializer(serializers.ModelSerializer):
 
     def _trainer_assignments(self, obj):
         try:
+            cached = getattr(obj, '_prefetched_objects_cache', {}).get('trainer_assignments')
+            if cached is not None:
+                return sorted(
+                    cached,
+                    key=lambda assignment: (
+                        not assignment.is_primary,
+                        assignment.trainer.first_name if assignment.trainer else '',
+                    ),
+                )
             return list(obj.trainer_assignments.select_related('trainer').order_by('-is_primary', 'trainer__first_name'))
         except Exception:
             return []
@@ -298,6 +307,12 @@ class StudentSerializer(serializers.ModelSerializer):
         return None
 
     def _active_course_enrollments(self, obj):
+        cached = getattr(obj, '_prefetched_objects_cache', {}).get('course_enrollments')
+        if cached is not None:
+            return sorted(
+                (enrollment for enrollment in cached if enrollment.is_active),
+                key=lambda enrollment: enrollment.course.course_name if enrollment.course else '',
+            )
         return obj.course_enrollments.filter(is_active=True).select_related('course').order_by('course__course_name')
 
     def _batch_summary(self, batch):
@@ -342,7 +357,13 @@ class StudentSerializer(serializers.ModelSerializer):
         for enrollment in self._active_course_enrollments(obj):
             course = enrollment.course
             batches = []
-            for batch_enrollment in enrollment.batch_assignments.filter(is_active=True).select_related('batch', 'batch__course_name'):
+            cached_assignments = getattr(enrollment, '_prefetched_objects_cache', {}).get('batch_assignments')
+            batch_assignments = (
+                [item for item in cached_assignments if item.is_active]
+                if cached_assignments is not None
+                else enrollment.batch_assignments.filter(is_active=True).select_related('batch', 'batch__course_name')
+            )
+            for batch_enrollment in batch_assignments:
                 batches.append(self._batch_summary(batch_enrollment.batch))
             enrollments.append({
                 'enrollment_id': enrollment.id,
@@ -371,7 +392,16 @@ class StudentSerializer(serializers.ModelSerializer):
     def get_assigned_batches(self, obj):
         batches = []
         seen = set()
-        enrollments = obj.batch_enrollments.filter(is_active=True).select_related('batch', 'batch__course_name').order_by('-assigned_at')
+        cached_enrollments = getattr(obj, '_prefetched_objects_cache', {}).get('batch_enrollments')
+        enrollments = (
+            sorted(
+                (item for item in cached_enrollments if item.is_active),
+                key=lambda item: item.assigned_at,
+                reverse=True,
+            )
+            if cached_enrollments is not None
+            else obj.batch_enrollments.filter(is_active=True).select_related('batch', 'batch__course_name').order_by('-assigned_at')
+        )
         for enrollment in enrollments:
             batch = enrollment.batch
             seen.add(batch.id)
