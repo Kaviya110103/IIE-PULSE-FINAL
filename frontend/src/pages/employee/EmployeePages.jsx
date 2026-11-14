@@ -4731,32 +4731,15 @@ export function ViewStudents() {
   const loadStudents = async () => {
     setLoading(true)
     try {
-      // First get trainer's batches
-      const batchesRes = await api.get('/batches/')
-      const batches = batchesRes.data.results || batchesRes.data || []
-
-      // Get students from each batch
-      let allStudents = []
-      for (const batch of batches) {
-        try {
-          const studentsRes = await api.get(`/batches/${batch.id}/students/`)
-          const batchStudents = studentsRes.data || []
-          allStudents = [...allStudents, ...batchStudents.map(s => ({
-            ...s,
-            batch_number: batch.batch_number
-          }))]
-        } catch (err) {
-          console.error(`Error loading students for batch ${batch.id}:`, err)
-        }
-      }
-
-      // Remove duplicates
-      const uniqueStudents = Array.from(
-        new Map(allStudents.map(s => [s.id, s])).values()
-      )
-
-      setStudents(uniqueStudents)
-      console.log(`Loaded ${uniqueStudents.length} students from ${batches.length} batches`)
+      // The backend already scopes this endpoint to the logged-in trainer.
+      // One request replaces the previous one-request-per-batch waterfall.
+      const response = await api.get('/students/')
+      const rows = response.data.results || response.data || []
+      setStudents(rows.map(student => ({
+        ...student,
+        batch_number: student.assigned_batch_code || student.assigned_batch_number ||
+          student.assigned_batches?.map(batch => getBatchDisplayName(batch)).join(', ') || '—',
+      })))
 
     } catch (err) {
       console.error('Failed to load students:', err)

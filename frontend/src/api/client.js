@@ -8,6 +8,12 @@ const INACTIVITY_LIMIT = 5 * 60 * 1000
 let inactivityTimer = null
 let logoutInProgress = false
 
+// Preserve device-level preferences such as staff sidebar read markers when a
+// user signs out. Only authentication data belongs to the session lifecycle.
+export const clearAuthStorage = () => {
+  ;['access', 'refresh', 'user'].forEach(key => localStorage.removeItem(key))
+}
+
 const resolveApiUrl = (path) => {
   const root = String(baseURL || '').replace(/\/$/, '')
   const suffix = path.startsWith('/') ? path : `/${path}`
@@ -55,7 +61,7 @@ export const logoutSession = async ({ redirect = true, keepalive = false } = {})
   } catch {
     // Closing tabs may cancel requests; the backend also expires stale sessions.
   } finally {
-    localStorage.clear()
+    clearAuthStorage()
     if (inactivityTimer) clearTimeout(inactivityTimer)
     if (redirect) window.location.href = '/login'
     logoutInProgress = false
@@ -103,7 +109,7 @@ api.interceptors.response.use(
         const refresh = localStorage.getItem('refresh')
 
         if (!refresh) {
-          localStorage.clear()
+          clearAuthStorage()
           window.location.href = '/login'
           return Promise.reject(err)
         }
@@ -115,7 +121,7 @@ api.interceptors.response.use(
 
         return api(orig)
       } catch {
-        localStorage.clear()
+        clearAuthStorage()
         window.location.href = '/login'
       }
     }

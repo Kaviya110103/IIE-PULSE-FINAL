@@ -64,7 +64,7 @@ from .services.challenge_service import (
     submit_challenge_day,
     validate_question_eligibility,
 )
-from .api_views import _send_batch_duration_notifications
+from .api_views import _send_batch_duration_notifications, generate_student_id
 from .student_counts import completed_students_for_staff
 
 
@@ -84,6 +84,24 @@ class AccountEmailWorkflowTests(TestCase):
             duration='1 month',
             fee=1000,
         )
+
+    def test_generated_student_id_uses_iie_prefix_and_preserves_branch_sequence(self):
+        Students.objects.create(
+            student_id='100FT-STU182',
+            email='legacy.id@example.com',
+            first_name='Legacy',
+            last_name='Student',
+            mobile_no='9000000110',
+            date_of_birth=date(2000, 1, 1),
+            city='Coimbatore',
+            state='Tamil Nadu',
+            qualification='Graduate',
+            course=self.course.course_name,
+            gender='Female',
+            branch='100ft',
+        )
+
+        self.assertEqual(generate_student_id('100ft'), 'IIE-100FT-STU183')
 
     @patch('connect.api_views.send_email_async')
     def test_creating_student_queues_welcome_credentials_email(self, send_email_async_mock):
