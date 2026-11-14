@@ -6017,8 +6017,6 @@ def staff_resolve_student_support(request, pk):
     support.status = 'resolved'
     support.save(update_fields=['status', 'updated_at'])
     return Response(StudentSupportRequestSerializer(support).data)
-
-
 class CounselorSupportListView(generics.ListCreateAPIView):
     queryset = CounselorSupportRequest.objects.all().order_by('-created_at')
     serializer_class = CounselorSupportRequestSerializer

@@ -1321,8 +1321,6 @@ class ParallelCourseWorkflowTests(TransactionTestCase):
         progress.refresh_from_db()
         self.assertEqual(progress.total_sessions, 1)
         self.assertEqual(progress.completed_sessions, 1)
-
-
 class StaffWorkflowRegressionTests(TestCase):
     def setUp(self):
         self.client = APIClient()
