@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { CheckCircle2, ChevronLeft, ChevronRight, LogIn, MapPin, Sparkles, UserPlus } from 'lucide-react'
+import { CheckCircle2, ChevronLeft, ChevronRight, FileCheck2, LogIn, MapPin, Sparkles, UserPlus } from 'lucide-react'
 import api, { getApiErrorMessage } from '../../api/client'
 import { useAuth } from '../../context/AuthContext'
 import { IIEProudCarousel, StudentPageHeader, StudentSectionHeader, StudentStyles } from '../student/StudentPages'
@@ -19,6 +19,7 @@ const sourceOptions = ['Google', 'Facebook', 'Instagram', 'LinkedIn', 'Friends',
 const accessStyles = `
   .public-access { min-height: 100vh; background: #f4f7fb; color: #10213a; font-family: 'Public Sans', Arial, sans-serif; }
   .public-nav { height: 68px; display: flex; align-items: center; justify-content: space-between; padding: 0 clamp(20px, 5vw, 76px); background: #fff; border-bottom: 1px solid #dfe7f1; }
+  .public-nav-actions { display: flex; align-items: center; gap: 9px; }
   .public-brand { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
   .public-brand img { width: 42px; height: 42px; object-fit: contain; border-radius: 8px; background: #fff; }
   .public-brand strong { display: block; font-family: Georgia, serif; font-size: 19px; color: #10213a; }
@@ -99,7 +100,10 @@ export function PublicLanding() {
     <style>{accessStyles}</style>
     <header className="public-nav">
       <Brand />
-      <button type="button" className="public-nav-action" onClick={() => navigate('/login')}>Existing user? Sign In</button>
+      <div className="public-nav-actions">
+        <button type="button" className="public-button secondary" style={{ minHeight: 36, padding: '0 13px' }} onClick={() => navigate('/certificate')}><FileCheck2 size={15} /> Certificate</button>
+        <button type="button" className="public-nav-action" onClick={() => navigate('/login')}>Existing user? Sign In</button>
+      </div>
     </header>
     <main className="public-hero">
       <section>
@@ -109,6 +113,7 @@ export function PublicLanding() {
         <div className="public-hero-actions">
           <button type="button" className="public-button" onClick={() => navigate('/register')}><UserPlus size={17} /> Register Now</button>
           <button type="button" className="public-button secondary" onClick={() => navigate('/login')}><LogIn size={17} /> Sign In</button>
+          <button type="button" className="public-button secondary" onClick={() => navigate('/certificate')}><FileCheck2 size={17} /> Certificates</button>
         </div>
         <div className="public-steps"><span className="public-step"><b>1</b> Register</span><span className="public-step"><b>2</b> Select branch</span><span className="public-step"><b>3</b> Get connected</span></div>
       </section>
@@ -128,6 +133,52 @@ export function PublicLanding() {
       </aside>
     </main>
   </div>
+}
+
+export function PublicCertificateLookup() {
+  const navigate = useNavigate()
+  const [studentId, setStudentId] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const showCertificate = async event => {
+    event.preventDefault()
+    const value = studentId.trim()
+    if (!value) return toast.error('Enter your Student ID')
+    setLoading(true)
+    try {
+      const response = await api.get(`/public/certificates/${encodeURIComponent(value)}/`, { responseType: 'blob' })
+      const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }))
+      window.open(url, '_blank', 'noopener,noreferrer')
+      window.setTimeout(() => window.URL.revokeObjectURL(url), 60_000)
+    } catch (error) {
+      let message = 'No generated certificate was found for this Student ID.'
+      if (error.response?.data instanceof Blob) {
+        try {
+          const payload = JSON.parse(await error.response.data.text())
+          message = payload.error || message
+        } catch { /* Use the friendly fallback. */ }
+      }
+      toast.error(message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="public-access">
+      <style>{accessStyles}</style>
+      <header className="public-nav"><Brand /><div className="public-nav-actions"><button type="button" className="public-button secondary" style={{ minHeight: 36, padding: '0 13px' }} onClick={() => navigate('/')}>Home</button><button type="button" className="public-nav-action" onClick={() => navigate('/login')}>Sign In</button></div></header>
+      <main className="public-register" style={{ display: 'grid', placeItems: 'center' }}>
+        <section className="public-register-card" style={{ width: 'min(100%, 520px)' }}>
+          <div className="public-register-heading"><h1>Certificate Verification</h1><p>Enter your Student ID to view a certificate published by IIE.</p></div>
+          <form className="public-form" onSubmit={showCertificate}>
+            <div className="public-field"><label htmlFor="certificate-student-id">Student ID</label><input id="certificate-student-id" value={studentId} onChange={event => setStudentId(event.target.value.toUpperCase())} placeholder="Example: IIE-100FT-STU183" autoComplete="off" /></div>
+            <div className="public-form-foot"><p>Certificates are available after administrator approval.</p><button className="public-button" type="submit" disabled={loading}>{loading ? 'Opening...' : <><FileCheck2 size={17} /> View Certificate</>}</button></div>
+          </form>
+        </section>
+      </main>
+    </div>
+  )
 }
 
 const readableDate = value => {

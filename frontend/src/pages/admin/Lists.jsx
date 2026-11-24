@@ -681,15 +681,16 @@ export function StudentsList({ adminView = true }) {
     setSearchParams(next, { replace: true })
   }
 
-  const handleCompleteStudent = async (student) => {
+  const handleCompleteStudent = async (student, courseEnrollment = null) => {
     const name = `${student.first_name || ''} ${student.last_name || ''}`.trim() || student.student_id
-    if (!window.confirm(`Move ${name} to completed students?`)) return
+    const courseName = courseEnrollment?.course_name || student.course
+    if (!window.confirm(`Mark ${name}'s ${courseName} course as completed?`)) return
 
     setCompletingId(student.id)
     try {
-      await api.post(`/students/${student.id}/mark-completed/`)
-      toast.success('Student moved to completed students')
-      setData(prev => prev.filter(x => x.id !== student.id))
+      const batchId = courseEnrollment?.batches?.[0]?.id
+      await api.post(`/students/${student.id}/mark-completed/`, batchId ? { batch_id: batchId } : {})
+      toast.success(`${courseName} moved to completed students`)
       load()
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to complete student')
@@ -698,18 +699,50 @@ export function StudentsList({ adminView = true }) {
     }
   }
 
+  const trainerNamesForStudent = (student) => {
+    const names = []
+    const addName = name => {
+      const value = String(name || '').trim()
+      if (value && !names.includes(value)) names.push(value)
+    }
+    ;(student.enrolled_courses || []).forEach(course => {
+      ;(course.batches || []).forEach(batch => {
+        ;(batch.trainer_names || []).forEach(addName)
+        ;(batch.trainers || []).forEach(trainer => addName(trainer.name))
+      })
+    })
+    ;(student.assigned_batches || []).forEach(batch => {
+      ;(batch.trainer_names || []).forEach(addName)
+      ;(batch.trainers || []).forEach(trainer => addName(trainer.name))
+    })
+    addName(student.assigned_staff_name)
+    return names
+  }
+
+  const batchCodesForStudent = (student) => {
+    const codes = []
+    const addCode = batch => {
+      const value = batch?.batch_code || batch?.display_name || ''
+      if (value && !codes.includes(value)) codes.push(value)
+    }
+    ;(student.enrolled_courses || []).forEach(course => (course.batches || []).forEach(addCode))
+    ;(student.assigned_batches || []).forEach(addCode)
+    if (!codes.length && student.assigned_batch_code) codes.push(student.assigned_batch_code)
+    return codes
+  }
+
   const branches = [...new Set(data.map(s => s.branch).filter(Boolean))].sort()
-  const batchOptions = [...new Set(data.map(s => s.assigned_batch_number).filter(Boolean))].sort()
+  const batchOptions = [...new Set(data.flatMap(batchCodesForStudent).filter(Boolean))].sort()
   const courseOptions = [...new Set(data.flatMap(s => s.course_names || [s.course_name || s.course]).filter(Boolean))].sort()
-  const trainerOptions = [...new Set(data.map(s => s.assigned_staff_name).filter(Boolean))].sort()
+  const trainerOptions = [...new Set(data.flatMap(trainerNamesForStudent).filter(Boolean))].sort()
   const filtered = data.filter(s => {
     const studentCourses = s.course_names || [s.course_name || s.course]
     const courseText = studentCourses.join(' ')
     const ms = `${s.first_name} ${s.last_name} ${s.student_id} ${s.email} ${courseText}`.toLowerCase().includes(search.toLowerCase())
     const mb = !branchFilter || s.branch === branchFilter
-    const mba = !batchFilter || s.assigned_batch_number === batchFilter
+    const mba = !batchFilter || batchCodesForStudent(s).includes(batchFilter)
     const mc = !courseFilter || studentCourses.includes(courseFilter)
-    const mt = !trainerFilter || s.assigned_staff_name === trainerFilter
+    const mt = !trainerFilter || trainerNamesForStudent(s).includes(trainerFilter)
     return ms && mb && mba && mc && mt
   })
 
@@ -765,7 +798,7 @@ export function StudentsList({ adminView = true }) {
             <table className="ls-table">
               <thead>
                 <tr>
-                  <th>#</th><th>Student</th><th>Mobile</th><th>Course</th>
+                  <th>#</th><th>Student</th><th>Mobile</th><th>Course</th><th>Student Mode</th>
                   <th>Branch</th><th>Assigned Staff</th><th>Batch</th>
                   {/* Show action columns only for counselor (not admin) */}
                   {canEdit && <><th>Actions</th><th>Assign to Staff</th></>}
@@ -787,9 +820,22 @@ export function StudentsList({ adminView = true }) {
                     </td>
                     <td style={{ fontSize: 13 }}>{s.mobile_no}</td>
                     <td style={{ fontSize: 13 }}>{(s.course_names || [s.course]).filter(Boolean).join(', ')}</td>
+                    <td><Badge text={s.student_mode === 'online' ? 'Online' : 'Classroom'} variant={s.student_mode === 'online' ? 'info' : 'teal'} /></td>
                     <td style={{ fontSize: 13 }}>{s.branch}</td>
-                    <td>{s.assigned_staff_name ? <Badge text={s.assigned_staff_name} variant="teal" /> : <Badge text="Not Assigned" variant="warning" />}</td>
-                    <td>{s.assigned_batch_number ? <Badge text={s.assigned_batch_number} variant="info" /> : <Badge text="—" />}</td>
+                    <td>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, minWidth: 115 }}>
+                        {trainerNamesForStudent(s).length
+                          ? trainerNamesForStudent(s).map(name => <Badge key={name} text={name} variant="teal" />)
+                          : <Badge text="Not Assigned" variant="warning" />}
+                      </div>
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, minWidth: 115 }}>
+                        {batchCodesForStudent(s).length
+                          ? batchCodesForStudent(s).map(code => <Badge key={code} text={code} variant="info" />)
+                          : <Badge text="—" />}
+                      </div>
+                    </td>
 
                     {/* Actions column - only for counselor */}
                     {canEdit && (
@@ -826,15 +872,21 @@ export function StudentsList({ adminView = true }) {
                     )}
                     {canComplete && (
                       <td>
-                        <button
-                          className="ls-btn ls-btn-teal ls-btn-sm"
-                          disabled={completingId === s.id}
-                          onClick={() => handleCompleteStudent(s)}
-                          style={completingId === s.id ? { opacity: 0.65, cursor: 'not-allowed' } : undefined}
-                        >
-                          <i className={`fas ${completingId === s.id ? 'fa-spinner fa-spin' : 'fa-check-circle'}`} />
-                          {completingId === s.id ? 'Moving...' : 'Completed'}
-                        </button>
+                        <div style={{ display: 'grid', gap: 5, minWidth: 130 }}>
+                          {(s.enrolled_courses?.filter(course => course.batches?.length) || [{ course_name: s.course, batches: s.assigned_batch ? [s.assigned_batch] : [] }]).map(course => (
+                            <button
+                              key={course.course_id || course.course_name}
+                              className="ls-btn ls-btn-teal ls-btn-sm"
+                              disabled={completingId === s.id || !course.batches?.length}
+                              onClick={() => handleCompleteStudent(s, course)}
+                              title={`Complete ${course.course_name}`}
+                              style={completingId === s.id ? { opacity: 0.65, cursor: 'not-allowed' } : undefined}
+                            >
+                              <i className={`fas ${completingId === s.id ? 'fa-spinner fa-spin' : 'fa-check-circle'}`} />
+                              {completingId === s.id ? 'Moving...' : `Complete ${course.course_name}`}
+                            </button>
+                          ))}
+                        </div>
                       </td>
                     )}
                   </tr>
@@ -905,6 +957,7 @@ function StudentForm({ item, publicUser, courses, counselorBranch, onClose, onSa
     course: item?.course || '',
     gender: item?.gender || 'Male',
     branch: counselorBranch || item?.branch || '',
+    student_mode: item?.student_mode || 'classroom',
   })
   const [courseIds, setCourseIds] = useState(() => {
     const names = item?.course_names || (item?.course ? String(item.course).split(',').map(x => x.trim()) : [])
@@ -1220,6 +1273,25 @@ function StudentForm({ item, publicUser, courses, counselorBranch, onClose, onSa
                 <option value="Female">Female</option>
                 <option value="Others">Others</option>
               </Sel>
+            </FG>
+            <FG label="Student Mode" required>
+              <div style={{ display: 'flex', gap: 18, minHeight: 42, alignItems: 'center' }}>
+                {[
+                  { value: 'online', label: 'Online' },
+                  { value: 'classroom', label: 'Classroom' },
+                ].map(mode => (
+                  <label key={mode.value} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, cursor: 'pointer', fontWeight: 700 }}>
+                    <input
+                      type="radio"
+                      name="student_mode"
+                      value={mode.value}
+                      checked={form.student_mode === mode.value}
+                      onChange={e => f('student_mode', e.target.value)}
+                    />
+                    {mode.label}
+                  </label>
+                ))}
+              </div>
             </FG>
             <FG label="City" required><Inp value={form.city} onChange={e => f('city', e.target.value)} placeholder="City" required /></FG>
             <FG label="State" required><Inp value={form.state} onChange={e => f('state', e.target.value)} placeholder="State" required /></FG>

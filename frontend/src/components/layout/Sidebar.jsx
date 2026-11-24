@@ -294,6 +294,7 @@ function StudentNav() {
       </NavGroup>
       <NavItem to="/student/fee" icon="fa-rupee-sign" label="Fee Details" />
       <NavItem to="/student/reports" icon="fa-file-alt" label="Reports" />
+      <NavItem to="/student/certificates" icon="fa-certificate" label="Certificates" />
     </>
   )
 }
