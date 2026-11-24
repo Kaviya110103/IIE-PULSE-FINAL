@@ -1341,8 +1341,18 @@ export function StudentStyles() {
         grid-template-columns: 1fr 1fr;
         gap: 16px;
       }
+      .student-row-grid-4 {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 16px;
+      }
+      @media (max-width: 1100px) {
+        .student-row-grid-4 {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
       @media (max-width: 640px) {
-        .student-row-grid-2 {
+        .student-row-grid-2, .student-row-grid-4 {
           grid-template-columns: 1fr;
         }
       }
@@ -2356,8 +2366,14 @@ export function StudentBatches() {
             <div key={batch.id} className="student-card" style={{ marginBottom: 0 }}>
               <div style={{ padding: 20 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
-                  <div className="student-stat-icon" style={{ background: '#e8f8f0', color: T.sage }}>
-                    <i className="fas fa-layer-group" />
+                  <div
+                    className="student-stat-icon"
+                    style={{
+                      background: batch.is_completed_course || batch.status === 'Completed' ? '#e8f8f0' : 'rgba(15,27,45,0.1)',
+                      color: batch.is_completed_course || batch.status === 'Completed' ? T.sage : T.navy,
+                    }}
+                  >
+                    <i className={`fas ${batch.is_completed_course || batch.status === 'Completed' ? 'fa-circle-check' : 'fa-layer-group'}`} />
                   </div>
                   <div>
                     <h4 style={{ margin: 0, fontSize: 20 }}>{batch.course_name_display || batch.course_name || 'Course'}</h4>
@@ -2378,6 +2394,12 @@ export function StudentBatches() {
                         </div>
                       ))}
                     </div>
+                    {batch.previous_trainer_name && (
+                      <div style={{ marginTop: 7, color: T.slate, fontSize: 13 }}>
+                        <strong>Previous trainer completion:</strong>{' '}
+                        {batch.previous_trainer_name} - {batch.previous_trainer_completed_sessions || 0}/{batch.previous_trainer_total_sessions || batch.total_sessions || 0} sessions completed
+                      </div>
+                    )}
                   </div>
                   <div><strong>Batch:</strong> {getBatchDisplayName(batch)}</div>
                   <div><strong>Duration:</strong> {batch.start_date || 'N/A'} to {batch.end_date || 'N/A'}</div>
@@ -3253,17 +3275,19 @@ export function StudentMaterials() {
         <StudentSectionHeader title="Materials" count={materials.length} />
         {loading ? <StudentSpin /> : materials.length === 0 ? <StudentEmpty msg="No materials available yet" icon="fa-folder-open" /> : (
           <div style={{ overflowX: 'auto' }}>
-            <table className="student-table" style={{ tableLayout: 'fixed', width: '760px', maxWidth: '100%' }}>
+            <table className="student-table" style={{ tableLayout: 'fixed', width: '880px', maxWidth: '100%' }}>
               <colgroup>
-                <col style={{ width: '390px' }} />
+                <col style={{ width: '330px' }} />
+                <col style={{ width: '180px' }} />
                 <col style={{ width: '130px' }} />
                 <col style={{ width: '180px' }} />
               </colgroup>
-              <thead><tr><th>Title</th><th>Assigned Date</th><th style={{ textAlign: 'right' }}>View</th></tr></thead>
+              <thead><tr><th>Title</th><th>Mentor</th><th>Assigned Date</th><th style={{ textAlign: 'right' }}>View</th></tr></thead>
               <tbody>
                 {materials.map(m => (
                   <tr key={m.id}>
                     <td><div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}><div style={{ width: 36, height: 36, borderRadius: 8, background: `linear-gradient(135deg, ${T.amber}, ${T.rose})`, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto' }}><i className={`fas ${fileIcon(m.file)}`} /></div><span style={{ fontWeight: 600, overflowWrap: 'anywhere' }}>{m.title}</span></div></td>
+                    <td style={{ fontSize: 12 }}>{m.uploaded_by_name || '—'}</td>
                     <td style={{ fontSize: 12 }}>{(m.material_assigned_at || m.uploaded_at) ? new Date(m.material_assigned_at || m.uploaded_at).toLocaleDateString('en-IN') : '—'}</td>
                     <td style={{ textAlign: 'right' }}>
                       <button type="button" onClick={() => openMaterial(m)} className="student-btn student-btn-sm student-btn-primary" disabled={openingId === m.id}>
@@ -3433,9 +3457,9 @@ export function StudentTests() {
       {/* Available Tests */}
       {tests.length > 0 && (
         <div className="student-card" style={{ marginBottom: 20 }}>
-          <StudentSectionHeader title="Available Tests" count={tests.length} />
+          <StudentSectionHeader title="Assigned Tests" count={tests.length} />
           <div style={{ padding: '0 22px 22px 22px' }}>
-            <div className="student-row-grid-2">
+            <div className="student-row-grid-4">
               {tests.map(test => (
                 <div key={test.id} className="student-card" style={{ padding: 0 }}>
                   <div style={{ padding: 18 }}>
@@ -3446,24 +3470,24 @@ export function StudentTests() {
                       </p>
                     )}
                     <div style={{ marginBottom: 16 }}>
-                      <StudentBadge text={test.status || 'Upcoming'} variant={test.status === 'Active' ? 'success' : test.status === 'Completed' ? 'default' : 'info'} />
+                      <StudentBadge text={test.status || 'Upcoming'} variant={test.status === 'Active' ? 'success' : test.status === 'Expired' ? 'warning' : 'info'} />
                       <StudentBadge text={test.creation_method === 'upload' ? 'Question Paper' : `${test.total_questions || 0} Questions`} variant="info" style={{ marginLeft: 8 }} />
                     </div>
                     <div style={{ display: 'grid', gap: 6, fontSize: 12, color: T.slate, marginBottom: 14 }}>
                       <span><i className="fas fa-graduation-cap" style={{ marginRight: 6 }} />{test.course_name || 'Course'}</span>
                       <span><i className="fas fa-user-tie" style={{ marginRight: 6 }} />{test.trainer || 'Trainer'}</span>
-                      <span><i className="far fa-calendar-alt" style={{ marginRight: 6 }} />{test.test_date || 'Date not set'} {test.start_time ? `- ${test.start_time}` : ''}</span>
+                      <span><i className="far fa-calendar-alt" style={{ marginRight: 6 }} />{test.test_date || 'Date not set'} {test.start_time ? `- ${test.start_time}${test.end_time ? ` to ${test.end_time}` : ''}` : ''}</span>
                       <span><i className="far fa-clock" style={{ marginRight: 6 }} />{test.duration_minutes || 0} minutes</span>
                     </div>
                     <button
                       className="student-btn student-btn-primary"
-                      style={{ width: '100%' }}
+                      style={{ width: 'auto', padding: '8px 13px' }}
                       onClick={() => startTest(test)}
-                      disabled={test.test_type !== 'technical' && test.creation_method !== 'upload' && test.total_questions === 0}
+                      disabled={test.status !== 'Active' || (test.test_type !== 'technical' && test.creation_method !== 'upload' && test.total_questions === 0)}
                     >
                       {test.test_type === 'technical' || test.creation_method === 'upload'
-                        ? 'View & Submit Test'
-                        : test.total_questions === 0 ? 'No Questions' : 'View Questions'}
+                        ? (test.status === 'Active' ? 'View & Submit Test' : test.status)
+                        : test.total_questions === 0 ? 'No Questions' : test.status === 'Active' ? 'View Questions' : test.status}
                     </button>
                   </div>
                 </div>
@@ -3601,7 +3625,7 @@ function TakeTestComponent({ test, onDone }) {
         <StudentStyles />
         <StudentPageHeader
           title={test.test_title || test.title || 'Technical Test'}
-          sub={`${test.course_name || 'Course'} - ${test.test_date || 'Date not set'} ${test.start_time ? `- ${test.start_time}` : ''}`}
+          sub={`${test.course_name || 'Course'} - ${test.test_date || 'Date not set'} ${test.start_time ? `- ${test.start_time}${test.end_time ? ` to ${test.end_time}` : ''}` : ''}`}
           btn={<button className="student-btn student-btn-ghost" onClick={onDone}>Back to Tests</button>}
         />
         <div className="student-card" style={{ maxWidth: 720, margin: '0 auto' }}>
@@ -3614,9 +3638,9 @@ function TakeTestComponent({ test, onDone }) {
             )}
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
               {test.question_paper_url && (
-                <button className="student-btn student-btn-primary" type="button" onClick={() => window.open(test.question_paper_url, '_blank', 'noopener,noreferrer')}>
-                  <i className="fas fa-file-pdf" /> View Test PDF
-                </button>
+                <a className="student-btn student-btn-primary" href={test.question_paper_url} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>
+                  <i className="fas fa-file" /> View Test File
+                </a>
               )}
             </div>
             <div className="student-fg">
@@ -3624,7 +3648,7 @@ function TakeTestComponent({ test, onDone }) {
               <input
                 className="student-input"
                 type="file"
-                accept=".pdf,.doc,.docx,.zip,.rar,.png,.jpg,.jpeg,.txt"
+                accept="*/*"
                 onChange={e => {
                   setSubmissionFile(e.target.files?.[0] || null)
                   setSubmissionFiles([])
@@ -3661,7 +3685,7 @@ function TakeTestComponent({ test, onDone }) {
         <StudentStyles />
         <StudentPageHeader
           title={test.test_title}
-          sub={`${test.course_name || 'Course'} - ${test.test_date || 'Date not set'} ${test.start_time ? `- ${test.start_time}` : ''}`}
+          sub={`${test.course_name || 'Course'} - ${test.test_date || 'Date not set'} ${test.start_time ? `- ${test.start_time}${test.end_time ? ` to ${test.end_time}` : ''}` : ''}`}
           btn={<button className="student-btn student-btn-ghost" onClick={onDone}>Back to Tests</button>}
         />
         <div className="student-card">
@@ -3685,7 +3709,7 @@ function TakeTestComponent({ test, onDone }) {
               <input
                 className="student-input"
                 type="file"
-                accept=".pdf,.doc,.docx,.zip,.rar,.png,.jpg,.jpeg,.txt,.py,.java"
+                accept="*/*"
                 onChange={e => {
                   setSubmissionFile(e.target.files?.[0] || null)
                   setSubmissionFiles([])
@@ -4025,7 +4049,7 @@ export function StudentQuizList() {
           {quizzes.length > 0 && (
             <>
               <h4 className="student-card-header" style={{ marginBottom: 16 }}>📌 Available Quizzes</h4>
-              <div className="student-row-grid-2">
+              <div className="student-row-grid-4">
                 {quizzes.map(q => (
                   <div key={q.id} className="student-card" style={{ padding: 0 }}>
                     <div style={{ padding: 18 }}>
@@ -4037,7 +4061,7 @@ export function StudentQuizList() {
                         <StudentBadge text={`Pass: ${q.passing_marks}%`} variant="default" />
                       </div>
                       {q.user_attempts > 0 && q.best_score && <div className="student-alert-info" style={{ marginBottom: 12, padding: '6px 12px' }}><i className="fas fa-star" /> Best Score: {q.best_score}%</div>}
-                      <button className="student-btn student-btn-primary" style={{ width: '100%' }} onClick={() => setActiveQuiz(q)}>{q.user_attempts > 0 ? '🔄 Retake Quiz' : '▶️ Start Quiz'}</button>
+                      <button className="student-btn student-btn-primary" style={{ width: 'auto', padding: '8px 13px' }} onClick={() => setActiveQuiz(q)}>{q.user_attempts > 0 ? '🔄 Retake Quiz' : '▶️ Start Quiz'}</button>
                     </div>
                   </div>
                 ))}
@@ -4699,6 +4723,89 @@ const viewBillPdf = async (feeId) => {
 // ══════════════════════════════════════════════════════════════════════════════
 // STUDENT COMPLETION REPORT
 // ══════════════════════════════════════════════════════════════════════════════
+export function StudentCertificates() {
+  const [certificates, setCertificates] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [openingId, setOpeningId] = useState(null)
+  const [certificatePreview, setCertificatePreview] = useState(null)
+  const [previewMaximized, setPreviewMaximized] = useState(false)
+
+  useEffect(() => {
+    let active = true
+    api.get('/student/certificates/')
+      .then(({ data }) => active && setCertificates(data?.results || []))
+      .catch(error => {
+        console.error('Certificate list load failed:', error)
+        active && toast.error(error.response?.data?.error || 'Unable to load certificates')
+      })
+      .finally(() => active && setLoading(false))
+    return () => { active = false }
+  }, [])
+
+  const openCertificate = async certificate => {
+    setOpeningId(certificate.id)
+    try {
+      const response = await api.get(`/completed-students/${certificate.id}/certificate/`, { responseType: 'blob' })
+      const pdfDocument = await pdfjsLib.getDocument({ data: await response.data.arrayBuffer() }).promise
+      const page = await pdfDocument.getPage(1)
+      const viewport = page.getViewport({ scale: 2 })
+      const canvas = window.document.createElement('canvas')
+      const context = canvas.getContext('2d', { alpha: false })
+      canvas.width = viewport.width
+      canvas.height = viewport.height
+      await page.render({ canvasContext: context, viewport }).promise
+      setCertificatePreview({ certificate, image: canvas.toDataURL('image/png') })
+      setPreviewMaximized(false)
+    } catch (error) {
+      toast.error(error.response?.data?.error || 'Unable to open certificate')
+    } finally {
+      setOpeningId(null)
+    }
+  }
+
+  return (
+    <div className="student-root">
+      <StudentStyles />
+      <StudentPageHeader title="Certificates" sub="Your administrator-published course certificates." />
+      {loading ? <StudentSpin /> : certificates.length === 0 ? (
+        <div className="student-card"><StudentEmpty msg="No certificate is available yet. Your certificate will appear here after administrator approval." icon="fa-certificate" /></div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16 }}>
+          {certificates.map(certificate => (
+            <div className="student-card" key={certificate.id} style={{ padding: 20 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 15 }}><div className="student-stat-icon" style={{ width: 42, height: 42, background: '#fef5e4', color: T.amber }}><i className="fas fa-certificate" /></div><div style={{ minWidth: 0 }}><strong style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={certificate.course_name}>{certificate.course_name}</strong><span style={{ color: T.slate, fontSize: 12 }}>{certificate.batch_id || 'Batch'}</span></div></div>
+              <div style={{ display: 'grid', gap: 6, color: T.slate, fontSize: 12, marginBottom: 16 }}><span><strong>Student ID:</strong> {certificate.student_id}</span><span><strong>Published:</strong> {certificate.generated_at ? new Date(certificate.generated_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'}</span></div>
+              <button type="button" className="student-btn student-btn-primary" style={{ width: 'auto', padding: '9px 14px' }} onClick={() => openCertificate(certificate)} disabled={openingId === certificate.id}><i className={`fas ${openingId === certificate.id ? 'fa-spinner fa-spin' : 'fa-eye'}`} /> {openingId === certificate.id ? 'Opening...' : 'View Certificate'}</button>
+            </div>
+          ))}
+        </div>
+      )}
+      {certificatePreview && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Certificate preview"
+          onClick={event => event.target === event.currentTarget && setCertificatePreview(null)}
+          style={{ position: 'fixed', inset: 0, zIndex: 1400, background: 'rgba(8, 17, 30, 0.82)', padding: previewMaximized ? 12 : 28, display: 'grid', placeItems: 'center' }}
+        >
+          <section style={{ width: previewMaximized ? '100%' : 'min(100%, 980px)', height: previewMaximized ? '100%' : 'min(92vh, 820px)', borderRadius: previewMaximized ? 0 : 12, background: '#102035', boxShadow: '0 24px 80px rgba(0,0,0,.45)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <header style={{ minHeight: 54, padding: '0 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, color: 'white', borderBottom: '1px solid rgba(255,255,255,.12)' }}>
+              <div style={{ minWidth: 0 }}><strong style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{certificatePreview.certificate.course_name}</strong><span style={{ fontSize: 12, color: '#b8ccdf' }}>Course Completion Certificate</span></div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" className="student-btn student-btn-sm student-btn-ghost" onClick={() => setPreviewMaximized(value => !value)} title={previewMaximized ? 'Exit full screen' : 'Maximize certificate'} style={{ color: 'white', borderColor: 'rgba(255,255,255,.35)' }}><i className={`fas ${previewMaximized ? 'fa-compress' : 'fa-expand'}`} /></button>
+                <button type="button" className="student-btn student-btn-sm student-btn-ghost" onClick={() => setCertificatePreview(null)} style={{ color: 'white', borderColor: 'rgba(255,255,255,.35)' }}><i className="fas fa-times" /> Close</button>
+              </div>
+            </header>
+            <div style={{ flex: 1, overflow: 'auto', padding: previewMaximized ? 20 : 16, display: 'grid', placeItems: 'start center', background: '#203044' }}>
+              <img src={certificatePreview.image} alt={`${certificatePreview.certificate.course_name} certificate`} style={{ width: 'auto', maxWidth: '100%', minHeight: previewMaximized ? 'calc(100vh - 140px)' : undefined, objectFit: 'contain', background: 'white', boxShadow: '0 8px 24px rgba(0,0,0,.35)' }} />
+            </div>
+          </section>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function StudentCompletionReport() {
   const [reports, setReports] = useState([])
   const [selectedId, setSelectedId] = useState('')
@@ -4768,8 +4875,12 @@ export function StudentCompletionReport() {
   const materials = report.materials || []
   const quizzes = report.quizzes || []
   const tests = report.tests || []
+  const trainerContent = report.trainer_content_summary || []
   const attendance = report.attendance || {}
   const fees = report.fees || {}
+  const mentorCounts = (field) => trainerContent
+    .filter(item => Number(item[field] || 0) > 0)
+    .map(item => `${item.trainer_name}: ${item[field]}`)
 
   const infoGrid = (items) => (
     <div className="student-row-grid-2" style={{ padding: '20px 22px' }}>
@@ -4832,14 +4943,14 @@ export function StudentCompletionReport() {
         {attendance.records?.length > 0 && <div style={{ overflowX: 'auto', borderTop: `1px solid ${T.border}` }}><table className="student-table"><thead><tr><th>Date</th><th>Status</th></tr></thead><tbody>{attendance.records.map((item, index) => <tr key={`${item.date}-${index}`}><td>{item.date}</td><td><StudentBadge text={item.status || '—'} variant={String(item.status).toLowerCase() === 'present' ? 'success' : 'danger'} /></td></tr>)}</tbody></table></div>}
       </div>
 
-      <div className="student-card"><StudentSectionHeader title="Learning Materials" count={materials.length} /><div style={{ overflowX: 'auto' }}><table className="student-table"><thead><tr><th>Material</th><th>Uploaded By</th><th>Assigned Date</th></tr></thead><tbody>{materials.length ? materials.map((item, index) => <tr key={`${item.title}-${index}`}><td><strong>{item.title}</strong></td><td>{item.uploaded_by || '—'}</td><td>{item.assigned_date || '—'}</td></tr>) : <tr><td colSpan="3" style={{ textAlign: 'center', color: T.slate }}>No material records found.</td></tr>}</tbody></table></div></div>
+      <div className="student-card"><StudentSectionHeader title="Learning Materials" count={materials.length} actions={mentorCounts('materials_assigned').length ? <span style={{ color: T.navy, fontSize: 14, fontWeight: 700 }}>Mentors: {mentorCounts('materials_assigned').join(' | ')}</span> : null} /><div style={{ overflowX: 'auto' }}><table className="student-table"><thead><tr><th>Material</th><th>Uploaded By</th><th>Assigned Date</th></tr></thead><tbody>{materials.length ? materials.map((item, index) => <tr key={`${item.title}-${index}`}><td><strong>{item.title}</strong></td><td>{item.uploaded_by || '—'}</td><td>{item.assigned_date || '—'}</td></tr>) : <tr><td colSpan="3" style={{ textAlign: 'center', color: T.slate }}>No material records found.</td></tr>}</tbody></table></div></div>
 
       <div className="student-row-grid-2">
-        <div className="student-card"><StudentSectionHeader title="Quiz Report" count={quizzes.length} /><div style={{ overflowX: 'auto' }}><table className="student-table"><thead><tr><th>Quiz</th><th>Score</th><th>Result</th><th>Date</th></tr></thead><tbody>{quizzes.length ? quizzes.map((item, index) => <tr key={`${item.title}-${index}`}><td>{item.title}</td><td>{item.score}/{item.total_marks}</td><td>{item.percentage}%</td><td>{item.submitted_at}</td></tr>) : <tr><td colSpan="4" style={{ textAlign: 'center', color: T.slate }}>No quizzes attended.</td></tr>}</tbody></table></div></div>
-        <div className="student-card"><StudentSectionHeader title="Test / Assessment Report" count={tests.length} /><div style={{ overflowX: 'auto' }}><table className="student-table"><thead><tr><th>Test</th><th>Score</th><th>Result</th><th>Date</th></tr></thead><tbody>{tests.length ? tests.map((item, index) => <tr key={`${item.title}-${index}`}><td>{item.title}</td><td>{item.score}/{item.total_marks}</td><td>{item.percentage}%</td><td>{item.submitted_at}</td></tr>) : <tr><td colSpan="4" style={{ textAlign: 'center', color: T.slate }}>No tests attended.</td></tr>}</tbody></table></div></div>
+        <div className="student-card"><StudentSectionHeader title="Quiz Report" count={quizzes.length} actions={mentorCounts('quizzes_assigned').length ? <span style={{ color: T.navy, fontSize: 14, fontWeight: 700 }}>Mentors: {mentorCounts('quizzes_assigned').join(' | ')}</span> : null} /><div style={{ overflowX: 'auto' }}><table className="student-table"><thead><tr><th>Quiz</th><th>Score</th><th>Result</th><th>Date</th></tr></thead><tbody>{quizzes.length ? quizzes.map((item, index) => <tr key={`${item.title}-${index}`}><td>{item.title}</td><td>{item.score}/{item.total_marks}</td><td>{item.percentage}%</td><td>{item.submitted_at}</td></tr>) : <tr><td colSpan="4" style={{ textAlign: 'center', color: T.slate }}>No quizzes attended.</td></tr>}</tbody></table></div></div>
+        <div className="student-card"><StudentSectionHeader title="Test / Assessment Report" count={tests.length} actions={mentorCounts('tests_assigned').length ? <span style={{ color: T.navy, fontSize: 14, fontWeight: 700 }}>Mentors: {mentorCounts('tests_assigned').join(' | ')}</span> : null} /><div style={{ overflowX: 'auto' }}><table className="student-table"><thead><tr><th>Test</th><th>Score</th><th>Result</th><th>Date</th></tr></thead><tbody>{tests.length ? tests.map((item, index) => <tr key={`${item.title}-${index}`}><td>{item.title}</td><td>{item.score}/{item.total_marks}</td><td>{item.percentage}%</td><td>{item.submitted_at}</td></tr>) : <tr><td colSpan="4" style={{ textAlign: 'center', color: T.slate }}>No tests attended.</td></tr>}</tbody></table></div></div>
       </div>
 
-      <div className="student-card"><StudentSectionHeader title="Fee Details" /><div className="student-stat-grid" style={{ padding: '20px 22px', marginBottom: 0, gridTemplateColumns: 'repeat(3, 1fr)' }}><div><div className="student-stat-label">Total Course Fee</div><div style={{ fontWeight: 700, fontSize: 20 }}>{fmtMoney(fees.total_course_fee)}</div></div><div><div className="student-stat-label">Amount Paid</div><div style={{ fontWeight: 700, fontSize: 20, color: T.sage }}>{fmtMoney(fees.amount_paid)}</div></div><div><div className="student-stat-label">Pending Balance</div><div style={{ fontWeight: 700, fontSize: 20, color: fees.pending_balance > 0 ? T.rose : T.sage }}>{fmtMoney(fees.pending_balance)}</div></div></div>{fees.payment_history?.length > 0 && <div style={{ overflowX: 'auto', borderTop: `1px solid ${T.border}` }}><table className="student-table"><thead><tr><th>Amount</th><th>Payment Mode</th><th>Date</th><th>Notes</th></tr></thead><tbody>{fees.payment_history.map((item, index) => <tr key={`${item.paid_at}-${index}`}><td>{fmtMoney(item.amount)}</td><td>{item.payment_mode}</td><td>{item.paid_at}</td><td>{item.notes || '—'}</td></tr>)}</tbody></table></div>}</div>
+      <div className="student-card"><StudentSectionHeader title="Fee Details" /><div className="student-stat-grid" style={{ padding: '20px 22px', marginBottom: 0, gridTemplateColumns: 'repeat(3, 1fr)' }}><div><div className="student-stat-label">Total Course Fee</div><div style={{ fontWeight: 700, fontSize: 20 }}>{fmtMoney(fees.total_course_fee)}</div></div><div><div className="student-stat-label">Amount Paid</div><div style={{ fontWeight: 700, fontSize: 20, color: T.sage }}>{fmtMoney(fees.amount_paid)}</div></div><div><div className="student-stat-label">Pending Balance</div><div style={{ fontWeight: 700, fontSize: 20, color: fees.pending_balance > 0 ? T.rose : T.sage }}>{fmtMoney(fees.pending_balance)}</div></div></div>{fees.payment_history?.length > 0 && <div style={{ overflowX: 'auto', borderTop: `1px solid ${T.border}` }}><table className="student-table"><thead><tr><th>Installment</th><th>Payment Date</th><th>Method</th><th>Amount Paid</th><th>Balance</th><th>Notes</th></tr></thead><tbody>{fees.payment_history.map((item, index) => <tr key={`${item.paid_at}-${index}`}><td>{item.installment_number || index + 1}</td><td>{item.paid_at}</td><td>{item.payment_mode}</td><td>{fmtMoney(item.amount)}</td><td style={{ fontWeight: 700, color: item.balance_after_payment > 0 ? T.rose : T.sage }}>{fmtMoney(item.balance_after_payment)}</td><td>{item.notes || '—'}</td></tr>)}</tbody></table></div>}</div>
     </div>
   )
 }

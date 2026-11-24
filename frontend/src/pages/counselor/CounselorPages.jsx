@@ -1297,7 +1297,7 @@ export function CounselorPendingRequests() {
                       <small style={{ color: T.slate }}>{r.student_id}</small>
                     </td>
                     <td>
-                      <Badge text={r.batch_number || '—'} variant="primary" />
+                      <Badge text={r.batch_code || r.batch_number || '—'} variant="primary" />
                       {r.course_name && <div style={{ fontSize: 11, marginTop: 4, color: T.slate }}>{r.course_name}</div>}
                     </td>
                     <td>{r.trainer_name}</td>
@@ -1609,7 +1609,7 @@ function ReassignModalV2({ request, counselors, onClose, onSaved }) {
           <select className="counselor-select" value={selectedBatch} onChange={e => setSelectedBatch(e.target.value)} disabled={!selectedStaff}>
             <option value="">Choose batch...</option>
             {batches.map(b => (
-              <option key={b.id} value={b.id}>{b.batch_number} - {b.course_name_display || request.course_name} - {b.batch_timing}</option>
+              <option key={b.id} value={b.id}>{b.batch_code || b.batch_number} - {b.course_name_display || request.course_name} - {b.batch_timing}</option>
             ))}
           </select>
           {selectedStaff && batches.length === 0 && (
@@ -1778,6 +1778,7 @@ export function CounselorCompletedStudents() {
   const { user } = useAuth()
   const [students, setStudents] = useState([])
   const [filteredStudents, setFilteredStudents] = useState([])
+  const [certificateStudent, setCertificateStudent] = useState(null)
   const [loading, setLoading] = useState(true)
   const [currentPage, setCurrentPage] = useState(1)
   const itemsPerPage = 10
@@ -1931,7 +1932,7 @@ export function CounselorCompletedStudents() {
     applyFilters(students, resetFilters)
   }
 
-  const downloadReport = async (studentId, studentName) => {
+  const viewReport = async (studentId, studentName) => {
   try {
     toast.loading(`Opening report for ${studentName}…`, { id: 'dl' })
 
@@ -1956,6 +1957,30 @@ export function CounselorCompletedStudents() {
     toast.error('Failed to open report.', { id: 'dl' })
   }
 }
+
+  const openCertificate = async (studentId, studentName, download = false) => {
+    try {
+      toast.loading(`${download ? 'Preparing download' : 'Generating preview'} for ${studentName}...`, { id: 'certificate' })
+      const res = await api.get(`/completed-students/${studentId}/certificate/${download ? '?download=1' : ''}`, { responseType: 'blob' })
+      const file = new Blob([res.data], { type: 'application/pdf' })
+      const fileURL = window.URL.createObjectURL(file)
+      if (download) {
+        const link = document.createElement('a')
+        link.href = fileURL
+        link.download = `${studentName.replace(/\s+/g, '_')}_Course_Completion_Certificate.pdf`
+        document.body.appendChild(link)
+        link.click()
+        link.remove()
+      } else {
+        window.open(fileURL, '_blank', 'noopener,noreferrer')
+      }
+      setTimeout(() => window.URL.revokeObjectURL(fileURL), 60000)
+      toast.success(download ? 'Certificate download started!' : 'Certificate preview opened!', { id: 'certificate' })
+    } catch (err) {
+      console.error('Certificate generation error:', err)
+      toast.error('Failed to generate certificate.', { id: 'certificate' })
+    }
+  }
 
   const totalPages = Math.ceil(filteredStudents.length / itemsPerPage)
   const paginatedStudents = filteredStudents.slice(
@@ -2125,103 +2150,57 @@ export function CounselorCompletedStudents() {
               <table className="counselor-table">
                 <thead>
                   <tr style={{ background: `linear-gradient(135deg, ${T.navy}, ${T.navyMid})`, color: 'white' }}>
-                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', width: '40px' }}>#</th>
-                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'left', width: '130px' }}>Student</th>
                     <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', width: '90px' }}>Student ID</th>
+                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'left', minWidth: '170px' }}>Name</th>
+                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'left', minWidth: '180px' }}>Email</th>
+                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', minWidth: '110px' }}>Mobile No.</th>
+                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', width: '90px' }}>Branch</th>
                     <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', width: '100px' }}>Staff Name</th>
-                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', width: '80px' }}>Batch</th>
-                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'left', width: '100px' }}>Course</th>
-                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', width: '80px' }}>Sessions</th>
-                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', width: '70px' }}>Duration</th>
-                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', width: '85px' }}>Completed</th>
-                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', width: '100px' }}>Attendance</th>
-                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', width: '70px' }}>Avg Score</th>
-                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', width: '70px' }}>Report</th>
+                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', width: '85px' }}>Completed Date</th>
+                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', minWidth: '210px' }}>Action</th>
                   </tr>
                 </thead>
                 <tbody>
                   {paginatedStudents.map((x, idx) => {
-                    const globalIndex = (currentPage - 1) * itemsPerPage + idx + 1
-                    const attendancePercentage = x.attendance_percentage || 0
-                    const avgScore = x.average_test_score || 0
-                    const completedSessions = x.completed_sessions_count || x.sessions_completed || 0
-                    const totalSessions = x.total_sessions_count || x.total_sessions || 0
-                    const sessionPercentage = getSessionPercentage(completedSessions, totalSessions)
                     const staffName = x.faculty_name || x.graduated_from_trainer_name || x.trainer_name || '—'
 
                     return (
                       <tr key={x.id} style={{ borderBottom: `1px solid ${T.border}` }}>
-                        <td style={{ padding: '10px 8px', fontSize: '12px', color: T.slate, textAlign: 'center' }}>{globalIndex}</td>
+                        <td style={{ padding: '10px 8px', fontSize: '11px', textAlign: 'center' }}><Badge text={x.student_id} variant="info" /></td>
                         <td style={{ padding: '10px 8px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <Avatar name={x.first_name} size={28} />
-                            <div>
-                              <div style={{ fontWeight: 600, fontSize: '12px' }}>{x.first_name} {x.last_name || ''}</div>
-                              <div style={{ fontSize: '9px', color: T.slate }}>{x.email?.split('@')[0] || '—'}</div>
-                            </div>
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: '12px' }}>{x.first_name} {x.last_name || ''}</div>
+                            <div style={{ fontSize: '10px', color: T.slate, marginTop: 2 }}>{x.course_name || x.course || '—'}</div>
                           </div>
                         </td>
-                        <td style={{ padding: '10px 8px', fontSize: '11px', textAlign: 'center' }}><Badge text={x.student_id} variant="info" /></td>
+                        <td style={{ padding: '10px 8px', fontSize: '11px' }}>{x.email || '—'}</td>
+                        <td style={{ padding: '10px 8px', fontSize: '11px', textAlign: 'center' }}>{x.mobile_no || '—'}</td>
+                        <td style={{ padding: '10px 8px', fontSize: '11px', textAlign: 'center' }}><Badge text={x.branch || '—'} variant="default" /></td>
                         <td style={{ padding: '10px 8px', fontSize: '11px', textAlign: 'center' }}>
                           <Badge text={staffName} variant="primary" />
                         </td>
-                        <td style={{ padding: '10px 8px', fontSize: '11px', textAlign: 'center' }}><Badge text={x.batch_number} variant="default" /></td>
-                        <td style={{ padding: '10px 8px', fontSize: '11px' }}>
-                          <div><strong>{x.course_name || x.course || '—'}</strong></div>
-                          <div style={{ fontSize: '9px', color: T.slate }}>{x.branch || '—'}</div>
-                        </td>
-                        <td style={{ padding: '10px 8px', fontSize: '11px', textAlign: 'center' }}>
-                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                            <div style={{ width: '50px', background: '#e9ecef', borderRadius: '4px', height: '4px' }}>
-                              <div style={{ height: '100%', width: `${sessionPercentage}%`, background: T.sage, borderRadius: '4px' }} />
-                            </div>
-                            <span style={{ fontSize: '10px' }}>{completedSessions}/{totalSessions}</span>
-                          </div>
-                        </td>
-                        <td style={{ padding: '10px 8px', fontSize: '11px', textAlign: 'center' }}>{calculateDuration(x.batch_start_date, x.batch_end_date)}</td>
                         <td style={{ padding: '10px 8px', fontSize: '11px', textAlign: 'center' }}>
                           <Badge text={new Date(x.completion_date).toLocaleDateString('en-IN')} variant="success" />
                         </td>
-
-                        {/* ATTENDANCE COLUMN - Same as Admin */}
-                        <td style={{ padding: '10px 8px', fontSize: '11px', textAlign: 'center' }}>
-                          {attendancePercentage > 0 ? (
-                            <div>
-                              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginBottom: '4px' }}>
-                                <div style={{ width: '60px', background: '#e9ecef', borderRadius: '4px', height: '6px' }}>
-                                  <div style={{
-                                    height: '100%',
-                                    width: `${attendancePercentage}%`,
-                                    background: getAttendanceColor(attendancePercentage),
-                                    borderRadius: '4px'
-                                  }} />
-                                </div>
-                                <span style={{ fontSize: '11px', fontWeight: 600 }}>{attendancePercentage}%</span>
-                              </div>
-                              <div style={{ fontSize: '9px', color: T.slate }}>
-                                ({x.present_count || 0}/{x.total_attendance || 0} days)
-                              </div>
-                            </div>
-                          ) : (
-                            <Badge text="Not Marked" variant="warning" />
-                          )}
-                        </td>
-
-                        <td style={{ padding: '10px 8px', fontSize: '11px', textAlign: 'center' }}>
-                          <Badge
-                            text={`${avgScore}%`}
-                            variant={avgScore >= 70 ? 'success' : avgScore >= 50 ? 'warning' : 'danger'}
-                          />
-                        </td>
                         <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                          <div style={{ display: 'inline-flex', gap: 6, justifyContent: 'center', whiteSpace: 'nowrap' }}>
                           <button
                             className="counselor-btn counselor-btn-success counselor-btn-sm"
-                           onClick={() => downloadReport(x.id, `${x.first_name} ${x.last_name || ''}`)}
-                            title="Download Completion Report"
+                           onClick={() => viewReport(x.id, `${x.first_name} ${x.last_name || ''}`)}
+                            title="View Completion Report"
                             style={{ padding: '4px 8px', fontSize: '10px' }}
                           >
-                            <i className="fas fa-download" /> Report
+                            <i className="fas fa-eye" /> View Report
                           </button>
+                          <button
+                            className="counselor-btn counselor-btn-primary counselor-btn-sm"
+                            onClick={() => setCertificateStudent(x)}
+                            title="Generate Course Completion Certificate"
+                            style={{ padding: '4px 8px', fontSize: '10px' }}
+                          >
+                            <i className="fas fa-certificate" /> Generate Certificate
+                          </button>
+                          </div>
                         </td>
                       </tr>
                     )
@@ -2278,6 +2257,37 @@ export function CounselorCompletedStudents() {
           </>
         )}
       </div>
+      <Modal
+        open={!!certificateStudent}
+        onClose={() => setCertificateStudent(null)}
+        title="Generate Completion Certificate"
+        size="sm"
+      >
+        {certificateStudent && (
+          <div>
+            <p style={{ margin: '0 0 6px', fontWeight: 700 }}>
+              {certificateStudent.first_name} {certificateStudent.last_name || ''}
+            </p>
+            <p style={{ margin: '0 0 18px', color: T.slate, fontSize: 13 }}>
+              {certificateStudent.course_name || certificateStudent.course || 'Course'}
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button
+                className="counselor-btn counselor-btn-ghost"
+                onClick={() => openCertificate(certificateStudent.id, `${certificateStudent.first_name} ${certificateStudent.last_name || ''}`)}
+              >
+                <i className="fas fa-eye" /> Preview
+              </button>
+              <button
+                className="counselor-btn counselor-btn-primary"
+                onClick={() => openCertificate(certificateStudent.id, `${certificateStudent.first_name} ${certificateStudent.last_name || ''}`, true)}
+              >
+                <i className="fas fa-download" /> Download PDF
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }
@@ -2360,6 +2370,18 @@ export function CounselorAssignedStudents() {
     return names
   }
 
+  const batchCodesForStudent = (student) => {
+    const codes = []
+    const addCode = batch => {
+      const value = batch?.batch_code || batch?.display_name || ''
+      if (value && !codes.includes(value)) codes.push(value)
+    }
+    ;(student.enrolled_courses || []).forEach(course => (course.batches || []).forEach(addCode))
+    ;(student.assigned_batches || []).forEach(addCode)
+    if (!codes.length && student.assigned_batch_code) codes.push(student.assigned_batch_code)
+    return codes
+  }
+
   const openFeeModal = async (student, selectedFee = null) => {
     try {
       let fee = selectedFee
@@ -2385,15 +2407,16 @@ export function CounselorAssignedStudents() {
     }
   }
 
-  const handleCompleteStudent = async (student) => {
+  const handleCompleteStudent = async (student, courseEnrollment = null) => {
     const name = `${student.first_name || ''} ${student.last_name || ''}`.trim() || student.student_id
-    if (!window.confirm(`Move ${name} to completed students?`)) return
+    const courseName = courseEnrollment?.course_name || student.course
+    if (!window.confirm(`Mark ${name}'s ${courseName} course as completed?`)) return
 
     setCompletingId(student.id)
     try {
-      await api.post(`/students/${student.id}/mark-completed/`)
-      toast.success('Student moved to completed students')
-      setStudents(prev => prev.filter(x => x.id !== student.id))
+      const batchId = courseEnrollment?.batches?.[0]?.id
+      await api.post(`/students/${student.id}/mark-completed/`, batchId ? { batch_id: batchId } : {})
+      toast.success(`${courseName} moved to completed students`)
       loadStudents()
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to complete student')
@@ -2526,7 +2549,7 @@ export function CounselorAssignedStudents() {
                           </div>
                         </div>
                       </td>
-                      <td style={{ fontSize: 13 }}>{x.course}</td>
+                      <td style={{ fontSize: 13 }}>{(x.course_names || [x.course]).filter(Boolean).join(', ')}</td>
                       <td><Badge text={x.branch} variant="info" /></td>
                       <td>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, minWidth: 120 }}>
@@ -2535,7 +2558,13 @@ export function CounselorAssignedStudents() {
                             : <Badge text="—" variant="teal" />}
                         </div>
                       </td>
-                      <td style={{ fontSize: 12 }}>{x.assigned_batch_number || x.assigned_batch?.batch_number || '—'}</td>
+                      <td style={{ fontSize: 12 }}>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, minWidth: 120 }}>
+                          {batchCodesForStudent(x).length
+                            ? batchCodesForStudent(x).map(code => <Badge key={code} text={code} variant="info" />)
+                            : '—'}
+                        </div>
+                      </td>
                       <td>
                         {studentFees.length ? (
                           <div style={{ display: 'grid', gap: 4, minWidth: 95 }}>
@@ -2577,15 +2606,21 @@ export function CounselorAssignedStudents() {
                         )}
                       </td>
                       <td>
-                        <button
-                          className="counselor-btn counselor-btn-success counselor-btn-sm"
-                          disabled={completingId === x.id}
-                          onClick={() => handleCompleteStudent(x)}
-                          style={completingId === x.id ? { opacity: 0.65, cursor: 'not-allowed' } : undefined}
-                        >
-                          <i className={`fas ${completingId === x.id ? 'fa-spinner fa-spin' : 'fa-check-circle'}`} />
-                          {completingId === x.id ? 'Moving...' : 'Completed'}
-                        </button>
+                        <div style={{ display: 'grid', gap: 6, minWidth: 130 }}>
+                          {(x.enrolled_courses?.filter(course => course.batches?.length) || [{ course_name: x.course, batches: x.assigned_batch ? [x.assigned_batch] : [] }]).map(course => (
+                            <button
+                              key={course.course_id || course.course_name}
+                              className="counselor-btn counselor-btn-success counselor-btn-sm"
+                              disabled={completingId === x.id || !course.batches?.length}
+                              onClick={() => handleCompleteStudent(x, course)}
+                              title={`Complete ${course.course_name}`}
+                              style={completingId === x.id ? { opacity: 0.65, cursor: 'not-allowed' } : undefined}
+                            >
+                              <i className={`fas ${completingId === x.id ? 'fa-spinner fa-spin' : 'fa-check-circle'}`} />
+                              {completingId === x.id ? 'Moving...' : `Complete ${course.course_name}`}
+                            </button>
+                          ))}
+                        </div>
                       </td>
                     </tr>
                   )
@@ -2820,7 +2855,10 @@ export function CounselorFeeManagement() {
         x.student_name?.toLowerCase().includes(sl) ||
         x.student_id?.toLowerCase().includes(sl) ||
         x.batch_number?.toLowerCase().includes(sl) ||
-        x.course_name?.toLowerCase().includes(sl)
+        x.course_name?.toLowerCase().includes(sl) ||
+        String(x.total_fee ?? '').includes(sl) ||
+        String(x.amount_paid ?? '').includes(sl) ||
+        String(x.balance ?? '').includes(sl)
       )
     }
     setFilteredFees(f)

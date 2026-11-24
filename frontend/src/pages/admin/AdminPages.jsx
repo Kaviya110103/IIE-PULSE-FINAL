@@ -3554,8 +3554,12 @@ export function CompletedStudents() {
   const initialBranch = new URLSearchParams(window.location.search).get('branch') || ''
   const [students, setStudents] = useState([])
   const [filteredStudents, setFilteredStudents] = useState([])
+  const [certificateStudent, setCertificateStudent] = useState(null)
+  const [certificateChecks, setCertificateChecks] = useState({ payments_completed: false, sessions_completed: false, assessments_completed: false })
+  const [publishingCertificate, setPublishingCertificate] = useState(false)
+  const [certificateSuccess, setCertificateSuccess] = useState(null)
+  const [certificateTab, setCertificateTab] = useState('completed')
   const [loading, setLoading] = useState(true)
-  const [downloadingPdf, setDownloadingPdf] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
   const itemsPerPage = 10
   const normalizeFilterValue = (value) => String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
@@ -3584,6 +3588,8 @@ export function CompletedStudents() {
   // Statistics
   const [stats, setStats] = useState({
     totalGraduates: 0,
+    awaitingCertificate: 0,
+    certificatesIssued: 0,
     totalSessions: 0,
     totalBatches: 0,
     totalBranches: 0
@@ -3673,14 +3679,17 @@ export function CompletedStudents() {
       setCourses(uniqueCourses)
 
       const totalSessions = studentsWithData.reduce((sum, s) => sum + (s.completed_sessions_count || s.total_sessions || 0), 0)
+      const certificatesIssued = studentsWithData.filter(student => Boolean(student.certificate_generated_at)).length
       setStats({
         totalGraduates: studentsWithData.length,
+        awaitingCertificate: studentsWithData.length - certificatesIssued,
+        certificatesIssued,
         totalSessions: totalSessions,
         totalBatches: uniqueBatches.length,
         totalBranches: uniqueBranches.length
       })
 
-      applyFilters(studentsWithData, filters)
+      applyFilters(studentsWithData, filters, certificateTab)
     } catch (err) {
       console.error("Error loading completed students:", err)
       toast.error("Failed to load completed students")
@@ -3689,8 +3698,11 @@ export function CompletedStudents() {
     }
   }
 
-  const applyFilters = (data, currentFilters) => {
-    let filtered = [...data]
+  const applyFilters = (data, currentFilters, selectedTab = certificateTab) => {
+    let filtered = data.filter(student => selectedTab === 'issued'
+      ? Boolean(student.certificate_generated_at)
+      : !student.certificate_generated_at
+    )
 
     if (currentFilters.branch) {
       filtered = filtered.filter(s => sameFilterValue(s.branch, currentFilters.branch))
@@ -3735,6 +3747,11 @@ export function CompletedStudents() {
     applyFilters(students, newFilters)
   }
 
+  const handleCertificateTabChange = (tab) => {
+    setCertificateTab(tab)
+    applyFilters(students, filters, tab)
+  }
+
   const clearFilters = () => {
     const resetFilters = { branch: '', batch: '', course: '', dateFrom: '', dateTo: '', search: '' }
     setFilters(resetFilters)
@@ -3744,26 +3761,7 @@ export function CompletedStudents() {
     applyFilters(students, resetFilters)
   }
 
-  const downloadCompletedStudentsPdf = async () => {
-    setDownloadingPdf(true)
-    try {
-      await downloadPdf('/completed-students/report/', {
-        ...filters,
-        branch: cleanFilterLabel(filters.branch),
-        batch: cleanFilterLabel(filters.batch),
-        course: cleanFilterLabel(filters.course),
-        search: cleanFilterLabel(filters.search),
-      }, 'completed_students_report.pdf')
-      toast.success('Completed students PDF downloaded')
-    } catch (err) {
-      console.error('Completed students PDF error:', err)
-      toast.error('Failed to download completed students PDF')
-    } finally {
-      setDownloadingPdf(false)
-    }
-  }
-
-  const downloadReport = async (studentId, studentName) => {
+  const viewReport = async (studentId, studentName) => {
   try {
     toast.loading(`Opening report for ${studentName}…`, { id: 'dl' })
 
@@ -3788,6 +3786,58 @@ export function CompletedStudents() {
     toast.error('Failed to open report.', { id: 'dl' })
   }
 }
+
+  const openCertificate = async (studentId, studentName) => {
+    try {
+      toast.loading(`Opening certificate for ${studentName}...`, { id: 'certificate' })
+      const res = await api.get(`/completed-students/${studentId}/certificate/`, { responseType: 'blob' })
+      const file = new Blob([res.data], { type: 'application/pdf' })
+      const fileURL = window.URL.createObjectURL(file)
+      window.open(fileURL, '_blank', 'noopener,noreferrer')
+      setTimeout(() => window.URL.revokeObjectURL(fileURL), 60000)
+      toast.success('Certificate opened!', { id: 'certificate' })
+    } catch (err) {
+      console.error('Certificate open error:', err)
+      toast.error('Failed to open certificate.', { id: 'certificate' })
+    }
+  }
+
+  const openCertificateVerification = student => {
+    setCertificateStudent(student)
+    setCertificateChecks({ payments_completed: false, sessions_completed: false, assessments_completed: false })
+  }
+
+  const publishCertificate = async () => {
+    if (!certificateStudent || !Object.values(certificateChecks).every(Boolean)) {
+      toast.error('Confirm all verification checks before generating the certificate.')
+      return
+    }
+    setPublishingCertificate(true)
+    try {
+      const { data } = await api.post(`/completed-students/${certificateStudent.id}/certificate/publish/`, certificateChecks)
+      const generatedAt = data.certificate_generated_at
+      const markGenerated = row => row.id === certificateStudent.id ? { ...row, certificate_generated_at: generatedAt } : row
+      const updatedStudents = students.map(markGenerated)
+      const certificatesIssued = updatedStudents.filter(row => Boolean(row.certificate_generated_at)).length
+      setStudents(updatedStudents)
+      setStats(previous => ({
+        ...previous,
+        awaitingCertificate: updatedStudents.length - certificatesIssued,
+        certificatesIssued,
+      }))
+      // A generated certificate belongs in the issued list immediately.
+      // Switch before showing the success confirmation so closing it leaves
+      // the admin on the student's new Certificate Issued tab.
+      setCertificateTab('issued')
+      applyFilters(updatedStudents, filters, 'issued')
+      setCertificateSuccess(certificateStudent)
+      setCertificateStudent(null)
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to generate certificate.')
+    } finally {
+      setPublishingCertificate(false)
+    }
+  }
 
 const totalPages = Math.ceil(filteredStudents.length / itemsPerPage)
   const paginatedStudents = filteredStudents.slice(
@@ -3831,11 +3881,10 @@ const totalPages = Math.ceil(filteredStudents.length / itemsPerPage)
       <AdminPageHeader
         title="🎓 Completed Students - All Branches"
         sub="Students who have successfully completed their courses across all branches"
-        btn={<button className="admin-btn admin-btn-primary" onClick={downloadCompletedStudentsPdf} disabled={downloadingPdf}><i className={`fas ${downloadingPdf ? 'fa-spinner fa-spin' : 'fa-file-pdf'}`} /> {downloadingPdf ? 'Downloading...' : 'Download PDF'}</button>}
       />
 
       {/* Statistics Cards */}
-      <div className="admin-stat-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+      <div className="admin-stat-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
         <div className="admin-stat-card">
           <div className="admin-stat-icon" style={{ background: 'rgba(76,175,129,0.1)', color: T.sage }}>
             <i className="fas fa-graduation-cap" />
@@ -3848,6 +3897,26 @@ const totalPages = Math.ceil(filteredStudents.length / itemsPerPage)
 
         <div className="admin-stat-card">
           <div className="admin-stat-icon" style={{ background: 'rgba(244,169,64,0.1)', color: T.amber }}>
+            <i className="fas fa-clock" />
+          </div>
+          <div>
+            <div className="admin-stat-value">{stats.awaitingCertificate}</div>
+            <div className="admin-stat-label">Awaiting Certificate</div>
+          </div>
+        </div>
+
+        <div className="admin-stat-card">
+          <div className="admin-stat-icon" style={{ background: 'rgba(76,175,129,0.1)', color: T.sage }}>
+            <i className="fas fa-certificate" />
+          </div>
+          <div>
+            <div className="admin-stat-value">{stats.certificatesIssued}</div>
+            <div className="admin-stat-label">Certificates Issued</div>
+          </div>
+        </div>
+
+        <div className="admin-stat-card">
+          <div className="admin-stat-icon" style={{ background: 'rgba(244,169,64,0.1)', color: T.amber }}>
             <i className="fas fa-layer-group" />
           </div>
           <div>
@@ -3855,15 +3924,43 @@ const totalPages = Math.ceil(filteredStudents.length / itemsPerPage)
             <div className="admin-stat-label">Batches</div>
           </div>
         </div>
-        <div className="admin-stat-card">
-          <div className="admin-stat-icon" style={{ background: 'rgba(15,27,45,0.1)', color: T.navy }}>
-            <i className="fas fa-building" />
-          </div>
-          <div>
-            <div className="admin-stat-value">{stats.totalBranches}</div>
-            <div className="admin-stat-label">Branches</div>
-          </div>
-        </div>
+      </div>
+
+      <div
+        role="tablist"
+        aria-label="Completed student certificate status"
+        style={{ display: 'inline-flex', gap: 4, padding: 4, marginBottom: 16, border: `1px solid ${T.border}`, borderRadius: 8, background: '#f8fafc' }}
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={certificateTab === 'completed'}
+          className="admin-btn admin-btn-sm"
+          onClick={() => handleCertificateTabChange('completed')}
+          style={{
+            border: 'none',
+            boxShadow: 'none',
+            background: certificateTab === 'completed' ? T.navy : 'transparent',
+            color: certificateTab === 'completed' ? 'white' : T.slate,
+          }}
+        >
+          Completed Students ({stats.awaitingCertificate})
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={certificateTab === 'issued'}
+          className="admin-btn admin-btn-sm"
+          onClick={() => handleCertificateTabChange('issued')}
+          style={{
+            border: 'none',
+            boxShadow: 'none',
+            background: certificateTab === 'issued' ? T.sage : 'transparent',
+            color: certificateTab === 'issued' ? 'white' : T.slate,
+          }}
+        >
+          <i className="fas fa-certificate" /> Certificate Issued ({stats.certificatesIssued})
+        </button>
       </div>
 
       {/* Filter Bar */}
@@ -3932,7 +4029,8 @@ const totalPages = Math.ceil(filteredStudents.length / itemsPerPage)
       <div className="admin-card">
         <div className="admin-card-header" style={{ background: `linear-gradient(135deg, ${T.sage}, ${T.sage}cc)`, color: 'white' }}>
           <h5 style={{ color: 'white', margin: 0 }}>
-            <i className="fas fa-graduation-cap" style={{ marginRight: 8 }} /> Graduated Students - All Branches
+            <i className={`fas ${certificateTab === 'issued' ? 'fa-certificate' : 'fa-graduation-cap'}`} style={{ marginRight: 8 }} />
+            {certificateTab === 'issued' ? 'Certificate Issued Students - All Branches' : 'Completed Students Awaiting Certificate - All Branches'}
           </h5>
           <AdminBadge text={`${filteredStudents.length} Records`} variant="success" />
         </div>
@@ -3940,7 +4038,7 @@ const totalPages = Math.ceil(filteredStudents.length / itemsPerPage)
         {filteredStudents.length === 0 ? (
           <div style={{ padding: 60, textAlign: 'center' }}>
             <i className="fas fa-graduation-cap" style={{ fontSize: 48, color: T.slate, marginBottom: 16, opacity: 0.3 }} />
-            <h4 style={{ color: T.slate }}>No completed students found</h4>
+            <h4 style={{ color: T.slate }}>{certificateTab === 'issued' ? 'No certificates issued yet' : 'No completed students awaiting certificates'}</h4>
             <p style={{ color: T.slateLight }}>Try adjusting your filters or check back later.</p>
           </div>
         ) : (
@@ -3949,103 +4047,72 @@ const totalPages = Math.ceil(filteredStudents.length / itemsPerPage)
               <table className="admin-table">
                 <thead>
                   <tr style={{ background: `linear-gradient(135deg, ${T.navy}, ${T.navyMid})`, color: 'white' }}>
-                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', width: '40px' }}>#</th>
-                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'left', width: '130px' }}>Student</th>
                     <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', width: '90px' }}>Student ID</th>
+                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'left', minWidth: '170px' }}>Name</th>
+                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'left', minWidth: '180px' }}>Email</th>
+                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', minWidth: '110px' }}>Mobile No.</th>
+                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', width: '90px' }}>Branch</th>
                     <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', width: '100px' }}>Staff Name</th>
-                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', width: '80px' }}>Batch</th>
-                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'left', width: '100px' }}>Course</th>
-                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', width: '80px' }}>Sessions</th>
-                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', width: '70px' }}>Duration</th>
-                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', width: '85px' }}>Completed</th>
-                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', width: '100px' }}>Attendance</th>
-                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', width: '70px' }}>Avg Score</th>
-                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', width: '70px' }}>Report</th>
+                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', width: '85px' }}>Completed Date</th>
+                    <th style={{ padding: '10px 8px', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', minWidth: '210px' }}>Action</th>
                   </tr>
                 </thead>
                 <tbody>
                   {paginatedStudents.map((x, idx) => {
-                    const globalIndex = (currentPage - 1) * itemsPerPage + idx + 1
-                    const attendancePercentage = x.attendance_percentage || 0
-                    const avgScore = x.average_test_score || 0
-                    const completedSessions = x.completed_sessions_count || x.sessions_completed || 0
-                    const totalSessions = x.total_sessions_count || x.total_sessions || 0
-                    const sessionPercentage = getSessionPercentage(completedSessions, totalSessions)
                     const staffName = x.faculty_name || x.graduated_from_trainer_name || x.trainer_name || '—'
 
                     return (
                       <tr key={x.id} style={{ borderBottom: `1px solid ${T.border}` }}>
-                        <td style={{ padding: '10px 8px', fontSize: '12px', color: T.slate, textAlign: 'center' }}>{globalIndex}</td>
-                        <td style={{ padding: '10px 8px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <AdminAvatar name={x.first_name} size={28} />
-                            <div>
-                              <div style={{ fontWeight: 600, fontSize: '12px' }}>{x.first_name} {x.last_name || ''}</div>
-                              <div style={{ fontSize: '9px', color: T.slate }}>{x.email?.split('@')[0] || '—'}</div>
-                            </div>
+                        <td style={{ padding: '10px 8px', fontSize: '11px', textAlign: 'center' }}>
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                            {x.certificate_generated_at && <i className="fas fa-check-circle" title="Certificate verified" style={{ color: T.sage, fontSize: 14 }} />}
+                            <AdminBadge text={x.student_id} variant="info" />
                           </div>
                         </td>
-                        <td style={{ padding: '10px 8px', fontSize: '11px', textAlign: 'center' }}><AdminBadge text={x.student_id} variant="info" /></td>
+                        <td style={{ padding: '10px 8px' }}>
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: '12px' }}>{x.first_name} {x.last_name || ''}</div>
+                            <div style={{ fontSize: '10px', color: T.slate, marginTop: 2 }}>{x.course_name || x.course || '—'}</div>
+                          </div>
+                        </td>
+                        <td style={{ padding: '10px 8px', fontSize: '11px' }}>{x.email || '—'}</td>
+                        <td style={{ padding: '10px 8px', fontSize: '11px', textAlign: 'center' }}>{x.mobile_no || '—'}</td>
+                        <td style={{ padding: '10px 8px', fontSize: '11px', textAlign: 'center' }}><AdminBadge text={x.branch || '—'} variant="default" /></td>
                         <td style={{ padding: '10px 8px', fontSize: '11px', textAlign: 'center' }}>
                           <AdminBadge text={staffName} variant="primary" />
                         </td>
-                        <td style={{ padding: '10px 8px', fontSize: '11px', textAlign: 'center' }}><AdminBadge text={x.batch_number} variant="default" /></td>
-                        <td style={{ padding: '10px 8px', fontSize: '11px' }}>
-                          <div><strong>{x.course_name || x.course || '—'}</strong></div>
-                          <div style={{ fontSize: '9px', color: T.slate, marginTop: 2 }}>{x.branch || '—'}</div>
-                        </td>
-                        <td style={{ padding: '10px 8px', fontSize: '11px', textAlign: 'center' }}>
-                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                            <div style={{ width: '50px', background: '#e9ecef', borderRadius: '4px', height: '4px' }}>
-                              <div style={{ height: '100%', width: `${sessionPercentage}%`, background: T.sage, borderRadius: '4px' }} />
-                            </div>
-                            <span style={{ fontSize: '10px' }}>{completedSessions}/{totalSessions}</span>
-                          </div>
-                        </td>
-                        <td style={{ padding: '10px 8px', fontSize: '11px', textAlign: 'center' }}>{calculateDuration(x.batch_start_date, x.batch_end_date)}</td>
                         <td style={{ padding: '10px 8px', fontSize: '11px', textAlign: 'center' }}>
                           <AdminBadge text={new Date(x.completion_date).toLocaleDateString('en-IN')} variant="success" />
                         </td>
-
-                        {/* UPDATED ATTENDANCE COLUMN - Shows detailed attendance */}
-                        <td style={{ padding: '10px 8px', fontSize: '11px', textAlign: 'center' }}>
-                          {attendancePercentage > 0 ? (
-                            <div>
-                              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginBottom: '4px' }}>
-                                <div style={{ width: '60px', background: '#e9ecef', borderRadius: '4px', height: '6px' }}>
-                                  <div style={{
-                                    height: '100%',
-                                    width: `${attendancePercentage}%`,
-                                    background: attendancePercentage >= 75 ? T.sage : attendancePercentage >= 60 ? T.amber : T.rose,
-                                    borderRadius: '4px'
-                                  }} />
-                                </div>
-                                <span style={{ fontSize: '11px', fontWeight: 600 }}>{attendancePercentage}%</span>
-                              </div>
-                              <div style={{ fontSize: '9px', color: T.slate }}>
-                                ({x.present_count || 0}/{x.total_attendance || 0} days)
-                              </div>
-                            </div>
-                          ) : (
-                            <AdminBadge text="Not Marked" variant="warning" />
-                          )}
-                        </td>
-
-                        <td style={{ padding: '10px 8px', fontSize: '11px', textAlign: 'center' }}>
-                          <AdminBadge
-                            text={`${avgScore}%`}
-                            variant={avgScore >= 70 ? 'success' : avgScore >= 50 ? 'warning' : 'danger'}
-                          />
-                        </td>
                         <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                          <div style={{ display: 'inline-flex', gap: 6, justifyContent: 'center', whiteSpace: 'nowrap' }}>
                           <button
                             className="admin-btn admin-btn-success admin-btn-sm"
-                            onClick={() => downloadReport(x.id, `${x.first_name} ${x.last_name || ''}`)}
-                            title="Download Completion Report"
+                            onClick={() => viewReport(x.id, `${x.first_name} ${x.last_name || ''}`)}
+                            title="View Completion Report"
                             style={{ padding: '4px 8px', fontSize: '10px' }}
                           >
-                            <i className="fas fa-download" /> Report
+                            <i className="fas fa-eye" /> View Report
                           </button>
+                          {x.certificate_generated_at ? <>
+                            <span title="Certificate verified and generated" style={{ color: T.sage, display: 'inline-grid', placeItems: 'center', fontSize: 16 }}><i className="fas fa-check-circle" /></span>
+                            <button
+                              className="admin-btn admin-btn-primary admin-btn-sm"
+                              onClick={() => openCertificate(x.id, `${x.first_name} ${x.last_name || ''}`)}
+                              title="View Certificate"
+                              style={{ padding: '4px 8px', fontSize: '10px' }}
+                            >
+                              <i className="fas fa-eye" /> View Certificate
+                            </button>
+                          </> : <button
+                            className="admin-btn admin-btn-primary admin-btn-sm"
+                            onClick={() => openCertificateVerification(x)}
+                            title="Verify and Generate Course Completion Certificate"
+                            style={{ padding: '4px 8px', fontSize: '10px' }}
+                          >
+                            <i className="fas fa-certificate" /> Generate Certificate
+                          </button>}
+                          </div>
                         </td>
                       </tr>
                     )
@@ -4102,6 +4169,39 @@ const totalPages = Math.ceil(filteredStudents.length / itemsPerPage)
           </>
         )}
       </div>
+      <AdminModal
+        open={!!certificateStudent}
+        onClose={() => setCertificateStudent(null)}
+        title="Generate Completion Certificate"
+        size="sm"
+      >
+        {certificateStudent && (
+          <div style={{ padding: 20 }}>
+            <p style={{ margin: '0 0 6px', fontWeight: 700 }}>
+              {certificateStudent.first_name} {certificateStudent.last_name || ''}
+            </p>
+            <p style={{ margin: '0 0 18px', color: T.slate, fontSize: 13 }}>
+              {certificateStudent.course_name || certificateStudent.course || 'Course'}
+            </p>
+            <div style={{ display: 'grid', gap: 11, marginBottom: 20 }}>
+              {[
+                ['payments_completed', 'Completed all the payments'],
+                ['sessions_completed', 'Completed all the sessions'],
+                ['assessments_completed', 'Completed all the assessments'],
+              ].map(([key, label]) => <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontWeight: 700, fontSize: 13 }}><input type="checkbox" checked={certificateChecks[key]} onChange={event => setCertificateChecks(previous => ({ ...previous, [key]: event.target.checked }))} />{label}</label>)}
+            </div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button className="admin-btn admin-btn-ghost" onClick={() => setCertificateStudent(null)} disabled={publishingCertificate}>Cancel</button>
+              <button className="admin-btn admin-btn-primary" onClick={publishCertificate} disabled={publishingCertificate || !Object.values(certificateChecks).every(Boolean)}>
+                <i className={`fas ${publishingCertificate ? 'fa-spinner fa-spin' : 'fa-certificate'}`} /> {publishingCertificate ? 'Generating...' : 'Generate Certificate'}
+              </button>
+            </div>
+          </div>
+        )}
+      </AdminModal>
+      <AdminModal open={!!certificateSuccess} onClose={() => setCertificateSuccess(null)} title="Certificate Generated" size="sm">
+        {certificateSuccess && <div style={{ padding: 22, textAlign: 'center' }}><i className="fas fa-check-circle" style={{ color: T.sage, fontSize: 40, marginBottom: 12 }} /><h3 style={{ margin: '0 0 8px' }}>Certificate generated successfully</h3><p style={{ margin: 0, color: T.slate, fontSize: 13 }}>{certificateSuccess.first_name} {certificateSuccess.last_name || ''} can now view the certificate in the Student Portal.</p><button className="admin-btn admin-btn-primary" style={{ marginTop: 18 }} onClick={() => setCertificateSuccess(null)}>Done</button></div>}
+      </AdminModal>
     </div>
   )
 }
@@ -5225,6 +5325,8 @@ function PaymentRequestsSection({ onRefresh }) {
   const [requests, setRequests] = useState([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('pending')
+  const [search, setSearch] = useState('')
+  const [branchFilter, setBranchFilter] = useState('')
   const [processing, setProcessing] = useState(null)
 
   const load = async () => {
@@ -5259,6 +5361,14 @@ function PaymentRequestsSection({ onRefresh }) {
   }
 
   const fmt = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`
+  const requestBranches = [...new Set(requests.map(item => item.branch).filter(Boolean))]
+  const visibleRequests = requests.filter(item => {
+    if (branchFilter && item.branch !== branchFilter) return false
+    const query = search.trim().toLowerCase()
+    if (!query) return true
+    return [item.student_name, item.student_id, item.branch, item.course_name, item.batch_number, item.amount, item.current_balance, item.balance_after]
+      .some(value => String(value ?? '').toLowerCase().includes(query))
+  })
 
   return (
     <div className="admin-card">
@@ -5290,7 +5400,16 @@ function PaymentRequestsSection({ onRefresh }) {
         </div>
       </div>
 
-      {loading ? <AdminSpin /> : requests.length === 0 ? (
+      <div style={{ display: 'flex', gap: 10, padding: '14px 16px 0', flexWrap: 'wrap' }}>
+        <input className="admin-input" style={{ width: 240 }} placeholder="Search student, amount, course..." value={search} onChange={e => setSearch(e.target.value)} />
+        <select className="admin-select" style={{ width: 160 }} value={branchFilter} onChange={e => setBranchFilter(e.target.value)}>
+          <option value="">All Branches</option>
+          {requestBranches.map(branch => <option key={branch} value={branch}>{branch}</option>)}
+        </select>
+        {(search || branchFilter) && <button className="admin-btn admin-btn-ghost admin-btn-sm" onClick={() => { setSearch(''); setBranchFilter('') }}><i className="fas fa-times" /> Clear</button>}
+      </div>
+
+      {loading ? <AdminSpin /> : visibleRequests.length === 0 ? (
         <AdminEmpty msg={`No ${filter} payment requests`} icon="fa-bell-slash" />
       ) : (
         <div style={{ overflowX: 'auto' }}>
@@ -5311,7 +5430,7 @@ function PaymentRequestsSection({ onRefresh }) {
               </tr>
             </thead>
             <tbody>
-              {requests.map((r, i) => (
+              {visibleRequests.map((r, i) => (
                 <tr key={r.id} style={{ opacity: processing === r.id ? 0.5 : 1, transition: 'opacity 0.2s' }}>
                   <td style={{ fontSize: 12, color: T.slate }}>{i + 1}</td>
                   <td>
@@ -5425,7 +5544,10 @@ export function AdminFeeManagement() {
         x.student_name?.toLowerCase().includes(sl) ||
         x.student_id?.toLowerCase().includes(sl) ||
         x.batch_number?.toLowerCase().includes(sl) ||
-        x.course_name?.toLowerCase().includes(sl)
+        x.course_name?.toLowerCase().includes(sl) ||
+        String(x.total_fee ?? '').includes(sl) ||
+        String(x.amount_paid ?? '').includes(sl) ||
+        String(x.balance ?? '').includes(sl)
       )
     }
     setFilteredFees(f)

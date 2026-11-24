@@ -1432,6 +1432,13 @@ class EmployeeDashboardView(APIView):
                 assigned_by=employee,
                 material__is_library=True,
             ).count(),
+            # Keep these dashboard figures scoped to the logged-in trainer,
+            # just like the Staff > Technical Tests and Quizzes screens.
+            'tests_count': QuizTest.objects.filter(created_by=employee).count(),
+            'quizzes_count': Quiz.objects.filter(
+                created_by=employee,
+                quiz_scope='staff_batch',
+            ).count(),
             'completed_students_count': my_completed_students.count(),
             'reassigned_students_count': reassigned_students_count,
             'announcements_count': announcements.count(),
@@ -2668,26 +2675,83 @@ def _student_enrolled_batches(student):
     return batches
 
 
-def _student_course_batches(student, course_id):
+def _student_completed_enrollment_batches(student):
+    """Return historical batches for courses the student has completed.
+
+    Completing a course intentionally closes its enrollment so the learner is
+    removed from staff operational lists.  The closed enrollment must still be
+    available to the learner for course history and lifelong learning content.
+    """
+    if not student:
+        return []
+
+    identity_filter = Q(original_student_id=str(student.id)) | Q(
+        original_student_id=student.student_id
+    )
+    completed_rows = list(
+        CompletedStudent.objects.filter(
+            completion_type='full',
+        ).filter(identity_filter).values('batch_id', 'course_name', 'course')
+    )
+    if not completed_rows:
+        return []
+
+    completed_batch_ids = {
+        str(row['batch_id']) for row in completed_rows if row.get('batch_id')
+    }
+    completed_course_names = {
+        str(row.get('course_name') or row.get('course') or '').strip().casefold()
+        for row in completed_rows
+        if row.get('course_name') or row.get('course')
+    }
+    batches = []
+    seen_batch_ids = set()
+    for enrollment in student.batch_enrollments.filter(
+        is_active=False,
+    ).select_related('batch', 'batch__course_name').order_by('-assigned_at'):
+        batch = enrollment.batch
+        course_name = (
+            batch.course_name.course_name.casefold()
+            if batch and batch.course_name and batch.course_name.course_name
+            else ''
+        )
+        if str(enrollment.batch_id) in completed_batch_ids or course_name in completed_course_names:
+            batches.append(batch)
+            seen_batch_ids.add(batch.id)
+
+    # Older completion records may predate StudentBatchEnrollment.  Their
+    # stored batch id is sufficient to preserve the learner's own history.
+    legacy_batch_ids = [
+        int(batch_id) for batch_id in completed_batch_ids
+        if batch_id.isdigit() and int(batch_id) not in seen_batch_ids
+    ]
+    if legacy_batch_ids:
+        batches.extend(Batches.objects.filter(id__in=legacy_batch_ids).select_related('course_name'))
+    return batches
+
+
+def _student_learning_batches(student):
+    """Return active batches plus completed-course history for student access."""
     batches = []
     seen = set()
-    enrollments = student.batch_enrollments.filter(
-        is_active=True,
-        batch__course_name_id=course_id,
-    ).select_related('batch', 'batch__course_name').order_by('-assigned_at')
-    for enrollment in enrollments:
-        if enrollment.batch_id not in seen:
-            batches.append(enrollment.batch)
-            seen.add(enrollment.batch_id)
-    if student.assigned_batch and student.assigned_batch.course_name_id == course_id and student.assigned_batch_id not in seen:
-        batches.append(student.assigned_batch)
+    for batch in _student_enrolled_batches(student) + _student_completed_enrollment_batches(student):
+        if batch and batch.id not in seen:
+            batches.append(batch)
+            seen.add(batch.id)
     return batches
+
+
+def _student_course_batches(student, course_id):
+    return [
+        batch for batch in _student_learning_batches(student)
+        if batch.course_name_id == course_id
+    ]
 
 
 def _student_accessible_batches(student):
     batches = []
     seen = set()
-    for batch in _student_enrolled_batches(student):
+    for batch in _student_learning_batches(student):
         if batch and batch.id not in seen:
             batches.append(batch)
             seen.add(batch.id)
@@ -2703,13 +2767,15 @@ def _student_accessible_batches(student):
 
 
 def _student_current_content_batches(student):
-    """Return every active enrollment that can receive staff content.
+    """Return every batch whose learning content remains visible to a student.
 
     ``assigned_batch`` is the legacy primary-batch field.  A student can now
-    have multiple active course/batch enrollments, so content must be scoped to
-    all active enrollment rows while still excluding reassignment history.
+    have multiple active course/batch enrollments.  A completed course remains
+    in this student-only list so materials, quizzes, and tests assigned after
+    graduation continue to be available, while its inactive enrollment keeps
+    it excluded from staff operational workflows.
     """
-    return _student_enrolled_batches(student) if student else []
+    return _student_learning_batches(student) if student else []
 
 
 def _student_can_access_material(student, material):
@@ -2724,10 +2790,23 @@ def _student_can_access_material(student, material):
 
 
 def _parallel_course_batches(batch):
-    """All batches that use one course-level shared logsheet."""
+    """Current parallel batches that use one course-level shared logsheet.
+
+    A course can have years of finished batches.  They are not parallel with
+    a currently running batch and must never be traversed when one trainer
+    ticks a session, otherwise a single click becomes increasingly slow as
+    course history grows.
+    """
     if not batch or not batch.course_name_id:
         return []
-    return list(Batches.objects.filter(course_name_id=batch.course_name_id).select_related('course_name'))
+    return list(
+        Batches.objects.filter(
+            course_name_id=batch.course_name_id,
+            is_archived=False,
+            start_date__lte=batch.end_date,
+            end_date__gte=batch.start_date,
+        ).select_related('course_name')
+    )
 
 
 def _is_batch_trainer(batch, employee):
@@ -2840,6 +2919,20 @@ class BatchListCreateView(generics.ListAPIView):
 
     def list(self, request, *args, **kwargs):
         queryset = self.get_queryset()
+        # Reassignment batches created before batch-code support can still
+        # have only their internal batch number. Backfill the display code the
+        # first time they are listed so staff never see that internal value.
+        for batch in queryset.filter(
+            Q(batch_code__isnull=True) | Q(batch_code='')
+        ).select_related('course_name', 'faculty'):
+            batch.batch_code = generate_batch_code(
+                batch.course_name,
+                batch.faculty,
+                batch.start_date,
+                batch.batch_timing,
+                batch.id,
+            )
+            batch.save(update_fields=['batch_code'])
         batch_ids = list(queryset.values_list('id', flat=True))
         student_count_map = {batch_id: set() for batch_id in batch_ids}
         if batch_ids:
@@ -3188,35 +3281,10 @@ class StudentListView(generics.ListAPIView):
     def get_queryset(self):
         qs = super().get_queryset()
 
-        # -- Exclude ONLY FULLY COMPLETED students --------------------
-        # Only exclude students who have a CompletedStudent record with completion_type='full'
-        try:
-            full_completed_ids = CompletedStudent.objects.filter(
-                completion_type='full'
-            ).values_list('original_student_id', flat=True)
-        except DatabaseError as e:
-            # Likely the production DB is missing the column; log and continue without excluding
-            logger.exception("Database error while querying CompletedStudent.completion_type")
-            full_completed_ids = []
-
-        valid_student_ids = []
-        valid_student_pks = []
-        for cid in full_completed_ids:
-            if not cid:
-                continue
-            cid_str = str(cid).strip()
-            if cid_str.isdigit():
-                valid_student_pks.append(int(cid_str))
-            valid_student_ids.append(cid_str)
-
-        if valid_student_ids or valid_student_pks:
-            exclude_filter = Q()
-            if valid_student_ids:
-                exclude_filter |= Q(student_id__in=valid_student_ids)
-            if valid_student_pks:
-                exclude_filter |= Q(id__in=valid_student_pks)
-            qs = qs.exclude(exclude_filter)
-        # -------------------------------------------------------------
+        # A completed course must not hide a student's other active courses.
+        # Keep the shared course-aware active-student rule consistent across
+        # admin, counselor, and staff lists.
+        qs = qs.filter(pk__in=active_students_queryset().values('pk'))
 
         assigned_staff = self.request.query_params.get('assigned_staff')
         if assigned_staff:
@@ -3282,7 +3350,11 @@ class StudentCreateView(APIView):
             return Response({'error': str(exc)}, status=400)
         gender = data.get('gender', '').strip()
         branch = data.get('branch', '').strip()
+        student_mode = data.get('student_mode', 'classroom').strip().lower()
         photo = request.FILES.get('photo')
+
+        if student_mode not in {'online', 'classroom'}:
+            return Response({'error': 'Student mode must be Online or Classroom.'}, status=400)
 
         employee = None
         try:
@@ -3343,6 +3415,7 @@ class StudentCreateView(APIView):
                 course=course_name,
                 gender=gender,
                 branch=branch,
+                student_mode=student_mode,
                 photo=photo if photo else None,
             )
             _sync_student_course_enrollments(student, course_ids, request.user, fee_overrides=course_fee_overrides)
@@ -3926,69 +3999,15 @@ def _sync_reassigned_student_progress_for_batch(batch):
 
 
 def _reconcile_batch_completion_audit(batch):
-    """Repair explicit legacy trainer completions after a session-state upgrade.
+    """Keep daily activity audit records separate from the completion switch.
 
-    Earlier releases persisted a trainer action in ``DailySessionCompletion``
-    but did not always copy it to ``CourseSession.staff_completed``.  Those
-    rows are real trainer completions, and without this compatibility repair a
-    deployed update makes students see "Waiting for Trainer" again.  Only
-    audits explicitly saved with ``completed=True`` qualify; pending activity
-    rows and attendance data are never used to complete a session.
+    A completed ``DailySessionCompletion`` row can be created for activity
+    tracking and must never tick a logsheet session by itself.  The only
+    supported path to a trainer completion is ``staff_mark_session_complete``.
+    Keeping this compatibility hook as a no-op prevents page loads and
+    deployments from changing a trainer's logsheet progress.
     """
-    if not batch:
-        return 0
-
-    legacy_rows = {
-        item.session_id: item
-        for item in DailySessionCompletion.objects.filter(
-            session__batch=batch,
-            completed=True,
-        ).select_related('faculty').order_by('session_id', '-completed_at', '-id')
-    }
-    if not legacy_rows:
-        return 0
-
-    repaired = 0
-    for session in CourseSession.objects.filter(
-        batch=batch,
-        id__in=legacy_rows.keys(),
-        staff_completed=False,
-    ):
-        audit = legacy_rows[session.id]
-        completed_at = audit.completed_at or timezone.make_aware(
-            datetime.combine(audit.completion_date, datetime.min.time())
-        )
-        session.staff_completed = True
-        session.completed_date = completed_at
-        session.completed_by = audit.faculty
-        session.save(update_fields=['staff_completed', 'completed_date', 'completed_by', 'updated_at'])
-
-        # Preserve a student's already-completed confirmation while making
-        # the trainer state visible for legacy pending/not-started records.
-        for student in active_students_for_batch(batch):
-            progress, _ = Student_Session_Progress.objects.get_or_create(
-                student=student,
-                session=session,
-            )
-            if not progress.staff_completed:
-                progress.staff_completed = True
-                progress.staff_completed_at = completed_at
-                if progress.student_status == 'not_started':
-                    progress.student_status = 'pending'
-                progress.save(update_fields=['staff_completed', 'staff_completed_at', 'student_status', 'updated_at'])
-
-            status_obj, _ = StudentSessionStatus.objects.get_or_create(
-                student=student,
-                session=session,
-            )
-            if not status_obj.staff_completed:
-                status_obj.staff_completed = True
-                status_obj.staff_completed_at = completed_at
-                if status_obj.student_status == 'not_started':
-                    status_obj.student_status = 'pending'
-                status_obj.save(update_fields=['staff_completed', 'staff_completed_at', 'student_status'])
-        repaired += 1
-    return repaired
+    return 0
 
 
 # -- ATTENDANCE ----------------------------------------------------------------
@@ -4142,7 +4161,7 @@ def _branch_counselors_for_batch(batch):
 
 
 def _batch_duration_exceeded_message(batch, staff):
-    batch_name = batch.batch_number or str(batch)
+    batch_name = batch.batch_code or batch.batch_number or str(batch)
     mentor_name = _mentor_name(staff)
     start_display = batch.start_date.strftime("%d/%m/%Y") if batch.start_date else '-'
     end_display = batch.end_date.strftime("%d/%m/%Y") if batch.end_date else '-'
@@ -4166,7 +4185,7 @@ def _send_batch_duration_notifications(batch, staff, from_user, attendance_date)
         except Exception:
             return 0
 
-    batch_name = batch.batch_number or str(batch)
+    batch_name = batch.batch_code or batch.batch_number or str(batch)
     mentor_name = _mentor_name(staff)
     date_key = attendance_date.strftime('%Y-%m-%d')
     sent_count = 0
@@ -5718,40 +5737,82 @@ class AssignedTestListView(generics.ListCreateAPIView):
 
     def create(self, request, *args, **kwargs):
         batch_ids = _request_id_list(request.data, 'batch_ids', 'batches')
-        if batch_ids:
-            test_id = request.data.get('test')
-            if not test_id:
-                return Response({'error': 'Select a test'}, status=status.HTTP_400_BAD_REQUEST)
-            try:
-                test = QuizTest.objects.get(id=test_id)
-            except QuizTest.DoesNotExist:
-                return Response({'error': 'Selected test was not found'}, status=status.HTTP_404_NOT_FOUND)
+        test_id = request.data.get('test')
+        if not test_id:
+            return Response({'error': 'Select a test'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            test = QuizTest.objects.get(id=test_id)
+        except QuizTest.DoesNotExist:
+            return Response({'error': 'Selected test was not found'}, status=status.HTTP_404_NOT_FOUND)
 
-            batches = list(Batches.objects.filter(id__in=batch_ids))
-            found_ids = {batch.id for batch in batches}
-            if len(found_ids) != len(batch_ids):
-                return Response({'error': 'One or more selected batches were not found'}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            emp = Employee.objects.get(user=request.user)
+        except Employee.DoesNotExist:
+            emp = None
+        if emp and test.created_by_id != emp.id:
+            return Response({'error': 'You can manage only tests created by you.'}, status=status.HTTP_403_FORBIDDEN)
 
+        batches = list(Batches.objects.filter(id__in=batch_ids))
+        found_ids = {batch.id for batch in batches}
+        if len(found_ids) != len(batch_ids):
+            return Response({'error': 'One or more selected batches were not found'}, status=status.HTTP_404_NOT_FOUND)
+        if emp:
+            for batch in batches:
+                if not _is_batch_trainer(batch, emp):
+                    return Response({'error': 'You are not allowed to assign tests for one or more selected batches.'}, status=status.HTTP_403_FORBIDDEN)
+
+        schedules = request.data.get('batch_schedules') or {}
+        if isinstance(schedules, str):
             try:
-                emp = Employee.objects.get(user=request.user)
-            except Employee.DoesNotExist:
-                emp = None
-            if emp:
-                for batch in batches:
-                    if not (_is_batch_trainer(batch, emp) or _is_previous_trainer_for_batch(batch, emp)):
-                        return Response({'error': 'You are not allowed to assign tests for one or more selected batches.'}, status=status.HTTP_403_FORBIDDEN)
+                schedules = json.loads(schedules)
+            except json.JSONDecodeError:
+                return Response({'error': 'Invalid batch timing data.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not isinstance(schedules, dict):
+            return Response({'error': 'Invalid batch timing data.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Backward compatible fallback for callers that still send one window.
+        default_date = str(request.data.get('test_date') or test.test_date or '').strip()
+        default_start = (request.data.get('start_time') or '').strip()
+        default_end = (request.data.get('end_time') or '').strip()
+        parsed_schedules = {}
+        for batch in batches:
+            schedule = schedules.get(str(batch.id)) or schedules.get(batch.id) or {}
+            raw_date = str(schedule.get('test_date') or default_date).strip()
+            raw_start = str(schedule.get('start_time') or default_start).strip()
+            raw_end = str(schedule.get('end_time') or default_end).strip()
+            test_date = parse_date(raw_date)
+            if not test_date or not raw_start or not raw_end:
+                return Response({'error': f'Set date, start time, and end time for {batch.batch_number}.'}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                start_time = datetime.strptime(raw_start, '%H:%M').time()
+                end_time = datetime.strptime(raw_end, '%H:%M').time()
+            except ValueError:
+                return Response({'error': f'Use a valid time for {batch.batch_number}.'}, status=status.HTTP_400_BAD_REQUEST)
+            if start_time >= end_time:
+                return Response({'error': f'End time must be later than start time for {batch.batch_number}.'}, status=status.HTTP_400_BAD_REQUEST)
+            parsed_schedules[batch.id] = {'test_date': test_date, 'start_time': start_time, 'end_time': end_time}
+
+        replace_assignments = str(request.data.get('replace_assignments', '')).lower() in {'1', 'true', 'yes'}
+        with transaction.atomic():
+            if replace_assignments:
+                # The checkbox list is the full intended assignment list. This
+                # makes unticking one batch remove this test only from that batch.
+                AssignedTest.objects.filter(test=test).exclude(batch_id__in=found_ids).delete()
 
             assigned = []
             for batch in batches:
-                assigned_test, _ = AssignedTest.objects.get_or_create(test=test, batch=batch)
+                schedule = parsed_schedules[batch.id]
+                assigned_test, _ = AssignedTest.objects.update_or_create(
+                    test=test,
+                    batch=batch,
+                    defaults=schedule,
+                )
                 assigned.append(assigned_test)
 
-            return Response(
-                AssignedTestSerializer(assigned, many=True).data,
-                status=status.HTTP_201_CREATED
-            )
-
-        return super().create(request, *args, **kwargs)
+        return Response(
+            AssignedTestSerializer(assigned, many=True).data,
+            status=status.HTTP_200_OK
+        )
 
 
 @api_view(['GET'])
@@ -7510,7 +7571,7 @@ def batch_sessions(request, batch_id):
 def student_sessions(request):
     try:
         student = Students.objects.get(user=request.user)
-        batches = _student_enrolled_batches(student)
+        batches = _student_learning_batches(student)
         accessible_batches = _student_accessible_batches(student)
         if not accessible_batches:
             return Response([])
@@ -7674,7 +7735,11 @@ def student_batches(request):
             if record.source_batch_id
         }
 
-        for batch in _student_enrolled_batches(student):
+        completed_batch_ids = {
+            batch.id for batch in _student_completed_enrollment_batches(student)
+        }
+
+        for batch in _student_learning_batches(student):
             if not batch or batch.id in seen_batches:
                 continue
             if batch.id in previous_source_ids and batch.id not in current_target_ids and batch.id != student.assigned_batch_id:
@@ -7690,6 +7755,7 @@ def student_batches(request):
                 staff_completed=True,
             ).values('session_id').distinct().count()
             related_record = next((record for record in reassignment_records if record.target_batch_id == batch.id), None)
+            is_completed_course = batch.id in completed_batch_ids
             data.update({
                 'course_group': False,
                 'course_id': batch.course_name_id,
@@ -7700,25 +7766,39 @@ def student_batches(request):
                 'completed_sessions': completed_sessions,
                 'progress_percentage': round((completed_sessions / total_sessions * 100) if total_sessions else 0, 1),
                 'assignment_role': 'current',
-                'trainer_status': 'Current Trainer',
-                'assignment_status': 'Active / Current Assignment',
-                'status': 'Active',
-                'is_current_assignment': True,
+                'trainer_status': 'Course Completed' if is_completed_course else 'Current Trainer',
+                'assignment_status': 'Completed / Learning Access' if is_completed_course else 'Active / Current Assignment',
+                'status': 'Completed' if is_completed_course else 'Active',
+                'is_completed_course': is_completed_course,
+                'is_current_assignment': not is_completed_course,
                 'is_previous_assignment': False,
             })
             if related_record:
+                previous_staff_completed_sessions = CourseSession.objects.filter(
+                    batch=related_record.source_batch,
+                    staff_completed=True,
+                ).count()
+                previous_staff_total_sessions = CourseSession.objects.filter(
+                    batch=related_record.source_batch,
+                ).count()
                 data.update({
-                    'trainer_status': 'Current Trainer / Reassigned To',
-                    'assignment_status': 'Active / Current Assignment',
+                    'trainer_status': 'Current Trainer',
+                    'assignment_status': 'Reassigned / Previous Progress Retained',
                     'reassigned_at': related_record.reassigned_at,
                     'previous_batch_number': related_record.source_batch_number,
                     'previous_trainer_name': related_record.previous_trainer_name,
                     'reassigned_trainer_name': related_record.reassigned_trainer_name,
+                    'previous_trainer_completed_sessions': previous_staff_completed_sessions,
+                    'previous_trainer_total_sessions': previous_staff_total_sessions,
                 })
             results.append(data)
 
         for record in reassignment_records:
             batch = record.source_batch
+            # The receiving batch already represents this reassigned course.
+            # Do not render a second historical batch card for the student.
+            if record.target_batch_id:
+                continue
             if not batch or batch.id in seen_batches:
                 continue
             seen_batches.add(batch.id)
@@ -8376,8 +8456,10 @@ def completed_students_pdf(request):
 
 # -- COMPLETION REQUESTS -------------------------------------------------------
 
-def _completed_student_defaults(student, trainer, completed_sessions, total_sessions):
-    batch = student.assigned_batch
+def _completed_student_defaults(student, trainer, completed_sessions, total_sessions, batch=None):
+    # A student may study more than one course.  Always snapshot the exact
+    # course batch being completed instead of the mutable primary assignment.
+    batch = batch or student.assigned_batch
     attendance_summary = _attendance_summary_for_student(
         student,
         batch.course_name_id if batch and batch.course_name_id else None,
@@ -8401,7 +8483,7 @@ def _completed_student_defaults(student, trainer, completed_sessions, total_sess
         'city': student.city,
         'state': student.state,
         'qualification': student.qualification,
-        'course': student.course,
+        'course': batch.course_name.course_name if batch and batch.course_name else student.course,
         'gender': student.gender,
         'branch': student.branch,
         'batch_number': batch.batch_number if batch else 'N/A',
@@ -8409,7 +8491,7 @@ def _completed_student_defaults(student, trainer, completed_sessions, total_sess
         'batch_start_date': batch.start_date if batch else timezone.now().date(),
         'batch_end_date': batch.end_date if batch else timezone.now().date(),
         'faculty_name': trainer_name,
-        'course_name': student.course,
+        'course_name': batch.course_name.course_name if batch and batch.course_name else student.course,
         'completed_sessions_count': completed_sessions,
         'total_sessions_count': total_sessions,
         'attendance_percentage': att_pct,
@@ -8422,13 +8504,69 @@ def _completed_student_defaults(student, trainer, completed_sessions, total_sess
 def _completed_student_lookup(student, batch):
     identity_filter = Q(original_student_id=str(student.id)) | Q(original_student_id=student.student_id)
     qs = CompletedStudent.objects.filter(completion_type='full').filter(identity_filter)
+    if batch and batch.course_name:
+        # Parallel batches share one course completion.  Match by course so a
+        # second trainer/batch cannot create a duplicate certificate.
+        course_name = batch.course_name.course_name
+        return qs.filter(
+            Q(course_name__iexact=course_name) | Q(course__iexact=course_name)
+        ).first()
     if batch:
-        batch_filter = Q(batch_id=str(batch.id)) | Q(batch_number=batch.batch_number)
-        if batch.course_name:
-            course_name = batch.course_name.course_name
-            batch_filter |= Q(course_name__iexact=course_name) | Q(course__icontains=course_name)
-        return qs.filter(batch_filter).first()
+        return qs.filter(Q(batch_id=str(batch.id)) | Q(batch_number=batch.batch_number)).first()
     return qs.first()
+
+
+def _completion_batch_for_student(student, requested_batch_id=None):
+    """Resolve an active student batch that identifies the course to close."""
+    if requested_batch_id:
+        batch = Batches.objects.filter(id=requested_batch_id).select_related('course_name', 'faculty').first()
+        if not batch:
+            return None
+        is_enrolled = StudentBatchEnrollment.objects.filter(
+            student=student,
+            batch=batch,
+            is_active=True,
+        ).exists()
+        if not is_enrolled and student.assigned_batch_id != batch.id:
+            return None
+        return batch
+    return student.assigned_batch
+
+
+def _close_completed_course_enrollments(student, batch):
+    """Close only the completed course and retain every other active course."""
+    if not batch or not batch.course_name_id:
+        return
+
+    StudentBatchEnrollment.objects.filter(
+        student=student,
+        batch__course_name_id=batch.course_name_id,
+        is_active=True,
+    ).update(is_active=False)
+    StudentCourseEnrollment.objects.filter(
+        student=student,
+        course_id=batch.course_name_id,
+        is_active=True,
+    ).update(is_active=False)
+
+    remaining_assignment = StudentBatchEnrollment.objects.filter(
+        student=student,
+        is_active=True,
+    ).select_related('batch', 'batch__faculty').order_by('-assigned_at').first()
+    active_courses = StudentCourseEnrollment.objects.filter(
+        student=student,
+        is_active=True,
+    ).select_related('course').order_by('course__course_name')
+
+    student.assigned_batch = remaining_assignment.batch if remaining_assignment else None
+    student.assigned_staff = (
+        remaining_assignment.batch.faculty
+        if remaining_assignment and remaining_assignment.batch
+        else None
+    )
+    if active_courses.exists():
+        student.course = ', '.join(enrollment.course.course_name for enrollment in active_courses)
+    student.save(update_fields=['assigned_batch', 'assigned_staff', 'course', 'updated_at'])
 
 
 @api_view(['POST'])
@@ -8452,7 +8590,11 @@ def mark_student_completed_by_admin_or_counselor(request, student_id):
         if student_branch != counselor_branch:
             return Response({'error': 'You can only complete students from your branch.'}, status=403)
 
-    already_completed = _completed_student_lookup(student, student.assigned_batch)
+    batch = _completion_batch_for_student(student, request.data.get('batch_id'))
+    if not batch:
+        return Response({'error': 'Select an active course batch before completing this student.'}, status=400)
+
+    already_completed = _completed_student_lookup(student, batch)
     if already_completed:
         return Response({
             'success': True,
@@ -8460,17 +8602,18 @@ def mark_student_completed_by_admin_or_counselor(request, student_id):
             'completed_student_id': already_completed.id,
         })
 
-    total_sessions = CourseSession.objects.filter(batch=student.assigned_batch).count() if student.assigned_batch_id else 0
+    total_sessions = CourseSession.objects.filter(batch=batch).count()
     completed_sessions = Student_Session_Progress.objects.filter(
         student=student,
+        session__batch=batch,
         completed=True,
         student_status='completed',
     ).count()
-    trainer = student.assigned_staff or actor_employee
-    defaults = _completed_student_defaults(student, trainer, completed_sessions, total_sessions)
+    trainer = batch.faculty or student.assigned_staff or actor_employee
+    defaults = _completed_student_defaults(student, trainer, completed_sessions, total_sessions, batch=batch)
 
     with transaction.atomic():
-        completed_student = _completed_student_lookup(student, student.assigned_batch)
+        completed_student = _completed_student_lookup(student, batch)
         if completed_student:
             for key, value in defaults.items():
                 setattr(completed_student, key, value)
@@ -8483,10 +8626,8 @@ def mark_student_completed_by_admin_or_counselor(request, student_id):
                 **defaults,
             )
 
-        old_batch = student.assigned_batch
-        student.assigned_batch = None
-        student.assigned_staff = None
-        student.save()
+        old_batch = batch
+        _close_completed_course_enrollments(student, batch)
 
         # Keep the progress history after graduation.  Completed students no
         # longer appear in active-batch queries, while their completion report
@@ -8511,22 +8652,23 @@ def complete_student_by_trainer(request, student_id):
     except Students.DoesNotExist:
         return Response({'error': 'Student not found'}, status=404)
 
-    if not student.assigned_batch:
-        return Response({'error': 'Student is not assigned to any batch.'}, status=400)
+    batch = _completion_batch_for_student(student, request.data.get('batch_id'))
+    if not batch:
+        return Response({'error': 'Student is not assigned to an active course batch.'}, status=400)
 
-    if not _is_batch_trainer(student.assigned_batch, trainer) and not (request.user.is_staff or request.user.is_superuser):
+    if not _is_batch_trainer(batch, trainer) and not (request.user.is_staff or request.user.is_superuser):
         return Response({'error': 'Only a trainer assigned to this batch can complete this student.'}, status=403)
 
-    total_sessions = CourseSession.objects.filter(batch=student.assigned_batch).count()
+    total_sessions = CourseSession.objects.filter(batch=batch).count()
     student_completed = Student_Session_Progress.objects.filter(
         student=student,
-        session__batch=student.assigned_batch,
+        session__batch=batch,
         completed=True,
         student_status='completed',
     ).count()
     mentor_completed = Student_Session_Progress.objects.filter(
         student=student,
-        session__batch=student.assigned_batch,
+        session__batch=batch,
         staff_completed=True,
     ).count()
 
@@ -8537,11 +8679,11 @@ def complete_student_by_trainer(request, student_id):
             'error': 'Complete all mentor sessions and wait for student confirmation before moving to completed.'
         }, status=400)
 
-    defaults = _completed_student_defaults(student, trainer, student_completed, total_sessions)
+    defaults = _completed_student_defaults(student, trainer, student_completed, total_sessions, batch=batch)
 
     with transaction.atomic():
         try:
-            completed_student = _completed_student_lookup(student, student.assigned_batch)
+            completed_student = _completed_student_lookup(student, batch)
             created = completed_student is None
             if created:
                 completed_student = CompletedStudent.objects.create(
@@ -8553,7 +8695,7 @@ def complete_student_by_trainer(request, student_id):
             logger.exception("Database error creating CompletedStudent; retrying without optional completion fields")
             defaults.pop('completion_type', None)
             defaults.pop('completion_percentage', None)
-            completed_student = _completed_student_lookup(student, student.assigned_batch)
+            completed_student = _completed_student_lookup(student, batch)
             created = completed_student is None
             if created:
                 completed_student = CompletedStudent.objects.create(
@@ -8570,10 +8712,8 @@ def complete_student_by_trainer(request, student_id):
             completed_student.graduated_from_trainer = trainer
             completed_student.save()
 
-        old_batch = student.assigned_batch
-        student.assigned_batch = None
-        student.assigned_staff = None
-        student.save()
+        old_batch = batch
+        _close_completed_course_enrollments(student, batch)
 
         # Keep the progress history after graduation.  It is used by both the
         # graduate report and the student's own Reports module.
@@ -8593,8 +8733,11 @@ def request_completion(request, student_id):
         emp = Employee.objects.get(user=request.user)
         student = Students.objects.get(id=student_id)
         counselor = Employee.objects.get(id=request.data.get('counselor_id'))
+        batch = _completion_batch_for_student(student, request.data.get('batch_id'))
+        if not batch:
+            return Response({'error': 'Student is not assigned to an active course batch.'}, status=400)
         req = SessionCompletionRequest.objects.create(
-            student=student, batch=student.assigned_batch,
+            student=student, batch=batch,
             trainer=emp, counselor=counselor,
             topics_covered=request.data.get('topics_covered', ''),
             sessions_completed=request.data.get('sessions_completed', 0),
@@ -8634,7 +8777,9 @@ def counselor_pending_requests(request):
                 'trainer_id': req.trainer.id if req.trainer else None,
                 'trainer_name': f"{req.trainer.first_name} {req.trainer.last_name or ''}".strip(),
                 'batch_id': batch.id if batch else None,
-                # Get batch info with fallbacks:
+                # Display batch code in the counselor workflow; the database
+                # primary key remains internal only.
+                'batch_code': batch.batch_code if batch and batch.batch_code else (batch.batch_number if batch else None),
                 'batch_number': batch.batch_number if batch else req.student.assigned_batch.batch_number if req.student.assigned_batch else 'N/A',
                 'course_name': batch.course_name.course_name if batch and batch.course_name else req.student.course if req.student.course else 'N/A',
                 'course_id': batch.course_name.id if batch and batch.course_name else None,
@@ -9335,6 +9480,28 @@ def counselor_reassign_student(request, request_id):
                         }
                     )
 
+            # A reassignment continues the same course logsheet.  Carry the
+            # trainer's explicit completion state to matching target sessions
+            # so the receiving trainer does not start from a blank logsheet.
+            target_by_number = {
+                session.session_number: session
+                for session in CourseSession.objects.filter(batch=target_batch)
+            }
+            session_updates = []
+            for source_session in source_sessions:
+                target_session = target_by_number.get(source_session.session_number)
+                if not target_session or not source_session.staff_completed or target_session.staff_completed:
+                    continue
+                target_session.staff_completed = True
+                target_session.completed_date = source_session.completed_date or reassigned_at
+                target_session.completed_by = source_session.completed_by or completion_req.trainer
+                session_updates.append(target_session)
+            if session_updates:
+                CourseSession.objects.bulk_update(
+                    session_updates,
+                    ['staff_completed', 'completed_date', 'completed_by'],
+                )
+
             _apply_student_session_state_to_batch(student, target_batch, source_state)
 
         with transaction.atomic():
@@ -9342,6 +9509,12 @@ def counselor_reassign_student(request, request_id):
             if batch_mode == 'new':
                 new_batch = Batches.objects.create(
                     batch_number=generate_batch_number(new_trainer.branch),
+                    batch_code=generate_batch_code(
+                        source_batch.course_name,
+                        new_trainer,
+                        source_batch.start_date,
+                        source_batch.batch_timing,
+                    ),
                     course_type=source_batch.course_type,
                     course_name=source_batch.course_name,
                     faculty=new_trainer,
@@ -9360,6 +9533,43 @@ def counselor_reassign_student(request, request_id):
                 except Batches.DoesNotExist:
                     return Response({'error': 'Selected batch not found for this staff'}, status=404)
                 copy_student_progress_to_batch(target_batch, copy_batch_sessions=False)
+
+            # Move the active student enrollment to the receiving batch.
+            # Keep the source enrollment as history, but do not let it create
+            # a second "My Batches" card or remain in staff active lists.
+            source_enrollment = StudentBatchEnrollment.objects.filter(
+                student=student,
+                batch=source_batch,
+            ).select_related('course_enrollment').first()
+            course_enrollment = (
+                source_enrollment.course_enrollment
+                if source_enrollment and source_enrollment.course_enrollment_id
+                else StudentCourseEnrollment.objects.filter(
+                    student=student,
+                    course=source_batch.course_name,
+                ).first()
+            )
+            if not course_enrollment:
+                course_enrollment = StudentCourseEnrollment.objects.create(
+                    student=student,
+                    course=source_batch.course_name,
+                    enrolled_by=request.user,
+                    is_active=True,
+                )
+            if source_batch.id != target_batch.id:
+                StudentBatchEnrollment.objects.filter(
+                    student=student,
+                    batch=source_batch,
+                ).update(is_active=False)
+            StudentBatchEnrollment.objects.update_or_create(
+                student=student,
+                batch=target_batch,
+                defaults={
+                    'course_enrollment': course_enrollment,
+                    'assigned_by': request.user,
+                    'is_active': True,
+                },
+            )
 
             student.previous_trainer = completion_req.trainer
             student.previous_batch = source_batch
@@ -9419,7 +9629,7 @@ def counselor_reassign_student(request, request_id):
                 'student_id': student.student_id,
                 'receiving_counselor': f"{target_counselor.first_name} {target_counselor.last_name or ''}".strip(),
                 'receiving_staff': f"{new_trainer.first_name} {new_trainer.last_name or ''}".strip(),
-                'receiving_batch': target_batch.batch_number,
+                'receiving_batch': target_batch.batch_code or target_batch.batch_number,
                 'receiving_branch': target_batch.branch,
                 'batch_created': batch_mode == 'new',
             }
@@ -12472,59 +12682,160 @@ def _complete_parallel_course_session(source_session, employee, actor_user):
     across all trainers and timings.
     """
     completed_at = timezone.now()
-    targets = []
-    for batch in _parallel_course_batches(source_session.batch):
-        sync_missing_sessions_from_logsheet(batch, prefer_course_logsheet=True)
-        target = CourseSession.objects.filter(
-            batch=batch,
-            session_number=source_session.session_number,
-        ).first()
-        if target:
-            targets.append(target)
+    batches = _parallel_course_batches(source_session.batch)
+    batch_ids = [batch.id for batch in batches]
+    targets = list(CourseSession.objects.filter(
+        batch_id__in=batch_ids,
+        session_number=source_session.session_number,
+    ).select_related('batch'))
 
+    # A course session sheet is created when the batch/logsheet is created.
+    # Do not parse PDFs here: a missing legacy session is an extraction issue,
+    # not something a trainer should wait for while ticking a checkbox.
+    if source_session not in targets:
+        targets.append(source_session)
+
+    target_ids = [target.id for target in targets]
+    CourseSession.objects.filter(id__in=target_ids, staff_completed=False).update(
+        staff_completed=True,
+        completed_date=completed_at,
+        completed_by=employee,
+    )
     for target in targets:
-        if not target.staff_completed:
-            target.staff_completed = True
-            target.completed_date = completed_at
-            target.completed_by = employee
-            target.save(update_fields=['staff_completed', 'completed_date', 'completed_by', 'updated_at'])
+        target.staff_completed = True
+        target.completed_date = completed_at
+        target.completed_by = employee
 
-        DailySessionCompletion.objects.update_or_create(
-            session=target,
+    daily_existing = {
+        item.session_id: item
+        for item in DailySessionCompletion.objects.filter(
+            session_id__in=target_ids,
             faculty=employee,
             completion_date=completed_at.date(),
-            defaults={'completed': True, 'completed_at': completed_at},
         )
-
-        for student in active_students_for_batch(target.batch):
-            status_obj, _ = StudentSessionStatus.objects.get_or_create(
-                student=student,
+    }
+    daily_create = []
+    daily_update = []
+    for target in targets:
+        completion = daily_existing.get(target.id)
+        if completion:
+            completion.completed = True
+            completion.completed_at = completed_at
+            daily_update.append(completion)
+        else:
+            daily_create.append(DailySessionCompletion(
                 session=target,
-            )
+                faculty=employee,
+                completion_date=completed_at.date(),
+                completed=True,
+                completed_at=completed_at,
+            ))
+    if daily_create:
+        DailySessionCompletion.objects.bulk_create(daily_create)
+    if daily_update:
+        DailySessionCompletion.objects.bulk_update(daily_update, ['completed', 'completed_at'])
+
+    target_students = []
+    for target in targets:
+        target_students.extend((target, student) for student in active_students_for_batch(target.batch).select_related('user'))
+
+    existing_statuses = {
+        (item.session_id, item.student_id): item
+        for item in StudentSessionStatus.objects.filter(
+            session_id__in=target_ids,
+            student_id__in=[student.id for _, student in target_students],
+        )
+    }
+    existing_progress = {
+        (item.session_id, item.student_id): item
+        for item in Student_Session_Progress.objects.filter(
+            session_id__in=target_ids,
+            student_id__in=[student.id for _, student in target_students],
+        )
+    }
+    statuses_to_create, statuses_to_update = [], []
+    progress_to_create, progress_to_update = [], []
+    notifications = []
+
+    for target, student in target_students:
+        key = (target.id, student.id)
+        status_obj = existing_statuses.get(key)
+        if status_obj:
             status_obj.staff_completed = True
             status_obj.staff_completed_at = completed_at
             status_obj.student_status = 'pending'
-            status_obj.save(update_fields=['staff_completed', 'staff_completed_at', 'student_status'])
-
-            progress, _ = Student_Session_Progress.objects.get_or_create(
+            statuses_to_update.append(status_obj)
+        else:
+            statuses_to_create.append(StudentSessionStatus(
                 student=student,
                 session=target,
-            )
+                staff_completed=True,
+                staff_completed_at=completed_at,
+                student_status='pending',
+            ))
+
+        progress = existing_progress.get(key)
+        if progress:
             progress.staff_completed = True
             progress.staff_completed_at = completed_at
             if progress.student_status == 'not_started':
                 progress.student_status = 'pending'
-            progress.save(update_fields=['staff_completed', 'staff_completed_at', 'student_status', 'updated_at'])
+            progress_to_update.append(progress)
+        else:
+            progress_to_create.append(Student_Session_Progress(
+                student=student,
+                session=target,
+                staff_completed=True,
+                staff_completed_at=completed_at,
+                completed=False,
+                student_status='pending',
+            ))
 
-            if student.user:
-                _queue_user_notification(
-                    student.user,
-                    actor_user,
-                    'session_completed',
-                    f'Session {target.session_number} Completed',
-                    f"Session {target.session_number}: '{target.title}' has been completed by your trainer. Please confirm or raise a doubt.",
-                    True,
-                )
+        if student.user_id:
+            notifications.append((student.user_id, target))
+
+    if statuses_to_create:
+        StudentSessionStatus.objects.bulk_create(statuses_to_create)
+    if statuses_to_update:
+        StudentSessionStatus.objects.bulk_update(
+            statuses_to_update,
+            ['staff_completed', 'staff_completed_at', 'student_status'],
+        )
+    if progress_to_create:
+        Student_Session_Progress.objects.bulk_create(progress_to_create)
+    if progress_to_update:
+        Student_Session_Progress.objects.bulk_update(
+            progress_to_update,
+            ['staff_completed', 'staff_completed_at', 'student_status', 'updated_at'],
+        )
+
+    # Batch-create only notifications not already sent for this session today.
+    if notifications:
+        user_ids = [user_id for user_id, _ in notifications]
+        existing_notifications = set(SessionNotification.objects.filter(
+            to_user_id__in=user_ids,
+            notification_type='session_completed',
+            created_at__date=timezone.localdate(),
+        ).values_list('to_user_id', 'message'))
+        notification_rows = []
+        pending_notification_keys = set()
+        for user_id, target in notifications:
+            title = f'Session {target.session_number} Completed'
+            message = f"Session {target.session_number}: '{target.title}' has been completed by your trainer. Please confirm or raise a doubt."
+            notification_key = (user_id, message)
+            if notification_key not in existing_notifications and notification_key not in pending_notification_keys:
+                notification_rows.append(SessionNotification(
+                    from_user=actor_user,
+                    to_user_id=user_id,
+                    user_id=user_id,
+                    notification_type='session_completed',
+                    title=title,
+                    message=message,
+                    requires_action=True,
+                ))
+                pending_notification_keys.add(notification_key)
+        if notification_rows:
+            SessionNotification.objects.bulk_create(notification_rows)
 
     return targets
 
@@ -13049,16 +13360,30 @@ def student_assigned_tests(request):
         batch__in=student_batches_list,
     ).select_related('test', 'batch', 'batch__course_name').order_by('-assigned_date')
 
-    def test_status(test):
-        if not test.test_date:
-            return 'Upcoming'
+    def assignment_window(assignment):
+        test = assignment.test
+        start = assignment.start_time or test.start_time
+        end = assignment.end_time
+        if start and not end and test.duration_minutes:
+            end = (datetime.combine(timezone.localdate(), start) + timedelta(minutes=test.duration_minutes)).time()
+        return start, end
+
+    def test_status(assignment):
+        test = assignment.test
+        scheduled_date = assignment.test_date or test.test_date
+        if not scheduled_date:
+            return 'Active'
         today = timezone.localdate()
-        if test.test_date > today:
+        if scheduled_date > today:
             return 'Upcoming'
-        if test.test_date < today:
-            return 'Completed'
-        if test.start_time and timezone.localtime().time() < test.start_time:
+        if scheduled_date < today:
+            return 'Expired'
+        start_time, end_time = assignment_window(assignment)
+        now = timezone.localtime().time()
+        if start_time and now < start_time:
             return 'Upcoming'
+        if end_time and now >= end_time:
+            return 'Expired'
         return 'Active'
 
     data = []
@@ -13076,12 +13401,16 @@ def student_assigned_tests(request):
             'test_type': test.test_type,
             'creation_method': test.creation_method,
             'instructions': test.instructions,
-            'test_date': test.test_date,
-            'start_time': test.start_time,
-            'duration_minutes': test.duration_minutes,
+            'test_date': a.test_date or test.test_date,
+            'start_time': assignment_window(a)[0],
+            'end_time': assignment_window(a)[1],
+            'duration_minutes': (
+                int((datetime.combine(timezone.localdate(), assignment_window(a)[1]) - datetime.combine(timezone.localdate(), assignment_window(a)[0])).total_seconds() / 60)
+                if assignment_window(a)[0] and assignment_window(a)[1] else test.duration_minutes
+            ),
             'question_paper_url': paper_url,
             'total_questions': questions.count(),
-            'status': test_status(test),
+            'status': test_status(a),
             'trainer': f"{test.created_by.first_name} {test.created_by.last_name or ''}".strip() if test.created_by else '',
             'assigned_date': a.assigned_date if hasattr(a, 'assigned_date') else None,
             'batch_id': a.batch_id,
@@ -13144,13 +13473,39 @@ def student_take_test(request, test_id):
         if not student_batches_list:
             return Response({'error': 'You are not assigned to any batch'}, status=400)
         
-        assigned_exists = AssignedTest.objects.filter(
+        assignments = list(AssignedTest.objects.filter(
             test=test,
             batch__in=student_batches_list,
-        ).exists()
+        ))
 
-        if not assigned_exists:
+        if not assignments:
             return Response({'error': 'This test is not assigned to your batch'}, status=400)
+
+        today = timezone.localdate()
+        now = timezone.localtime().time()
+        scheduled_assignments = [
+            assignment for assignment in assignments
+            if assignment.test_date or test.test_date
+        ]
+        if scheduled_assignments and not any((assignment.test_date or test.test_date) == today for assignment in scheduled_assignments):
+            return Response({'error': 'This test can be attended only on its scheduled date.'}, status=400)
+
+        def assignment_is_open(assignment):
+            scheduled_date = assignment.test_date or test.test_date
+            if scheduled_date and scheduled_date != today:
+                return False
+            start = assignment.start_time or test.start_time
+            end = assignment.end_time
+            if start and not end and test.duration_minutes:
+                end = (datetime.combine(today, start) + timedelta(minutes=test.duration_minutes)).time()
+            if start and now < start:
+                return False
+            if end and now >= end:
+                return False
+            return True
+
+        if not any(assignment_is_open(assignment) for assignment in assignments):
+            return Response({'error': 'This test is available only during the assigned batch time window.'}, status=400)
         
         # ? ONE TIME ATTEMPT - Check if already taken
         if TestResult.objects.filter(student=student, test=test).exists():
@@ -13661,6 +14016,22 @@ def _completed_report_batch(completed_student):
     return Batches.objects.filter(batch_number=completed_student.batch_number).select_related('course_name', 'faculty').first()
 
 
+def _completion_report_course_batches(batch):
+    """Return only the student's reporting batch and its assigned mentors.
+
+    The batch itself already contains every trainer for a parallel schedule.
+    Pulling every overlapping batch for the course leaks unrelated trainers'
+    uploads into the student's completion report.
+    """
+    if not batch:
+        return []
+    return [
+        Batches.objects.filter(id=batch.id).select_related('faculty').prefetch_related(
+            'trainer_assignments__trainer'
+        ).first() or batch
+    ]
+
+
 def _completion_report_payload(completed_student=None, *, student=None, batch=None, is_completed=True):
     """Create one authoritative report for a completed or in-progress course."""
     if student is None and completed_student is not None:
@@ -13671,6 +14042,40 @@ def _completion_report_payload(completed_student=None, *, student=None, batch=No
     report_student = completed_student or student
     if not report_student:
         return None
+    report_batches = _completion_report_course_batches(batch)
+    report_batch_ids = [item.id for item in report_batches if item]
+
+    # Every trainer assigned to the completed course appears separately.  This
+    # keeps parallel-batch learning activity visible instead of attributing all
+    # material and assessment counts to only the mentor who completed it.
+    report_trainers = {}
+    for report_batch in report_batches:
+        if report_batch.faculty_id:
+            report_trainers[report_batch.faculty_id] = report_batch.faculty
+        for assignment in report_batch.trainer_assignments.all():
+            report_trainers[assignment.trainer_id] = assignment.trainer
+    trainer_content_summary = []
+    for trainer in sorted(report_trainers.values(), key=lambda item: (item.first_name or '', item.last_name or '', item.id)):
+        trainer_content_summary.append({
+            'trainer_id': trainer.id,
+            'trainer_name': f"{trainer.first_name} {trainer.last_name or ''}".strip(),
+            'tests_assigned': AssignedTest.objects.filter(
+                batch_id__in=report_batch_ids,
+                test__created_by=trainer,
+            ).count(),
+            'quizzes_assigned': Quiz.objects.filter(
+                created_by=trainer,
+            ).filter(
+                Q(assigned_batches__id__in=report_batch_ids) |
+                Q(batch_id__in=report_batch_ids)
+            ).distinct().count(),
+            'materials_assigned': StudyMaterial.objects.filter(
+                uploaded_by=trainer,
+            ).filter(
+                Q(batch_id__in=report_batch_ids) |
+                Q(assignments__batch_id__in=report_batch_ids)
+            ).distinct().count(),
+        })
     sessions = list(CourseSession.objects.filter(batch=batch).select_related('completed_by').order_by('session_number')) if batch else []
     progress_by_session = {
         item.session_id: item for item in Student_Session_Progress.objects.filter(
@@ -13767,12 +14172,39 @@ def _completion_report_payload(completed_student=None, *, student=None, batch=No
                 'balance': float(fee.balance or 0),
                 'is_fully_paid': fee.is_fully_paid,
             })
-            payment_history.extend({
-                'amount': float(tx.amount or 0),
-                'payment_mode': tx.payment_mode.replace('_', ' ').title(),
-                'notes': tx.notes or '',
-                'paid_at': _report_display_date(tx.paid_at),
-            } for tx in fee.transactions.all().order_by('-paid_at'))
+            transactions = list(fee.transactions.all().order_by('paid_at', 'id'))
+            recorded_amount = sum((tx.amount or Decimal('0')) for tx in transactions)
+            legacy_amount = max(Decimal('0'), Decimal(str(fee.amount_paid or 0)) - recorded_amount)
+            running_paid = Decimal('0')
+            installments = []
+            if legacy_amount:
+                running_paid += legacy_amount
+                installments.append({
+                    'amount': float(legacy_amount),
+                    'payment_mode': 'Recorded Payment',
+                    'notes': 'Payment recorded before installment history was available.',
+                    'paid_at': _report_display_date(fee.created_at),
+                    'paid_at_sort': fee.created_at,
+                    'balance_after_payment': float(max(Decimal('0'), Decimal(str(fee.total_fee or 0)) - running_paid)),
+                })
+            for tx in transactions:
+                amount = Decimal(str(tx.amount or 0))
+                running_paid += amount
+                installments.append({
+                    'amount': float(amount),
+                    'payment_mode': tx.payment_mode.replace('_', ' ').title(),
+                    'notes': tx.notes or '',
+                    'paid_at': _report_display_date(tx.paid_at),
+                    'paid_at_sort': tx.paid_at,
+                    'balance_after_payment': float(max(Decimal('0'), Decimal(str(fee.total_fee or 0)) - running_paid)),
+                })
+            for number, installment in enumerate(installments, start=1):
+                installment['installment_number'] = number
+                payment_history.append(installment)
+
+    payment_history.sort(key=lambda item: item.get('paid_at_sort') or timezone.make_aware(datetime.min), reverse=True)
+    for item in payment_history:
+        item.pop('paid_at_sort', None)
 
     total_fee = sum(item['total_fee'] for item in fee_rows)
     amount_paid = sum(item['amount_paid'] for item in fee_rows)
@@ -13816,6 +14248,7 @@ def _completion_report_payload(completed_student=None, *, student=None, batch=No
             'total_sessions': (completed_student.total_sessions_count or len(session_rows)) if completed_student else len(session_rows),
         },
         'sessions': session_rows,
+        'trainer_content_summary': trainer_content_summary,
         'materials': material_rows,
         'quizzes': quiz_rows,
         'tests': test_rows,
@@ -14051,7 +14484,10 @@ def _completion_report_pdf_response(s):
     def report_table(headers, rows, widths):
         table_data = [[Paragraph(escape(str(head)), compact_header) for head in headers]]
         for values in rows:
-            table_data.append([Paragraph(escape(display(value)), compact_cell) for value in values])
+            table_data.append([
+                Paragraph(escape(display(value)).replace('\n', '<br/>'), compact_cell)
+                for value in values
+            ])
         table = Table(table_data, colWidths=widths, repeatRows=1)
         table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), NAVY),
@@ -14077,7 +14513,7 @@ def _completion_report_pdf_response(s):
                 row_data.get('title', '-'),
                 'Yes' if row_data.get('trainer_completed') else 'No',
                 'Yes' if row_data.get('student_completed') else 'No',
-                f"Trainer: {row_data.get('trainer_completed_at') or '-'}<br/>Student: {row_data.get('student_completed_at') or '-'}",
+                f"Trainer: {row_data.get('trainer_completed_at') or '-'}\nStudent: {row_data.get('student_completed_at') or '-'}",
             ] if isinstance(row_data, dict) else row_data
             for row_data in session_rows
         ],
@@ -14138,9 +14574,12 @@ def _completion_report_pdf_response(s):
     if fee['payment_history']:
         story.append(Spacer(1, 8))
         story.append(report_table(
-            ['Amount', 'Payment mode', 'Date', 'Notes'],
-            [[f"Rs. {item['amount']:,.2f}", item['payment_mode'], item['paid_at'], item['notes'] or '-'] for item in fee['payment_history']],
-            [W * .2, W * .22, W * .2, W * .38],
+            ['#', 'Payment date', 'Method', 'Amount paid', 'Balance', 'Notes'],
+            [[
+                item.get('installment_number', index + 1), item['paid_at'], item['payment_mode'],
+                f"Rs. {item['amount']:,.2f}", f"Rs. {item.get('balance_after_payment', 0):,.2f}", item['notes'] or '-'
+            ] for index, item in enumerate(fee['payment_history'])],
+            [W * .06, W * .16, W * .16, W * .16, W * .16, W * .30],
         ))
     story.append(Spacer(1, 18))
 
@@ -14178,6 +14617,300 @@ def download_completion_report(request, student_id):
     ):
         return Response({'error': 'You can only download your own completion report.'}, status=403)
     return _completion_report_pdf_response(completed_student)
+
+
+def _completion_certificate_response(request, completed_student):
+    """Render an already-authorized completed student's certificate PDF."""
+    try:
+        import fitz
+        from PyPDF2 import PdfReader, PdfWriter
+        from reportlab.lib import colors
+        from reportlab.lib.utils import ImageReader
+        from reportlab.graphics import renderPDF
+        from reportlab.graphics.barcode.qr import QrCodeWidget
+        from reportlab.graphics.shapes import Drawing
+        from reportlab.pdfbase.pdfmetrics import stringWidth
+        from reportlab.pdfgen import canvas
+    except Exception as exc:
+        return Response({'error': str(exc)}, status=500)
+
+    batch = _completed_report_batch(completed_student)
+    end_date = (
+        (batch.end_date if batch else None) or
+        completed_student.batch_end_date or
+        (completed_student.completion_date.date() if completed_student.completion_date else None)
+    )
+    start_date = (batch.start_date if batch else None) or completed_student.batch_start_date or end_date
+    if not end_date or not start_date:
+        return Response({'error': 'The completed batch dates are unavailable for this certificate.'}, status=400)
+
+    def _name_with_initial(first_name, last_name):
+        first = str(first_name or '').strip()
+        last = str(last_name or '').strip()
+        if not last:
+            return first or 'Student'
+        initial = last[0].upper()
+        return f'{first} {initial}.'
+
+    def _session_hours(timing):
+        value = str(timing or '')
+        ranges = re.findall(r'(\d{1,2})(?::(\d{2}))?\s*(AM|PM)', value, re.IGNORECASE)
+        if len(ranges) >= 2:
+            def to_minutes(item):
+                hour, minute, suffix = item
+                hour = int(hour) % 12 + (12 if suffix.upper() == 'PM' else 0)
+                return hour * 60 + int(minute or 0)
+            duration = to_minutes(ranges[1]) - to_minutes(ranges[0])
+            if duration <= 0:
+                duration += 24 * 60
+            return duration / 60
+        key = value.lower()
+        if 'weekend' in key:
+            return 14
+        if any(slot in key for slot in ('morning', 'afternoon', 'evening')):
+            return 2
+        return 0
+
+    session_count = CourseSession.objects.filter(batch=batch).count() if batch else 0
+    session_count = session_count or int(completed_student.total_sessions_count or 0)
+    timing = batch.batch_timing if batch else ''
+    total_hours = _session_hours(timing) * session_count
+    hours_text = str(int(total_hours)) if float(total_hours).is_integer() else f'{total_hours:.1f}'
+    student_name = _name_with_initial(completed_student.first_name, completed_student.last_name)
+    course_name = (completed_student.course_name or completed_student.course or (batch.course_name.course_name if batch and batch.course_name else 'Course')).strip()
+    mentor_name = (completed_student.faculty_name or '').strip()
+    if not mentor_name and batch and batch.faculty:
+        mentor_name = f'{batch.faculty.first_name} {batch.faculty.last_name or ""}'.strip()
+    mentor_name = ' '.join(part.capitalize() for part in mentor_name.split())
+    issued_date = end_date + timedelta(days=10)
+    original_student_key = str(completed_student.original_student_id or '').strip()
+    original_student_query = (
+        Q(student_id=original_student_key) |
+        Q(student_id=completed_student.student_id)
+    )
+    if original_student_key.isdigit():
+        original_student_query |= Q(id=int(original_student_key))
+    original_student = Students.objects.filter(original_student_query).first()
+    training_mode = 'Online' if getattr(original_student, 'student_mode', '') == 'online' else 'Classroom'
+    safe_name = re.sub(r'[^\w\s-]', '', student_name).strip().replace(' ', '_') or 'Student'
+    template_path = Path(__file__).resolve().parent / 'assets' / 'student_completion_certificate_template.pdf'
+    if not template_path.exists():
+        return Response({'error': 'Certificate template is unavailable. Please contact support.'}, status=500)
+
+    try:
+        template_document = fitz.open(str(template_path))
+        template_page = template_document[0]
+        page_width = float(template_page.rect.width)
+        page_height = float(template_page.rect.height)
+        template_pdf = io.BytesIO(template_document.tobytes(garbage=4, deflate=True))
+        template_document.close()
+        base_pdf = PdfReader(template_pdf)
+        overlay_buffer = io.BytesIO()
+        overlay = canvas.Canvas(overlay_buffer, pagesize=(page_width, page_height))
+        navy = colors.HexColor('#071640')
+
+        def draw_centered_fit(text, x, y, width, *, size, font='Helvetica-Bold', color=navy):
+            value = str(text or '-')
+            font_size = size
+            while font_size > 8 and stringWidth(value, font, font_size) > width - 4:
+                font_size -= 0.5
+            overlay.setFillColor(color)
+            overlay.setFont(font, font_size)
+            overlay.drawCentredString(x + width / 2, y, value)
+
+        # This template is a designed image rather than a fillable PDF. The
+        # rectangles below cover its sample data only; all artwork stays intact.
+        overlay.setFillColor(colors.HexColor('#fbfcff'))
+        overlay.rect(220, 286, 400, 54, fill=1, stroke=0)
+        draw_centered_fit(student_name, 220, 307, 400, size=33, font='Helvetica-BoldOblique')
+
+        # Replace the whole sample course banner, including its AI icon, with
+        # the selected course name only.
+        overlay.setFillColor(colors.HexColor('#1713a9'))
+        overlay.roundRect(200, 204, 408, 48, 24, fill=1, stroke=0)
+        draw_centered_fit(course_name, 200, 222, 408, size=25, font='Helvetica-Bold', color=colors.white)
+
+        # Right-side course facts: labels and icons remain from the template;
+        # only their sample values are replaced.
+        overlay.setFillColor(colors.HexColor('#fbfcff'))
+        overlay.rect(698, 348, 120, 27, fill=1, stroke=0)
+        overlay.rect(698, 312, 120, 27, fill=1, stroke=0)
+        overlay.rect(698, 275, 120, 27, fill=1, stroke=0)
+        draw_centered_fit(f'{hours_text} Hours', 698, 356, 120, size=12)
+        draw_centered_fit(training_mode, 698, 320, 120, size=11)
+        draw_centered_fit(issued_date.strftime('%d %b %Y'), 698, 283, 120, size=11)
+
+        # Replace the template's sample badge with the student's actual ID.
+        overlay.setFillColor(colors.HexColor('#10165f'))
+        overlay.setStrokeColor(colors.HexColor('#e5b52d'))
+        overlay.setLineWidth(1.4)
+        overlay.roundRect(23, 38, 171, 42, 13, fill=1, stroke=1)
+        overlay.setFillColor(colors.white)
+        overlay.setFont('Helvetica-Bold', 8)
+        overlay.drawString(53, 64, 'Student ID')
+        draw_centered_fit(completed_student.student_id, 45, 48, 132, size=9, color=colors.white)
+
+        # Replace the template's sample program-manager details with the
+        # mentor who completed this student's batch.
+        overlay.setFillColor(colors.HexColor('#fbfcff'))
+        overlay.rect(195, 56, 155, 92, fill=1, stroke=0)
+        overlay.setLineWidth(1.5)
+        overlay.setStrokeColor(colors.HexColor('#08b9eb'))
+        overlay.line(203, 84, 251, 84)
+        overlay.setStrokeColor(colors.HexColor('#e411bd'))
+        overlay.line(251, 84, 301, 84)
+        overlay.setStrokeColor(colors.HexColor('#e1b42b'))
+        overlay.line(301, 84, 342, 84)
+        draw_centered_fit(mentor_name or 'Mentor', 195, 106, 155, size=14, font='Helvetica-Oblique')
+        draw_centered_fit('Mentor Signature', 195, 63, 155, size=10)
+
+        # The director signature is supplied as a project asset. The title
+        # and decorative underline from the template remain unchanged.
+        director_signature_path = Path(__file__).resolve().parent / 'assets' / 'director_signature.png'
+        if director_signature_path.exists():
+            overlay.setFillColor(colors.HexColor('#fbfcff'))
+            overlay.rect(500, 45, 180, 103, fill=1, stroke=0)
+            overlay.setStrokeColor(colors.HexColor('#08b9eb'))
+            overlay.line(523, 84, 572, 84)
+            overlay.setStrokeColor(colors.HexColor('#e411bd'))
+            overlay.line(572, 84, 622, 84)
+            overlay.setStrokeColor(colors.HexColor('#e1b42b'))
+            overlay.line(622, 84, 665, 84)
+            overlay.drawImage(
+                ImageReader(str(director_signature_path)),
+                527,
+                102,
+                width=135,
+                height=35,
+                preserveAspectRatio=True,
+                anchor='c',
+                mask='auto',
+            )
+            draw_centered_fit('Director', 520, 65, 150, size=11)
+            draw_centered_fit('Indra Institute of Education', 520, 50, 150, size=10)
+
+        # The QR code always opens the public certificate screen, where the
+        # learner enters their Student ID before the published PDF is shown.
+        certificate_url = f'{get_portal_url(request).rstrip("/")}/certificate'
+        overlay.setFillColor(colors.white)
+        overlay.rect(695, 150, 88, 112, fill=1, stroke=0)
+        qr_code = QrCodeWidget(certificate_url)
+        left, bottom, right, top = qr_code.getBounds()
+        scale = 74 / max(right - left, top - bottom)
+        qr_drawing = Drawing(74, 74, transform=[scale, 0, 0, scale, 0, 0])
+        qr_drawing.add(qr_code)
+        renderPDF.draw(qr_drawing, overlay, 702, 177)
+        draw_centered_fit('Scan to verify', 695, 157, 88, size=8)
+        overlay.save()
+
+        overlay_buffer.seek(0)
+        overlay_page = PdfReader(overlay_buffer).pages[0]
+        page = base_pdf.pages[0]
+        page.merge_page(overlay_page)
+        output = io.BytesIO()
+        writer = PdfWriter()
+        writer.add_page(page)
+        writer.write(output)
+        output.seek(0)
+    except Exception:
+        logger.exception('Certificate generation failed for completed student %s', completed_student.id)
+        return Response({'error': 'Unable to generate the certificate right now.'}, status=500)
+
+    response = HttpResponse(output.getvalue(), content_type='application/pdf')
+    disposition = 'attachment' if request.query_params.get('download') == '1' else 'inline'
+    response['Content-Disposition'] = f'{disposition}; filename="{safe_name}_Course_Completion_Certificate.pdf"'
+    return response
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def generate_completion_certificate(request, student_id):
+    """Generate a certificate and publish it when an administrator approves it."""
+    try:
+        completed_student = CompletedStudent.objects.get(id=student_id, completion_type='full')
+    except CompletedStudent.DoesNotExist:
+        return Response({'error': f'Student {student_id} not found'}, status=404)
+
+    student = Students.objects.filter(user=request.user).first()
+    if student:
+        owns_certificate = str(completed_student.original_student_id) in {
+            str(student.id), str(student.student_id),
+        } or str(completed_student.student_id) == str(student.student_id)
+        if not owns_certificate:
+            return Response({'error': 'You can only view your own certificate.'}, status=403)
+        if not completed_student.certificate_generated_at:
+            return Response({'error': 'Your certificate will be available after it is generated by an administrator.'}, status=404)
+    return _completion_certificate_response(request, completed_student)
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+def publish_completion_certificate(request, student_id):
+    """Publish a certificate only after an admin confirms all completion checks."""
+    try:
+        completed_student = CompletedStudent.objects.get(id=student_id, completion_type='full')
+    except CompletedStudent.DoesNotExist:
+        return Response({'error': f'Student {student_id} not found'}, status=404)
+
+    required_checks = ('payments_completed', 'sessions_completed', 'assessments_completed')
+    missing = [key for key in required_checks if request.data.get(key) is not True]
+    if missing:
+        return Response({'error': 'Confirm all payment, session, and assessment checks before generating the certificate.'}, status=400)
+
+    if not completed_student.certificate_generated_at:
+        completed_student.certificate_generated_at = timezone.now()
+        completed_student.save(update_fields=['certificate_generated_at'])
+
+    return Response({
+        'success': True,
+        'message': 'Certificate generated successfully.',
+        'certificate_generated_at': completed_student.certificate_generated_at,
+    })
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def public_certificate_lookup(request, student_id):
+    """Public verification view for certificates explicitly generated by admin."""
+    normalized_id = str(student_id or '').strip()
+    if not normalized_id:
+        return Response({'error': 'Enter a valid student ID.'}, status=400)
+    completed_student = CompletedStudent.objects.filter(
+        completion_type='full',
+        certificate_generated_at__isnull=False,
+        student_id__iexact=normalized_id,
+    ).first()
+    if not completed_student:
+        return Response({'error': 'No generated certificate was found for this Student ID.'}, status=404)
+    return _completion_certificate_response(request, completed_student)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def student_certificates(request):
+    """Return only the logged-in student's certificates published by admin."""
+    student = Students.objects.filter(user=request.user).first()
+    if not student:
+        return Response({'error': 'Student account required.'}, status=403)
+
+    certificates = CompletedStudent.objects.filter(
+        completion_type='full',
+        certificate_generated_at__isnull=False,
+    ).filter(
+        Q(original_student_id__in=[str(student.id), str(student.student_id)]) |
+        Q(student_id=student.student_id)
+    ).order_by('-certificate_generated_at')
+    return Response({
+        'results': [{
+            'id': item.id,
+            'student_id': item.student_id,
+            'student_name': item.full_name,
+            'course_name': item.course_name or item.course,
+            'batch_id': item.batch_number,
+            'completion_date': item.completion_date,
+            'generated_at': item.certificate_generated_at,
+        } for item in certificates],
+    })
 
 
 @api_view(['PUT', 'PATCH'])
@@ -14530,51 +15263,22 @@ def admin_fee_list(request):
         fees = fees.filter(student__branch=branch)
 
     data = []
-    used_student_fee_enrollments = {}
     for fee in fees:
         course = fee.batch.course_name
         batch_enrollment_qs = StudentBatchEnrollment.objects.filter(
             student=fee.student,
             batch=fee.batch,
         ).select_related('course_enrollment', 'course_enrollment__course')
-        batch_enrollment = batch_enrollment_qs.filter(is_active=True).first()
-        if batch_enrollment_qs.exists() and not batch_enrollment:
-            continue
+        # A fee record belongs permanently to its own batch/course. Never
+        # infer another enrollment from the student's comma-separated course
+        # list or rewrite its amount while simply opening the fee page.
+        batch_enrollment = batch_enrollment_qs.filter(is_active=True).first() or batch_enrollment_qs.first()
         enrollment = batch_enrollment.course_enrollment if batch_enrollment else None
         if not enrollment and course:
             enrollment = StudentCourseEnrollment.objects.filter(
                 student=fee.student,
                 course=course,
-                is_active=True,
-            ).only('actual_fee').first()
-        current_course_names = [part.strip() for part in str(fee.student.course or '').split(',') if part.strip()]
-        current_course_name_set = set(current_course_names)
-        enrollment_course_name = enrollment.course.course_name if enrollment and enrollment.course_id else ''
-        if current_course_name_set and enrollment_course_name not in current_course_name_set:
-            student_key = fee.student_id
-            used_ids = used_student_fee_enrollments.setdefault(student_key, set())
-            current_enrollments = list(StudentCourseEnrollment.objects.filter(
-                student=fee.student,
-                is_active=True,
-                course__course_name__in=current_course_names,
-            ).select_related('course'))
-            current_enrollments.sort(
-                key=lambda item: current_course_names.index(item.course.course_name)
-                if item.course.course_name in current_course_names else len(current_course_names)
-            )
-            replacement = next((item for item in current_enrollments if item.id not in used_ids), None)
-            if replacement and fee.amount_paid == 0:
-                enrollment = replacement
-                if batch_enrollment and batch_enrollment.course_enrollment_id != replacement.id:
-                    batch_enrollment.course_enrollment = replacement
-                    batch_enrollment.save(update_fields=['course_enrollment'])
-            elif replacement:
-                enrollment = replacement
-        if enrollment and enrollment.actual_fee is not None and fee.amount_paid == 0 and fee.total_fee != enrollment.actual_fee:
-            fee.total_fee = enrollment.actual_fee
-            fee.save(update_fields=['total_fee', 'balance', 'is_fully_paid', 'updated_at'])
-        if enrollment:
-            used_student_fee_enrollments.setdefault(fee.student_id, set()).add(enrollment.id)
+            ).select_related('course').first()
         display_course = enrollment.course if enrollment and enrollment.course_id else course
         pending_amount = FeePaymentRequest.objects.filter(
             fee_payment=fee,
@@ -15085,20 +15789,39 @@ def create_fee_payment_request(request, fee_id):
         if existing:
             return Response({'error': 'A pending request already exists for this student'}, status=400)
 
-        req = FeePaymentRequest.objects.create(
-            student=fee.student,
-            fee_payment=fee,
-            amount=amount,
-            payment_mode=payment_mode,
-            notes=notes,
-            screenshot=screenshot,
-            status='pending',
-        )
+        with transaction.atomic():
+            req = FeePaymentRequest.objects.create(
+                student=fee.student,
+                fee_payment=fee,
+                amount=amount,
+                payment_mode=payment_mode,
+                notes=notes,
+                screenshot=screenshot,
+                status='pending',
+            )
+
+        admin_users = User.objects.filter(
+            Q(is_superuser=True) | Q(is_staff=True),
+            is_active=True,
+        ).distinct()
+        for admin_user in admin_users:
+            _queue_user_notification(
+                admin_user,
+                request.user,
+                'fee_payment_request',
+                'Fee Payment Request',
+                f"{emp.first_name} submitted Rs. {amount} for {fee.student.first_name} {fee.student.last_name or ''} ({fee.student.student_id}) - {fee.batch.batch_number}.",
+                True,
+                False,
+            )
 
         # Notify admin via email (async)
         try:
-            admins = User.objects.filter(is_superuser=True)
-            admin_emails = list(admins.values_list('email', flat=True))
+            admins = User.objects.filter(
+                Q(is_superuser=True) | Q(is_staff=True),
+                is_active=True,
+            ).distinct()
+            admin_emails = [email for email in admins.values_list('email', flat=True) if email]
             if admin_emails:
                 send_email_async(
                     subject=f'Fee Payment Request — {fee.student.first_name} {fee.student.last_name or ""}',
@@ -15150,6 +15873,9 @@ def admin_fee_payment_requests(request):
     status_filter = request.query_params.get('status', 'pending')
     if status_filter:
         requests_qs = requests_qs.filter(status=status_filter)
+    branch_filter = (request.query_params.get('branch') or '').strip()
+    if branch_filter:
+        requests_qs = requests_qs.filter(student__branch__iexact=branch_filter)
 
     data = []
     for r in requests_qs:
@@ -15196,6 +15922,14 @@ def admin_fee_payment_requests(request):
             'balance_after': balance_after,
             'screenshot': screenshot_url,   # ? ADD THIS
         })
+    search = (request.query_params.get('search') or '').strip().lower()
+    if search:
+        data = [item for item in data if search in ' '.join([
+            str(item.get('student_name') or ''), str(item.get('student_id') or ''),
+            str(item.get('branch') or ''), str(item.get('course_name') or ''),
+            str(item.get('batch_number') or ''), str(item.get('amount') or ''),
+            str(item.get('current_balance') or ''), str(item.get('balance_after') or ''),
+        ]).lower()]
     return Response({'results': data})
 
 
