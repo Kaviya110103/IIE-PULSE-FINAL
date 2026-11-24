@@ -598,6 +598,9 @@ class TestSerializer(serializers.ModelSerializer):
                 'batch_code': assignment.batch.batch_code,
                 'display_name': assignment.batch.batch_code or assignment.batch.batch_number,
                 'assigned_at': assignment.assigned_date,
+                'test_date': assignment.test_date,
+                'start_time': assignment.start_time,
+                'end_time': assignment.end_time,
             }
             for assignment in obj.assignedtest_set.select_related('batch').order_by('-assigned_date')
         ]

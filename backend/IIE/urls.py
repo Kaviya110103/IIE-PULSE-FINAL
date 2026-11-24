@@ -258,6 +258,10 @@ urlpatterns = [
     path('api/completed-students/', v.CompletedStudentListView.as_view()),
     path('api/completed-students/report/', v.completed_students_pdf),
     path('api/completed-students/<int:student_id>/report/', v.download_completion_report, name='download-completion-report'),
+    path('api/completed-students/<int:student_id>/certificate/', v.generate_completion_certificate, name='generate-completion-certificate'),
+    path('api/completed-students/<int:student_id>/certificate/publish/', v.publish_completion_certificate, name='publish-completion-certificate'),
+    path('api/public/certificates/<str:student_id>/', v.public_certificate_lookup, name='public-certificate-lookup'),
+    path('api/student/certificates/', v.student_certificates, name='student-certificates'),
     path('completed-students/<int:student_id>/report/', v.download_completion_report),
 
     # â”€â”€ COMPLETION REQUESTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

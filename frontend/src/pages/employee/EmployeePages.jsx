@@ -31,6 +31,41 @@ const attendanceSessionText = (record) => {
 
 const getBatchDisplayName = (batch) => batch?.batch_code || batch?.display_name || batch?.batch_number || 'N/A'
 
+function StaffAssessmentTabs({ type, active }) {
+  const navigate = useNavigate()
+  const isTest = type === 'test'
+  const tabs = isTest
+    ? [
+        { key: 'create', label: 'Create', icon: 'fa-plus', to: '/employee/tests/create' },
+        { key: 'manage', label: 'Manage', icon: 'fa-list-check', to: '/employee/tests' },
+        { key: 'results', label: 'Results', icon: 'fa-chart-column', to: '/employee/test-results' },
+      ]
+    : [
+        { key: 'create', label: 'Create', icon: 'fa-plus', to: '/employee/quiz/upload' },
+        { key: 'manage', label: 'Manage', icon: 'fa-list-check', to: '/employee/quiz' },
+        { key: 'results', label: 'Results', icon: 'fa-chart-column', to: '/employee/quiz-results' },
+      ]
+
+  return (
+    <div
+      aria-label={`${isTest ? 'Technical tests' : 'Quizzes'} sections`}
+      style={{ display: 'inline-flex', gap: 4, padding: 4, border: `1px solid ${T.border}`, borderRadius: 9, background: '#fff', marginBottom: 18 }}
+    >
+      {tabs.map(tab => (
+        <button
+          key={tab.key}
+          type="button"
+          className={`employee-btn employee-btn-sm ${active === tab.key ? 'employee-btn-primary' : 'employee-btn-ghost'}`}
+          onClick={() => navigate(tab.to)}
+          aria-current={active === tab.key ? 'page' : undefined}
+        >
+          <i className={`fas ${tab.icon}`} /> {tab.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 const employeeBatchFocusStorageKey = 'iie-pulse:employee-batch-focus'
 
 const rememberEmployeeBatchFocus = (batchId) => {
@@ -624,6 +659,8 @@ export function EmployeeDashboard() {
     { label: 'Materials', value: data?.materials_count, icon: 'fa-book', color: T.navy, bgColor: 'rgba(15,27,45,0.1)', to: '/employee/materials' },
     { label: 'My Graduates', value: data?.completed_students_count, icon: 'fa-graduation-cap', color: T.rose, bgColor: 'rgba(232,72,85,0.1)', to: '/employee/completed' },
     { label: 'Reassigned Students', value: data?.reassigned_students_count, icon: 'fa-user-clock', color: T.amber, bgColor: 'rgba(244,169,64,0.1)', to: '/employee/reassigned-students' },
+    { label: 'Technical Tests', value: data?.tests_count ?? 0, icon: 'fa-file-alt', color: T.teal, bgColor: 'rgba(46,196,182,0.1)', to: '/employee/tests' },
+    { label: 'Quizzes', value: data?.quizzes_count ?? 0, icon: 'fa-question-circle', color: T.sage, bgColor: 'rgba(76,175,129,0.1)', to: '/employee/quiz' },
   ]
 
   return (
@@ -838,8 +875,20 @@ export function StaffBatchDetails() {
   const attendanceRecords = data?.attendance_records || []
   const quizResults = data?.quiz_results || []
   const testResults = data?.test_results || []
-  const groupStudentRecords = records => {
+  const groupStudentRecords = (records, enrolledStudents = []) => {
     const grouped = new Map()
+    enrolledStudents.forEach(student => {
+      const studentName = student.name || '-'
+      const studentId = student.student_id || '-'
+      const key = `${studentId}|${studentName}`
+      grouped.set(key, {
+        key,
+        student_id: studentId,
+        student_name: studentName,
+        batch_status: student.batch_status || 'active',
+        records: [],
+      })
+    })
     records.forEach(record => {
       const key = `${record.student_id || '-'}|${record.student_name || '-'}`
       if (!grouped.has(key)) {
@@ -855,7 +904,9 @@ export function StaffBatchDetails() {
     })
     return Array.from(grouped.values()).sort((a, b) => a.student_name.localeCompare(b.student_name))
   }
-  const attendanceGroups = groupStudentRecords(attendanceRecords)
+  // Keep every enrolled student visible, even when attendance has not been
+  // marked for them yet. Attendance records only supply the row history.
+  const attendanceGroups = groupStudentRecords(attendanceRecords, sessionCompletionRows)
   const testGroups = groupStudentRecords(testResults)
   const quizGroups = groupStudentRecords(quizResults)
   const toggleStudent = (section, studentKey) => {
@@ -950,7 +1001,7 @@ export function StaffBatchDetails() {
                             <td colSpan="8" style={{ padding: 12, background: 'rgba(15,27,45,.025)' }}>
                               <table className="employee-table" style={{ margin: 0 }}>
                                 <thead><tr><th>Date</th><th>Status</th><th>Session</th><th>Marked By</th><th>Remarks</th></tr></thead>
-                                <tbody>{group.records.map(record => (
+                                <tbody>{group.records.length ? group.records.map(record => (
                                   <tr key={record.id}>
                                     <td>{formatSimpleDate(record.date)}</td>
                                     <td><Badge text={record.status || '-'} variant={record.status === 'Present' ? 'success' : 'danger'} /></td>
@@ -958,7 +1009,9 @@ export function StaffBatchDetails() {
                                     <td>{record.marked_by || '-'}</td>
                                     <td>{record.remarks || '-'}</td>
                                   </tr>
-                                ))}</tbody>
+                                )) : (
+                                  <tr><td colSpan="5" style={{ textAlign: 'center', color: T.slate }}>Attendance has not been marked for this student yet.</td></tr>
+                                )}</tbody>
                               </table>
                             </td>
                           </tr>
@@ -1584,6 +1637,7 @@ function RequestCompletionSection({ batch, students, sessions, onSuccess, openSi
     setSaving(true)
     try {
       await api.post(`/students/${selectedStudent}/request-completion/`, {
+        batch_id: batch.id,
         counselor_id: selectedCounselor,
         topics_covered: topicsCovered,
         sessions_completed: completedCount,
@@ -1811,11 +1865,12 @@ function SessionsModal({ batch, onClose }) {
     setFinalizing(true)
     try {
       if (finalAction === 'complete') {
-        await Promise.all(finalStudentIds.map(studentId => api.post(`/students/${studentId}/complete/`)))
+        await Promise.all(finalStudentIds.map(studentId => api.post(`/students/${studentId}/complete/`, { batch_id: batch.id })))
         setCompletedFinalStudentIds(previous => new Set([...previous, ...finalStudentIds]))
         toast.success(`${finalStudentIds.length} student${finalStudentIds.length === 1 ? '' : 's'} moved to completed list`)
       } else {
         await Promise.all(finalStudentIds.map(studentId => api.post(`/students/${studentId}/request-completion/`, {
+          batch_id: batch.id,
           counselor_id: selectedCounselor,
           topics_covered: topicsCovered,
           sessions_completed: completed.length,
@@ -5036,6 +5091,7 @@ export function CreateTest() {
   return (
     <div className="employee-root">
       <Styles />
+      <StaffAssessmentTabs type="test" active="create" />
       <PH title="Technical Test" sub="Create coding/descriptive tests manually or upload a question paper" />
       <div className="employee-card" style={{ maxWidth: 900 }}>
         <div className="employee-card-body" style={{ padding: 22 }}>
@@ -5124,6 +5180,8 @@ export function ViewTests() {
   const [loading, setLoading] = useState(true)
   const [batches, setBatches] = useState([])
   const [selectedBatchIds, setSelectedBatchIds] = useState([])
+  const [assignmentSchedules, setAssignmentSchedules] = useState({})
+  const [hoveredAssignmentBatchId, setHoveredAssignmentBatchId] = useState(null)
   const [showAssignModal, setShowAssignModal] = useState(false)
   const [selectedTest, setSelectedTest] = useState(null)
   const [deleteId, setDeleteId] = useState(null)  // Add state for delete confirmation
@@ -5194,22 +5252,58 @@ export function ViewTests() {
 
   const toggleAssignBatch = (batchId) => {
     const id = String(batchId)
+    setAssignmentSchedules(prev => prev[id] ? prev : {
+      ...prev,
+      [id]: { test_date: selectedTest?.test_date || '', start_time: (selectedTest?.start_time || '').slice(0, 5), end_time: '' },
+    })
     setSelectedBatchIds(prev => (
       prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
     ))
   }
 
+  const openAssignmentModal = (test) => {
+    const currentAssignments = test.assigned_batch_details || []
+    setSelectedTest(test)
+    setSelectedBatchIds(currentAssignments.map(item => String(item.id)))
+    setAssignmentSchedules(Object.fromEntries(currentAssignments.map(item => [String(item.id), {
+      test_date: item.test_date || test.test_date || '',
+      start_time: (item.start_time || test.start_time || '').slice(0, 5),
+      end_time: (item.end_time || '').slice(0, 5),
+    }])))
+    setShowAssignModal(true)
+  }
+
+  const assignmentDuration = (schedule = {}) => {
+    const { start_time: start, end_time: end } = schedule
+    if (!start || !end) return ''
+    const [startHour, startMinute] = start.split(':').map(Number)
+    const [endHour, endMinute] = end.split(':').map(Number)
+    const minutes = (endHour * 60 + endMinute) - (startHour * 60 + startMinute)
+    return minutes > 0 ? `${minutes} minutes` : ''
+  }
+
   const assignTest = async () => {
-    if (!selectedTest || selectedBatchIds.length === 0) {
-      toast.error('Please select at least one batch')
+    if (!selectedTest) {
+      return
+    }
+    if (selectedBatchIds.some(id => !assignmentSchedules[id]?.test_date || !assignmentSchedules[id]?.start_time || !assignmentSchedules[id]?.end_time)) {
+      toast.error('Set date, start time, and end time for every selected batch')
       return
     }
     try {
-      await api.post('/assigned-tests/', { test: selectedTest.id, batch_ids: selectedBatchIds })
-      toast.success(`Test "${selectedTest.title}" assigned to ${selectedBatchIds.length} batch(es) successfully!`)
+      await api.post('/assigned-tests/', {
+        test: selectedTest.id,
+        batch_ids: selectedBatchIds,
+        batch_schedules: assignmentSchedules,
+        replace_assignments: true,
+      })
+      toast.success(selectedBatchIds.length
+        ? `Test schedule saved for ${selectedBatchIds.length} batch(es).`
+        : `Test removed from all assigned batches.`)
       setShowAssignModal(false)
       setSelectedTest(null)
       setSelectedBatchIds([])
+      setAssignmentSchedules({})
       loadTests(filters)
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to assign test')
@@ -5247,6 +5341,7 @@ export function ViewTests() {
   return (
     <div className="employee-root">
       <Styles />
+      <StaffAssessmentTabs type="test" active="manage" />
       <PH
         title="Technical Tests"
         sub="Manage technical tests and assigned batches"
@@ -5308,13 +5403,13 @@ export function ViewTests() {
                     </td>
                     <td style={{ fontSize: 12 }}>{new Date(test.created_at).toLocaleDateString('en-IN')}</td>
                     <td style={{ textAlign: 'center' }}>
-                      {(test.assigned_batch_details || []).length ? <button className="employee-btn employee-btn-sm employee-btn-ghost" onClick={() => setViewAssignedTest(test)}><i className="fas fa-eye" /> View ({test.assigned_batch_details.length})</button> : <Badge text="Not assigned" variant="warning" />}
+                      {(test.assigned_batch_details || []).length ? <button className="employee-btn employee-btn-sm employee-btn-ghost" onClick={() => openAssignmentModal(test)}><i className="fas fa-list-check" /> Manage ({test.assigned_batch_details.length})</button> : <Badge text="Not assigned" variant="warning" />}
                     </td>
                     <td>
                       <div style={{ display: 'flex', gap: 8 }}>
                         <button
                           className="employee-btn employee-btn-sm employee-btn-primary"
-                          onClick={() => { setSelectedTest(test); setShowAssignModal(true) }}
+                          onClick={() => openAssignmentModal(test)}
                           disabled={!isUploadedPaperTest(test) && test.question_count === 0}
                           title={!isUploadedPaperTest(test) && test.question_count === 0 ? "Cannot assign manual test with no questions" : "Assign test to batch"}
                         >
@@ -5364,17 +5459,25 @@ export function ViewTests() {
             <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: 10, maxHeight: 260, overflowY: 'auto', background: '#fff' }}>
               {batches.length === 0 ? (
                 <div style={{ color: T.slate, fontSize: 13 }}>No batches found.</div>
-              ) : batches.map(batch => (
-                <label key={batch.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 8px', borderRadius: 6, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={selectedBatchIds.includes(String(batch.id))}
-                    onChange={() => toggleAssignBatch(batch.id)}
-                  />
-                  <span style={{ fontWeight: 700 }}>{getBatchDisplayName(batch)}</span>
-                  <span style={{ color: T.slate, fontSize: 12 }}>{batch.course_name_display || batch.course_name || ''}</span>
-                </label>
-              ))}
+              ) : batches.map(batch => {
+                const batchId = String(batch.id)
+                const isSelected = selectedBatchIds.includes(batchId)
+                const schedule = assignmentSchedules[batchId] || {}
+                const windowText = schedule.test_date && schedule.start_time && schedule.end_time ? `${schedule.test_date}, ${schedule.start_time} - ${schedule.end_time} (${assignmentDuration(schedule)})` : 'Schedule not set'
+                return <div key={batch.id} onMouseEnter={() => setHoveredAssignmentBatchId(batchId)} onMouseLeave={() => setHoveredAssignmentBatchId(null)} style={{ padding: '9px 8px', borderRadius: 6, borderBottom: `1px solid ${T.border}` }}>
+                  <label title={`Test window: ${windowText}`} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={isSelected} onChange={() => toggleAssignBatch(batch.id)} />
+                    <span style={{ fontWeight: 700 }}>{getBatchDisplayName(batch)}</span>
+                    <span style={{ color: T.slate, fontSize: 12 }}>{batch.course_name_display || batch.course_name || ''}</span>
+                  </label>
+                  {isSelected && hoveredAssignmentBatchId === batchId && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10, padding: '10px 0 2px 28px' }}>
+                    <div><label className="employee-hint">Date</label><input type="date" className="employee-input" value={schedule.test_date || ''} onChange={e => setAssignmentSchedules(prev => ({ ...prev, [batchId]: { ...schedule, test_date: e.target.value } }))} /></div>
+                    <div><label className="employee-hint">Start Time</label><input type="time" className="employee-input" value={schedule.start_time || ''} onChange={e => setAssignmentSchedules(prev => ({ ...prev, [batchId]: { ...schedule, start_time: e.target.value } }))} /></div>
+                    <div><label className="employee-hint">End Time</label><input type="time" className="employee-input" value={schedule.end_time || ''} onChange={e => setAssignmentSchedules(prev => ({ ...prev, [batchId]: { ...schedule, end_time: e.target.value } }))} /></div>
+                    <small className="employee-hint" style={{ gridColumn: '1 / -1' }}>{assignmentDuration(schedule) ? `Duration: ${assignmentDuration(schedule)}` : 'Set the test time for this batch.'}</small>
+                  </div>}
+                </div>
+              })}
             </div>
             <small className="employee-hint">{selectedBatchIds.length} batch(es) selected</small>
           </div>
@@ -5383,15 +5486,15 @@ export function ViewTests() {
             <button
               className="employee-btn employee-btn-primary"
               onClick={assignTest}
-              disabled={(!isUploadedPaperTest(selectedTest) && selectedTest?.question_count === 0) || selectedBatchIds.length === 0}
+              disabled={!isUploadedPaperTest(selectedTest) && selectedTest?.question_count === 0}
             >
-              Assign Test
+              Save Assignments
             </button>
           </div>
         </Modal>
       )}
 
-      {viewAssignedTest && <Modal open onClose={() => setViewAssignedTest(null)} title="Assigned Batches" size="md"><div style={{ display: 'grid', gap: 10 }}>{(viewAssignedTest.assigned_batch_details || []).map(batch => <div key={batch.id} style={{ padding: '12px 14px', border: `1px solid ${T.border}`, borderRadius: 10 }}><strong>{getBatchDisplayName(batch)}</strong><div className="employee-hint">Assigned: {batch.assigned_at ? new Date(batch.assigned_at).toLocaleDateString('en-IN') : '-'}</div></div>)}</div></Modal>}
+      {viewAssignedTest && <Modal open onClose={() => setViewAssignedTest(null)} title="Assigned Batches" size="md"><div style={{ display: 'grid', gap: 10 }}>{(viewAssignedTest.assigned_batch_details || []).map(batch => <div key={batch.id} style={{ padding: '12px 14px', border: `1px solid ${T.border}`, borderRadius: 10 }}><strong>{getBatchDisplayName(batch)}</strong><div className="employee-hint">Assigned: {batch.assigned_at ? new Date(batch.assigned_at).toLocaleDateString('en-IN') : '-'}</div><div className="employee-hint">Window: {batch.start_time || viewAssignedTest.start_time || '-'} - {batch.end_time || '-'}</div></div>)}</div></Modal>}
       {showAssignmentSummary && <Modal open onClose={() => setShowAssignmentSummary(false)} title="Test Assignment Details" size="lg">{assignmentSummaryRows.length ? <div style={{ overflowX: 'auto' }}><table className="employee-table" style={{ minWidth: 600 }}><thead><tr><th>Test</th><th>Batch</th><th>Assigned Date</th></tr></thead><tbody>{assignmentSummaryRows.map((item, index) => <tr key={`${item.testId}-${item.id}-${index}`}><td>{item.testTitle}</td><td>{getBatchDisplayName(item)}</td><td>{item.assigned_at ? new Date(item.assigned_at).toLocaleString('en-IN') : '-'}</td></tr>)}</tbody></table></div> : <Empty msg="No test assignments found for this month" icon="fa-share-alt" />}</Modal>}
 
       {/* Delete Confirmation Modal */}
@@ -5491,6 +5594,7 @@ export function TestResults() {
   return (
     <div className="employee-root">
       <Styles />
+      <StaffAssessmentTabs type="test" active="results" />
       <PH title="📊 Test Results" sub="Select a batch to view student test performances" />
 
       <div className="employee-card" style={{ marginBottom: 20 }}>
@@ -5570,8 +5674,8 @@ export function TestResults() {
                     </td>
                     <td>
                       {result.submission_file_url ? (
-                        <a className="employee-btn employee-btn-sm employee-btn-primary" href={result.submission_file_url} target="_blank" rel="noreferrer">
-                          <i className="fas fa-eye" /> View
+                        <a className="employee-btn employee-btn-sm employee-btn-primary" href={result.submission_file_url} target="_blank" rel="noreferrer" download>
+                          <i className="fas fa-download" /> Download
                         </a>
                       ) : (
                         <span style={{ color: T.slate, fontSize: 12 }}>No file</span>
@@ -5895,6 +5999,7 @@ export function UploadQuiz() {
   return (
     <div className="employee-root">
       <Styles />
+      {!isAdminQuiz && <StaffAssessmentTabs type="quiz" active="create" />}
       <PH title="Upload Quiz" sub={isAdminQuiz ? 'Upload a global quiz for students and public users' : 'Upload first, then assign this quiz to one or more batches'} />
       <div className="employee-card" style={{ maxWidth: 700 }}>
         <div className="employee-card-body" style={{ padding: 22 }}>
@@ -6065,6 +6170,7 @@ export function ManageQuizzes() {
   return (
     <div className="employee-root">
       <Styles />
+      {!isAdminQuiz && <StaffAssessmentTabs type="quiz" active="manage" />}
       <PH
         title="Manage Quizzes"
         sub={isAdminQuiz ? 'Publish global quizzes for students and public users' : 'Assign your uploaded quizzes to one or more batches'}
@@ -6357,6 +6463,7 @@ export function StaffQuizResults() {
   return (
     <div className="employee-root">
       <Styles />
+      <StaffAssessmentTabs type="quiz" active="results" />
       <PH title="Quiz Results" sub="Batch quiz results for your students" />
 
       {error && (

@@ -4,7 +4,7 @@ import { ArrowRight, LogOut, ShieldCheck } from 'lucide-react'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import AppLayout from './components/layout/AppLayout'
 import Login from './pages/auth/Login'
-import { PublicLanding, PublicRegistration, PublicRestrictedPage, PublicUserPortal } from './pages/public/PublicAccess'
+import { PublicLanding, PublicRegistration, PublicCertificateLookup, PublicRestrictedPage, PublicUserPortal } from './pages/public/PublicAccess'
 import logo from './assets/IIE.png'
 import UserNotifications from './pages/common/UserNotifications'
 import './styles/global.css'
@@ -47,7 +47,7 @@ import {
 import {
   StudentDashboard, StudentAnnouncements, StudentAttendance, StudentBatches, StudentSessions, StudentNotifications,
   StudentQuizList, StudentTests, StudentLeave, StudentMaterials, StudentSupport, StudentFeeDetails, StudentCompletionReport,
-  StudentChallenge, StudentLoginRatingHistory,
+  StudentChallenge, StudentLoginRatingHistory, StudentCertificates,
 } from './pages/student/StudentPages'
 import StudentDesk from './pages/student/StudentDesk'
 import StudentProfile from './pages/student/StudentProfile'
@@ -182,6 +182,7 @@ function AppRoutes() {
       <Route path="/" element={<PublicLanding />} />
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<PublicRegistration />} />
+      <Route path="/certificate" element={<PublicCertificateLookup />} />
       <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>
   )
@@ -189,6 +190,7 @@ function AppRoutes() {
     <Routes>
       <Route path="/" element={user.user_type === 'student' ? <DashboardLanding /> : <Navigate to={getDashboardPath(user)} replace />} />
       <Route path="/dashboard" element={<DashboardLanding />} />
+      <Route path="/certificate" element={<PublicCertificateLookup />} />
       <Route path="/public" element={<ProtectedRoute allowedRoles={['public']}><AppLayout role="public" /></ProtectedRoute>}>
         <Route index element={<PublicUserPortal />} />
         <Route path="skillset" element={<PublicUserPortal />} />
@@ -346,6 +348,7 @@ function AppRoutes() {
         <Route path="notifications" element={<StudentNotifications />} />
         <Route path="fee" element={<StudentFeeDetails />} />
         <Route path="reports" element={<StudentCompletionReport />} />
+        <Route path="certificates" element={<StudentCertificates />} />
 
 
       </Route>

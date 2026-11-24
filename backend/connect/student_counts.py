@@ -2,7 +2,7 @@ import re
 
 from django.db.models import Q, Count
 
-from .models import Batches, CompletedStudent, Students
+from .models import Batches, CompletedStudent, StudentBatchEnrollment, StudentCourseEnrollment, Students
 
 
 def canonical_branch(value):
@@ -48,7 +48,48 @@ def active_students_queryset():
         exclude_filter |= Q(student_id__in=student_ids)
     if student_pks:
         exclude_filter |= Q(id__in=student_pks)
-    return qs.exclude(exclude_filter).distinct() if exclude_filter else qs.distinct()
+    if not exclude_filter:
+        return qs.distinct()
+
+    # Completion is course-scoped. A completed course must disappear from
+    # active lists, including legacy rows where its batch enrollment was left
+    # active. The student stays active only when a *different* course remains.
+    completed_courses_by_student = {}
+    text_ids = [value for value in student_ids if not value.isdigit()]
+    student_id_lookup = {
+        student_code: pk
+        for pk, student_code in Students.objects.filter(student_id__in=text_ids).values_list('id', 'student_id')
+    }
+    for record in completed_students_queryset().values('original_student_id', 'course_name', 'course'):
+        original_id = str(record['original_student_id'] or '').strip()
+        student_pk = int(original_id) if original_id.isdigit() else student_id_lookup.get(original_id)
+        if not student_pk:
+            continue
+        course_names = []
+        for value in (record['course_name'], record['course']):
+            course_names.extend(part.strip().lower() for part in str(value or '').split(',') if part.strip())
+        completed_courses_by_student.setdefault(student_pk, set()).update(course_names)
+
+    active_other_course_ids = set()
+    active_enrollments = StudentCourseEnrollment.objects.filter(
+        is_active=True,
+    ).select_related('course').values_list('student_id', 'course__course_name')
+    for student_pk, course_name in active_enrollments:
+        completed_courses = completed_courses_by_student.get(student_pk, set())
+        if not completed_courses or str(course_name or '').strip().lower() not in completed_courses:
+            active_other_course_ids.add(student_pk)
+
+    # Some older assignments predate StudentCourseEnrollment. Use their batch
+    # course as the same safe fallback.
+    legacy_enrollments = StudentBatchEnrollment.objects.filter(
+        is_active=True,
+    ).select_related('batch__course_name').values_list('student_id', 'batch__course_name__course_name')
+    for student_pk, course_name in legacy_enrollments:
+        completed_courses = completed_courses_by_student.get(student_pk, set())
+        if not completed_courses or str(course_name or '').strip().lower() not in completed_courses:
+            active_other_course_ids.add(student_pk)
+
+    return qs.filter(Q(id__in=active_other_course_ids) | ~exclude_filter).distinct()
 
 
 def active_students_for_branch(branch):
@@ -101,16 +142,27 @@ def completed_students_for_staff(staff):
     ).distinct()
     batch_ids = [str(batch_id) for batch_id in staff_batches.values_list('id', flat=True)]
     batch_numbers = staff_batches.values_list('batch_number', flat=True)
-    staff_name = ' '.join(part for part in [staff.first_name, staff.last_name] if part).strip()
-    # A completed record with an explicit graduating trainer belongs only to
-    # that trainer. Batch matching is retained solely as a legacy fallback for
-    # old snapshots that predate ``graduated_from_trainer``.
-    legacy_batch_filters = Q(batch_id__in=batch_ids) | Q(batch_number__in=batch_numbers)
-    if staff_name:
-        legacy_batch_filters |= Q(faculty_name__iexact=staff_name)
-    staff_filters = Q(graduated_from_trainer=staff) | (
-        Q(graduated_from_trainer__isnull=True) & legacy_batch_filters
+    batch_trainer_ids = set(staff_batches.values_list('faculty_id', flat=True))
+    batch_trainer_ids.update(
+        staff_batches.values_list('trainer_assignments__trainer_id', flat=True)
     )
+    batch_trainer_ids.discard(None)
+    staff_name = ' '.join(part for part in [staff.first_name, staff.last_name] if part).strip()
+    # A course completion belongs to every mentor assigned to its graduating
+    # batch.  Parallel batches can have more than one trainer, so restricting
+    # an explicit completion row to only the mentor who pressed Complete
+    # hides the same graduate from the other assigned mentors.
+    batch_filters = Q(batch_id__in=batch_ids) | Q(batch_number__in=batch_numbers)
+    if staff_name:
+        batch_filters |= Q(faculty_name__iexact=staff_name)
+    # A row explicitly completed by an unrelated mentor must not leak into a
+    # batch owner's graduates.  Share it only when its completing mentor is
+    # also assigned to the same batch (the parallel-trainer case).
+    shared_batch_filters = batch_filters & (
+        Q(graduated_from_trainer__isnull=True) |
+        Q(graduated_from_trainer_id__in=batch_trainer_ids)
+    )
+    staff_filters = Q(graduated_from_trainer=staff) | shared_batch_filters
     return qs.filter(staff_filters).distinct()
 
 

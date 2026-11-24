@@ -141,6 +141,11 @@ class BatchTrainerAssignment ( models.Model ) :
         
         
 class Students ( models.Model ) :
+    STUDENT_MODE_CHOICES = [
+        ('online', 'Online'),
+        ('classroom', 'Classroom'),
+    ]
+
     student_id = models.CharField ( max_length = 30 , unique = True )
     email = models.EmailField ( unique = True )
     first_name = models.CharField ( max_length = 100 )
@@ -160,6 +165,11 @@ class Students ( models.Model ) :
             ]
     )
     branch = models.CharField ( max_length = 100 )
+    student_mode = models.CharField(
+        max_length=20,
+        choices=STUDENT_MODE_CHOICES,
+        default='classroom',
+    )
     user = models.ForeignKey ( User , on_delete = models.CASCADE , null = True , blank = True )
     assigned_staff = models.ForeignKey (
             'Employee' ,
@@ -601,10 +611,16 @@ class Question ( models.Model ) :
 class AssignedTest ( models.Model ) :
     test = models.ForeignKey ( QuizTest , on_delete = models.CASCADE )
     batch = models.ForeignKey ( Batches , on_delete = models.CASCADE )
+    # Test availability is assignment-specific: the same test can run at
+    # different times for parallel batches.
+    test_date = models.DateField ( null = True , blank = True )
+    start_time = models.TimeField ( null = True , blank = True )
+    end_time = models.TimeField ( null = True , blank = True )
     assigned_date = models.DateTimeField ( auto_now_add = True )
     
     class Meta :
         db_table = 'assigned_test'
+        unique_together = [ 'test' , 'batch' ]
     
     def __str__ ( self ) :
         return f"{self.test.title} → {self.batch.batch_number}"
@@ -981,6 +997,7 @@ class SessionNotification ( models.Model ) :
             ('leave_application' , 'Leave Application') ,
             ('announcement' , 'Announcement') ,
             ('support' , 'Support') ,
+            ('fee_payment_request' , 'Fee Payment Request') ,
     )
     
     session = models.ForeignKey ( 'CourseSession' , on_delete = models.CASCADE , null = True , blank = True )
@@ -1616,6 +1633,7 @@ class CompletedStudent(models.Model):
     
     # Generated report
     completion_report = models.FileField(upload_to='completed_reports/', null=True, blank=True)
+    certificate_generated_at = models.DateTimeField(null=True, blank=True)
     
     # Metadata
     created_at = models.DateTimeField(auto_now_add=True)
