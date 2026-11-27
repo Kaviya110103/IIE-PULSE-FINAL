@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -328,10 +328,12 @@ export default function Home() {
   }, [sortedSessions]);
 
   const weeklyStars = loginRating?.stars ?? 0;
-  const dailyActivityStreak = useMemo(
-    () => Math.max(0, ...challenges.map((challenge) => Number(challenge.current_streak || 0))),
-    [challenges]
-  );
+  const [dailyActivityStreak, setDailyActivityStreak] = useState(0);
+  useFocusEffect(useCallback(() => {
+    let alive = true;
+    api.get("daily-activity/").then(r => { if (alive) setDailyActivityStreak(r.data.streak); }).catch(() => {});
+    return () => { alive = false; };
+  }, []));
 
   useEffect(() => {
     Animated.spring(starAnim, {
@@ -424,7 +426,7 @@ export default function Home() {
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.dailyStreakLabel}>Daily Activity Streak</Text>
-            <Text style={styles.dailyStreakValue}>{dailyActivityStreak} activities</Text>
+            <Text style={styles.dailyStreakValue}>{dailyActivityStreak}/30</Text>
           </View>
         </Animated.View>
 
@@ -532,27 +534,9 @@ export default function Home() {
             </View>
           </View>
 
-          {activeContext?.challenge ? (
-              <ChallengeCard
-                challenge={activeContext.challenge}
-                onPress={() =>
-                  router.push({
-                    pathname: "/challenge",
-                    params: {
-                      courseId: String(activeContext.challenge?.course),
-                      batchId: String(activeContext.challenge?.batch),
-                    },
-                  } as any)
-                }
-              />
-          ) : (
-            <View style={styles.challengeEmpty}>
-              <Text style={styles.challengeEmptyTitle}>No daily activity assigned yet</Text>
-              <Text style={styles.challengeEmptyText}>
-                Your daily activity will appear after completed sessions have question pools.
-              </Text>
-            </View>
-          )}
+          <TouchableOpacity onPress={() => router.push("/challenge")} style={styles.challengeEmpty}>
+            <Text style={styles.challengeEmptyTitle}>Open challenges</Text>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.sessionSummaryRow}>

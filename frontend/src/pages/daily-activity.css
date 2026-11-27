@@ -1,0 +1,86 @@
+.daily-activity { padding: 20px; }
+.daily-activity form, .activity-streak, .daily-activity article, .daily-activity nav { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 16px 0; }
+.daily-activity form { align-items: end; }
+.daily-activity form label, .daily-activity fieldset label { display: grid; gap: 4px; }
+.daily-activity fieldset { margin: 16px 0; padding: 12px; min-width: 0; }
+.daily-activity fieldset label { display: block; margin: 8px 0; }
+.daily-activity article { padding: 12px 0; border-bottom: 1px solid #8886; }
+.daily-activity article strong { flex: 1 1 200px; overflow-wrap: anywhere; }
+.daily-activity button { width: auto; padding: 7px 12px; border-radius: 5px; cursor: pointer; }
+.daily-activity nav { gap: 2px; }
+.daily-activity nav [aria-pressed=true] { background: #325e54; color: white; }
+.daily-activity .fa-fire { color: #e58330; }
+.activity-correct { color: #27875a; }
+.activity-incorrect { color: #d94e4e; }
+.activity-unread { display: inline-block; width: 8px; height: 8px; margin-left: 4px; border-radius: 50%; background: #45b970; }
+.activity-card-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(min(100%,245px),1fr)); gap: 16px; }
+.student-activity .activity-card-grid article { display: grid; grid-template-columns: 1fr; align-content: start; gap: 8px; padding: 18px; border: 1px solid #8886; border-top: 3px solid #50846f; border-radius: 8px; background: #8881; }
+.activity-card-grid article > * { justify-self: start; }
+.activity-table-wrap { max-width: 100%; overflow: auto; }
+.activity-published { width: 100%; border-collapse: collapse; }
+.activity-published th, .activity-published td { text-align: left; padding: 10px 14px; border-bottom: 1px solid #8885; }
+.activity-published th { white-space: nowrap; background: #8881; }
+.activity-preview { margin: auto; width: min(940px, 92vw); max-height: 85vh; padding: 20px; border: 1px solid #8886; border-radius: 8px; }
+.activity-preview::backdrop { background: #0008; }
+.activity-preview header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.student-activity { max-width: 1160px; margin-inline: auto; overflow-wrap: anywhere; }
+.student-activity h1 { margin: 0 0 20px; font-size: 28px; }
+.student-activity h2 { margin: 24px 0 12px; font-size: 20px; }
+.student-activity .activity-streak {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 24px;
+  padding: 16px 0; border-block: 1px solid #8885;
+}
+.student-activity .activity-streak strong { display: flex; align-items: center; gap: 9px; }
+.student-activity .activity-streak b { font-variant-numeric: tabular-nums; }
+.student-activity progress { grid-row: 2; width: 100%; height: 8px; accent-color: #398668; }
+.student-activity .activity-streak span { grid-column: 2; grid-row: 1; font-size: 14px; }
+.student-activity details { grid-column: 1 / -1; }
+.student-activity summary { cursor: pointer; }
+.student-activity nav { display: inline-grid; max-width: 100%; grid-template-columns: repeat(4,minmax(0,1fr)); border: 1px solid #8886; border-radius: 6px; padding: 3px; }
+.student-activity button { font: inherit; font-size: 14px; font-weight: 600; min-height: 36px; border: 1px solid #8886; color: inherit; background: transparent; }
+.student-activity nav button { border: 0; }
+.student-activity nav button[aria-pressed=true], .student-activity article button { background: #315e50; color: white; }
+.student-activity button:focus-visible, .student-activity fieldset label:focus-within { outline: 2px solid #589aa3; outline-offset: 2px; }
+.student-activity article { margin: 0; padding: 14px 0; column-gap: 18px; row-gap: 8px; }
+.student-activity article span { font-size: 14px; }
+.student-activity .activity-status { border-radius: 4px; padding: 3px 8px; background: #f4e6c3; color: #684919; }
+.student-activity .activity-status.is-done { background: #d9efe3; color: #205c44; }
+.student-activity fieldset { border: 1px solid #8885; border-radius: 6px; padding: 10px 16px; }
+.student-activity legend { font-weight: 600; padding-inline: 5px; }
+.student-activity fieldset label { cursor: pointer; padding: 8px; border: 1px solid #8884; border-radius: 4px; }
+.student-activity fieldset label:has(:checked) { border-color: #478b72; background: #478b721c; }
+.student-activity input[type=radio] { width: auto; accent-color: #35765f; }
+.student-activity button:disabled { opacity: .6; cursor: default; }
+@media (max-width: 640px) {
+  .student-activity { padding: 12px; }
+  .student-activity nav { display: grid; }
+  .student-activity nav button { padding-inline: 2px; font-size: 13px; }
+  .student-activity article { display: grid; grid-template-columns: 1fr auto; }
+  .student-activity article strong, .student-activity article span:not(.activity-status) { grid-column: 1 / -1; }
+  .student-activity article button, .student-activity .activity-status { justify-self: start; }
+}
+.daily-activity form.activity-publisher {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 16px 20px;
+  max-width: 800px;
+  padding: 18px 0 24px;
+  border-block: 1px solid #8886;
+}
+.activity-publisher h2, .activity-upload, .activity-format { grid-column: 1 / -1; }
+.activity-publisher h2 { margin: 0; font-size: 18px; }
+.daily-activity .activity-publisher label { gap: 7px; font-weight: 600; }
+.activity-publisher input, .activity-publisher select {
+  box-sizing: border-box; width: 100%; min-width: 0; min-height: 40px;
+  padding: 8px 12px; border: 1px solid #8888; border-radius: 5px;
+  color: inherit; background: transparent; font: inherit;
+}
+.activity-publisher select option { color: CanvasText; background: Canvas; }
+.activity-format { padding-inline-start: 14px; border-inline-start: 3px solid #728d81; }
+.activity-format code { display: block; overflow-wrap: anywhere; margin: 5px 0; }
+.activity-format p { margin: 8px 0; line-height: 1.5; }
+.activity-format a { display: inline-block; margin-top: 8px; color: inherit; }
+.activity-publisher button { justify-self: start; }
+@media (max-width: 600px) {
+  .daily-activity form.activity-publisher { grid-template-columns: minmax(0, 1fr); }
+}

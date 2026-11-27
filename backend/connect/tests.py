@@ -1167,7 +1167,7 @@ class StudentChallengePhaseOneTests(TestCase):
         self.assertEqual(allowed.json()['created_count'], 5)
         self.assertNotIn('mock-key', str(allowed.json()))
 
-    def test_materials_are_limited_to_active_student_batches(self):
+    def test_material_access_requires_current_or_historical_batch(self):
         current_material = StudyMaterial.objects.create(
             batch=self.batch,
             uploaded_by=self.staff,
@@ -1180,6 +1180,10 @@ class StudentChallengePhaseOneTests(TestCase):
             title='Other batch material',
             file='materials/other.pdf',
         )
+        self.client.force_authenticate(user=self.student_user)
+        before = self.client.get('/api/materials/')
+        self.assertNotIn(old_material.id, [item['id'] for item in before.json()['results']])
+        self.assertEqual(self.client.get(f'/api/materials/{old_material.id}/preview/').status_code, 403)
         ReassignedStudentRecord.objects.create(
             student=self.student,
             previous_trainer=self.staff,
@@ -1202,9 +1206,7 @@ class StudentChallengePhaseOneTests(TestCase):
         self.assertEqual(response.status_code, 200)
         material_ids = {item['id'] for item in response.json()['results']}
         self.assertIn(current_material.id, material_ids)
-        self.assertNotIn(old_material.id, material_ids)
-        denied = self.client.get(f'/api/materials/{old_material.id}/preview/')
-        self.assertEqual(denied.status_code, 403)
+        self.assertIn(old_material.id, material_ids)
 
     def test_student_can_preview_an_assigned_material(self):
         with tempfile.TemporaryDirectory() as media_root:
@@ -1259,7 +1261,10 @@ class StudentChallengePhaseOneTests(TestCase):
 
         response = self.client.post(
             f'/api/quiz/{quiz.id}/assign/',
-            {'batch_ids': [self.batch.id, self.other_batch.id]},
+            {'batch_ids': [self.batch.id, self.other_batch.id], 'batch_schedules': {
+                str(batch.id): {'test_date': timezone.localdate().isoformat(), 'start_time': start, 'end_time': end}
+                for batch, start, end in [(self.batch, '09:00', '10:00'), (self.other_batch, '14:00', '15:00')]
+            }},
             format='json',
         )
 
@@ -1345,6 +1350,56 @@ class ParallelCourseWorkflowTests(TransactionTestCase):
                 student=self.student, batch=batch, course_enrollment=enrollment,
                 assigned_by=self.trainer_one_user,
             )
+
+    def test_shared_daily_challenge_lifecycle(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from unittest.mock import patch
+
+        url = '/api/daily-activity/'
+        self.client.force_authenticate(user=self.trainer_one_user)
+        created = self.client.post(url, {
+            'title': 'Practice', 'category': 'Grammar',
+            'file': SimpleUploadedFile('practice.csv', b'Questions,Option A,Option B,Option C,Option D,Correct Answer,Explaination\nChoose a verb,Run,Red,Blue,Ten,A,Run describes an action.'),
+        }, format='multipart')
+        self.assertEqual(created.status_code, 201, created.data)
+        pk = created.data['id']
+        self.client.force_authenticate(user=self.trainer_two_user)
+        self.assertIn(pk, [c['id'] for c in self.client.get(url).data['challenges']])
+        self.client.force_authenticate(user=self.student_user)
+        detail = f'{url}{pk}/'
+        inbox = url + 'inbox/'
+        self.assertIn(pk, self.client.get(inbox).data['unread'])
+        self.assertNotIn(pk, self.client.post(inbox, {'ids': [pk]}, format='json').data['unread'])
+        self.assertNotIn(pk, self.client.get(inbox).data['unread'])
+        self.assertEqual(set(self.client.get(detail).data['questions'][0]), {'question', 'options'})
+        self.assertEqual(self.client.get(url).data['streak'], 0)
+        self.assertEqual(self.client.post(detail, {'answers': [0]}, format='json').status_code, 201)
+        self.assertEqual(self.client.post(detail, {'answers': [1]}, format='json').status_code, 409)
+        summary = self.client.get(url).data
+        self.assertEqual((summary['streak'], summary['completed'], summary['results'][0]['score']), (1, 1, 1))
+        self.assertEqual(self.client.get(detail).data['questions'][0]['selected'], 0)
+        self.assertEqual(self.client.get(detail).data['questions'][0]['explanation'], 'Run describes an action.')
+        from connect.models import DailyActivityChallenge
+        first = DailyActivityChallenge.objects.get(pk=pk)
+        second = DailyActivityChallenge.objects.create(title='Second challenge', category=first.category, uploader=first.uploader, questions=first.questions)
+        self.assertEqual(self.client.post(f'{url}{second.pk}/', {'answers': [1]}, format='json').status_code, 201)
+        self.assertEqual(self.client.get(url).data['streak'], 2)
+        self.client.force_authenticate(user=self.trainer_two_user)
+        self.assertEqual(self.client.delete(detail).status_code, 403)
+        self.client.force_authenticate(user=self.trainer_one_user)
+        self.assertEqual(self.client.delete(detail).status_code, 204)
+        self.client.force_authenticate(user=self.student_user)
+        remaining = self.client.get(url).data
+        self.assertNotIn(pk, [c['id'] for c in remaining['challenges']])
+        self.assertIn(second.pk, [c['id'] for c in remaining['challenges']])
+        self.assertEqual(remaining['streak'], 2)
+        self.assertTrue(self.client.get(detail).data['completed'])
+        self.assertEqual(self.client.post(detail, {'answers': [0]}, format='json').status_code, 404)
+        later = timezone.localdate() + timedelta(days=30)
+        with patch('connect.daily_activity.timezone.localdate', return_value=later):
+            summary = self.client.get(url).data
+            self.assertEqual(summary['streak'], 0)
+            self.assertEqual(summary['history'][0]['days'], 2)
 
     def test_student_sees_materials_from_every_active_batch(self):
         first = StudyMaterial.objects.create(
@@ -1460,6 +1515,17 @@ class ParallelCourseWorkflowTests(TransactionTestCase):
         self.assertEqual(progress.total_sessions, 1)
         self.assertEqual(progress.completed_sessions, 1)
 
+        response = self.client.post(f'/api/sessions/{first_session.id}/staff-unmark/')
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data['session']['staff_completed'])
+        second_session.refresh_from_db()
+        progress.refresh_from_db()
+        self.assertFalse(second_session.staff_completed)
+        self.assertEqual(progress.completed_sessions, 0)
+        self.assertEqual(self.client.post(f'/api/sessions/{first_session.id}/staff-complete/').status_code, 200)
+        first_session.refresh_from_db()
+        self.assertTrue(first_session.staff_completed)
+
     def test_staff_can_sync_test_assignments_and_set_a_batch_window(self):
         test = QuizTest.objects.create(
             title='Scheduled technical test', test_type='technical',
@@ -1550,6 +1616,32 @@ class StaffWorkflowRegressionTests(TestCase):
             gender='Female', branch='100ft', user=self.student_user,
             assigned_staff=self.current_staff, assigned_batch=self.batch,
         )
+
+    def test_student_quiz_is_blocked_outside_scheduled_window(self):
+        quiz = Quiz.objects.create(
+            title='Scheduled quiz', batch=self.batch, quiz_scope='staff_batch',
+            created_by=self.current_staff, is_published=True,
+            start_date=timezone.now() + timedelta(hours=1),
+            end_date=timezone.now() + timedelta(hours=2),
+        )
+        self.client.force_authenticate(user=self.student_user)
+        listing = self.client.get('/api/quiz/student/')
+        self.assertEqual(next(row for row in listing.data['results'] if row['id'] == quiz.id)['status'], 'upcoming')
+        response = self.client.post(f'/api/quiz/{quiz.id}/take/', {'answers': {}}, format='json')
+        self.assertEqual(response.status_code, 400)
+
+    def test_quiz_uses_only_the_students_assigned_batch_window(self):
+        now = timezone.localtime()
+        quiz = Quiz.objects.create(title='Batch timed quiz', batch=self.batch, created_by=self.current_staff, is_published=True,
+            batch_schedules={str(self.batch.id): {'test_date': (now + timedelta(days=1)).date().isoformat(), 'start_time': '09:00', 'end_time': '10:00'},
+                             '999999': {'test_date': now.date().isoformat(), 'start_time': '00:00', 'end_time': '23:59'}})
+        self.client.force_authenticate(user=self.student_user)
+        response = self.client.post(f'/api/quiz/{quiz.id}/take/', {'answers': {}}, format='json')
+        self.assertEqual(response.status_code, 400)
+        listing = self.client.get('/api/quiz/student/')
+        row = next(item for item in listing.data['results'] if item['id'] == quiz.id)
+        self.assertEqual(row['status'], 'upcoming')
+        self.assertEqual(set(row['batch_schedules']), {str(self.batch.id)})
 
     def test_staff_batch_count_uses_trainer_session_records_only(self):
         session = CourseSession.objects.create(batch=self.batch, session_number=1, title='Session one')
@@ -1712,6 +1804,12 @@ class StaffWorkflowRegressionTests(TestCase):
             topics_covered='Transferred lesson', sessions_completed=0, total_sessions=1,
         )
 
+        self.client.force_authenticate(user=self.previous_user)
+        pending_students = self.client.get(f'/api/batches/{self.batch.id}/students/?include_reassigned=true')
+        self.assertEqual(pending_students.status_code, 200)
+        self.assertEqual(pending_students.data[0]['batch_status'], 'active')
+        self.assertTrue(pending_students.data[0]['reassignment_pending'])
+
         self.client.force_authenticate(user=counselor_user)
         response = self.client.post(
             f'/api/counselor/requests/{completion_request.id}/reassign/',
@@ -1731,11 +1829,37 @@ class StaffWorkflowRegressionTests(TestCase):
         self.assertTrue(target_session.staff_completed)
         self.assertEqual(target_session.completed_by, self.previous_staff)
 
+        self.client.force_authenticate(user=self.previous_user)
+        active_batches = self.client.get('/api/batches/')
+        self.assertIn(self.batch.id, [row['id'] for row in active_batches.data['results']])
+        previous_batches = self.client.get('/api/batches/?access=previous')
+        self.assertNotIn(self.batch.id, [row['id'] for row in previous_batches.data['results']])
+        logsheet = self.client.get(f'/api/batches/{self.batch.id}/sessions-logsheet/')
+        self.assertTrue(logsheet.data['can_update_logsheet'])
+        historical_students = self.client.get(f'/api/batches/{self.batch.id}/students/?include_reassigned=true')
+        self.assertEqual(historical_students.status_code, 200)
+        self.assertEqual(historical_students.data[0]['batch_status'], 'reassigned')
+        active_students = self.client.get(f'/api/batches/{self.batch.id}/students/')
+        self.assertEqual(active_students.data, [])
+
         self.client.force_authenticate(user=self.student_user)
+        from .api_views import _student_current_content_batches
+        self.assertEqual({batch.id for batch in _student_current_content_batches(self.student)}, {self.batch.id, target_batch.id})
         batches_response = self.client.get('/api/student/batches/')
         self.assertEqual(batches_response.status_code, 200)
         self.assertEqual([item['id'] for item in batches_response.data['results']], [target_batch.id])
         self.assertEqual(batches_response.data['results'][0]['previous_trainer_completed_sessions'], 1)
+
+        test = QuizTest.objects.create(title='Reassigned assessment', test_type='technical', creation_method='manual', course=self.course, created_by=self.previous_staff)
+        assignment = AssignedTest.objects.create(test=test, batch=target_batch)
+        result = TestResult.objects.create(student=self.student, test=test, assignment=assignment, score=0, total_questions=0, percentage=0)
+        self.client.force_authenticate(user=self.current_user)
+        staff_results = self.client.get('/api/staff/test-results/')
+        self.assertIn(result.id, [row['id'] for row in staff_results.data])
+        marked = self.client.patch(f'/api/staff/test-results/{result.id}/mark/', {'mark': 75, 'max_marks': 100}, format='json')
+        self.assertEqual(marked.status_code, 200, marked.data)
+        result.refresh_from_db()
+        self.assertEqual(result.manual_mark, 75)
 
     def test_daily_completion_audit_does_not_auto_complete_a_session(self):
         """Activity audit rows must never tick a trainer's logsheet session."""
@@ -1904,3 +2028,41 @@ class StudentCompletionReportTests(TestCase):
 
         self.assertEqual(response.status_code, 201)
         self.assertTrue(TestResult.objects.filter(student=self.student, test=test, submission_file__isnull=False).exists())
+
+    def test_reassigned_test_allows_new_attempt_without_deleting_previous_result(self):
+        StudentBatchEnrollment.objects.create(student=self.student, batch=self.batch, is_active=True)
+        test = QuizTest.objects.create(
+            title='Retest', test_type='technical', creation_method='manual',
+            course=self.batch.course_name, created_by=self.trainer,
+        )
+        assignment = AssignedTest.objects.create(test=test, batch=self.batch)
+        self.client.force_authenticate(user=self.student_user)
+        first = self.client.post(f'/api/tests/{test.id}/take/', {
+            'submission_file': SimpleUploadedFile('first.sql', b'select 1;')
+        }, format='multipart')
+        self.assertEqual(first.status_code, 201, first.data)
+        assignment.delete()
+        AssignedTest.objects.create(test=test, batch=self.batch)
+        available = self.client.get('/api/student-tests/')
+        self.assertFalse(next(row for row in available.data if row['test_id'] == test.id)['has_submission'])
+        second = self.client.post(f'/api/tests/{test.id}/take/', {
+            'submission_file': SimpleUploadedFile('second.sql', b'select 2;')
+        }, format='multipart')
+        self.assertEqual(second.status_code, 201, second.data)
+        self.assertEqual(TestResult.objects.filter(student=self.student, test=test).count(), 2)
+        duplicate = self.client.post(f'/api/tests/{test.id}/take/', {
+            'submission_file': SimpleUploadedFile('third.sql', b'select 3;')
+        }, format='multipart')
+        self.assertEqual(duplicate.status_code, 400)
+
+    def test_test_assignment_api_removes_and_reassigns_batch(self):
+        test = QuizTest.objects.create(title='Assignment replacement', test_type='technical', course=self.batch.course_name, created_by=self.trainer)
+        assignment = AssignedTest.objects.create(test=test, batch=self.batch)
+        self.client.force_authenticate(user=self.trainer.user)
+        removed = self.client.post('/api/assigned-tests/', {'test': test.id, 'batch_ids': [], 'replace_assignments': True}, format='json')
+        self.assertIn(removed.status_code, [200, 201], removed.data)
+        self.assertFalse(AssignedTest.objects.filter(test=test, batch=self.batch).exists())
+        saved = self.client.post('/api/assigned-tests/', {'test': test.id, 'batch_ids': [self.batch.id], 'replace_assignments': True,
+            'batch_schedules': {str(self.batch.id): {'test_date': timezone.localdate().isoformat(), 'start_time': '00:00', 'end_time': '23:59'}}}, format='json')
+        self.assertIn(saved.status_code, [200, 201], saved.data)
+        self.assertNotEqual(AssignedTest.objects.get(test=test, batch=self.batch).id, assignment.id)

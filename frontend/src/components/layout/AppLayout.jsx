@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, Outlet, useLocation } from 'react-router-dom'
 import Sidebar from './Sidebar'
+import TableTopScrollbars from '../common/TableTopScrollbars'
 import { useAuth } from '../../context/AuthContext'
 import api from '../../api/client'
 
@@ -190,6 +191,7 @@ export default function AppLayout({ role }) {
         {/* Page content */}
         <main style={{ padding: '18px', flex: 1 }}>
           <Outlet />
+          <TableTopScrollbars />
         </main>
       </div>
     </div>

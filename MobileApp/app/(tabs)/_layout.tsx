@@ -44,6 +44,17 @@ export default function TabsLayout() {
   const pathname = usePathname();
   const authReady = useStudentAuthGuard();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [activityUnread, setActivityUnread] = useState(false);
+  useEffect(() => {
+    if (!authReady || !drawerOpen) return;
+    let alive = true;
+    const check = () => api.get("daily-activity/inbox/").then(r => {
+      if (alive) setActivityUnread(r.data.unread.length > 0);
+    }).catch(() => {});
+    check();
+    const timer = setInterval(check, 30000);
+    return () => { alive = false; clearInterval(timer); };
+  }, [authReady, drawerOpen]);
   const [feedbackVisible, setFeedbackVisible] = useState(false);
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -353,7 +364,7 @@ export default function TabsLayout() {
               </Pressable>
             </View>
             <ScrollView contentContainerStyle={styles.drawerList} showsVerticalScrollIndicator={false}>
-              {drawerItems.map((item) => {
+              {drawerItems.filter(item => showPracticeSkillset || item.module !== "practice").map((item) => {
                 const active = item.route ? pathname === item.route : false;
                 return (
                   <Pressable
@@ -362,7 +373,7 @@ export default function TabsLayout() {
                     onPress={() => openDrawerItem(item)}
                   >
                     <Ionicons name={item.icon} size={21} color={active ? "#5523D2" : "#FFFFFF"} />
-                    <Text style={[styles.drawerItemText, active && styles.drawerItemTextActive]}>{item.label}</Text>
+                    <Text style={[styles.drawerItemText, active && styles.drawerItemTextActive]}>{item.label}{item.key === "daily-activity" && activityUnread && <Text accessibilityLabel="New challenges" style={{color:"#37885b"}}> ●</Text>}</Text>
                   </Pressable>
                 );
               })}
@@ -602,3 +613,4 @@ const styles = StyleSheet.create({
     elevation: 999,
   },
 });
+import { showPracticeSkillset } from "@/constants/features";

@@ -183,3 +183,59 @@ tbody tr:hover { background: var(--surface2); }
   .stat-grid { grid-template-columns: 1fr 1fr; }
   .form-grid { grid-template-columns: 1fr; }
 }
+/* Keep large data tables scrollable within their existing wrappers. */
+div:has(> table) {
+  min-width: 0;
+  max-width: 100%;
+  max-height: 70vh;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: auto;
+  scrollbar-color: #7c8794 #e5e7eb;
+  -ms-overflow-style: auto;
+}
+
+div:has(> table)::-webkit-scrollbar {
+  display: block;
+  width: 10px;
+  height: 10px;
+}
+
+div:has(> table)::-webkit-scrollbar-track { background: #e5e7eb; }
+div:has(> table)::-webkit-scrollbar-thumb { background: #7c8794; border-radius: 5px; }
+
+.table-top-scrollbar {
+  width: 100%;
+  min-width: 0;
+  height: 18px;
+  overflow-x: scroll;
+  overflow-y: hidden;
+  scrollbar-width: auto;
+  scrollbar-color: #7c8794 #e5e7eb;
+  background: #e5e7eb;
+}
+.table-top-scrollbar::-webkit-scrollbar { display: block; height: 12px; }
+.table-top-scrollbar::-webkit-scrollbar-track { background: #e5e7eb; }
+.table-top-scrollbar::-webkit-scrollbar-thumb { background: #7c8794; border-radius: 5px; }
+
+/* Let the table overflow its wrapper rather than widening the page. */
+.main-content, .admin-root, .counselor-root, .employee-root, .ls-root {
+  min-width: 0;
+  max-width: 100%;
+}
+
+table.admin-table:not(.public-users-table), table.counselor-table,
+table.employee-table, table.ls-table {
+  min-width: 1100px;
+  width: max-content;
+}
+
+table.admin-table:not(.public-users-table) th,
+table.counselor-table th, table.employee-table th, table.ls-table th {
+  white-space: nowrap;
+}
+
+div:has(> table.admin-table), div:has(> table.counselor-table),
+div:has(> table.employee-table), div:has(> table.ls-table) {
+  overflow-x: scroll !important;
+}

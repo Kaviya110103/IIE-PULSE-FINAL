@@ -3399,10 +3399,9 @@ export function StudentTests() {
         if (r.test != null) completedTestIds.add(Number(r.test))
       })
 
-      const availableTests = allTests.filter(test => {
-        const tid = Number(test.test_id || test.id)
-        return !completedTestIds.has(tid)
-      })
+      const availableTests = allTests.filter(test => test.has_submission != null
+        ? !test.has_submission
+        : !completedTestIds.has(Number(test.test_id || test.id)))
 
       setTests(availableTests)
       setTestResults(completedTests)
@@ -3670,7 +3669,7 @@ function TakeTestComponent({ test, onDone }) {
               />
               <small style={{ color: T.slate }}>Folder files will be saved as one ZIP for your mentor to view.</small>
             </div>
-            <button className="student-btn student-btn-success" type="button" onClick={submitUploadTest} disabled={submitting || (!submissionFile && submissionFiles.length === 0)}>
+            <button className="student-btn student-btn-success" style={{ width: 'auto', justifySelf: 'start' }} type="button" onClick={submitUploadTest} disabled={submitting || (!submissionFile && submissionFiles.length === 0)}>
               <i className="fas fa-paper-plane" /> {submitting ? 'Submitting...' : 'Submit Test'}
             </button>
           </div>
@@ -3731,7 +3730,7 @@ function TakeTestComponent({ test, onDone }) {
               />
               <small style={{ color: T.slate }}>Folder files will be saved as one ZIP for your mentor to view.</small>
             </div>
-            <button className="student-btn student-btn-success" type="button" onClick={submitUploadTest} disabled={submitting || (!submissionFile && submissionFiles.length === 0)}>
+            <button className="student-btn student-btn-success" style={{ width: 'auto', justifySelf: 'start' }} type="button" onClick={submitUploadTest} disabled={submitting || (!submissionFile && submissionFiles.length === 0)}>
               <i className="fas fa-paper-plane" /> {submitting ? 'Submitting...' : 'Submit Test'}
             </button>
           </div>
@@ -4061,7 +4060,9 @@ export function StudentQuizList() {
                         <StudentBadge text={`Pass: ${q.passing_marks}%`} variant="default" />
                       </div>
                       {q.user_attempts > 0 && q.best_score && <div className="student-alert-info" style={{ marginBottom: 12, padding: '6px 12px' }}><i className="fas fa-star" /> Best Score: {q.best_score}%</div>}
-                      <button className="student-btn student-btn-primary" style={{ width: 'auto', padding: '8px 13px' }} onClick={() => setActiveQuiz(q)}>{q.user_attempts > 0 ? '🔄 Retake Quiz' : '▶️ Start Quiz'}</button>
+                      {(q.start_date || q.end_date) && <div style={{ fontSize: 12, marginBottom: 8 }}>{q.start_date ? new Date(q.start_date).toLocaleString('en-IN') : ''} {q.end_date ? `- ${new Date(q.end_date).toLocaleString('en-IN')}` : ''}</div>}
+                      {Object.entries(q.batch_schedules || {}).map(([id, schedule]) => <div key={id} style={{ fontSize: 12, marginBottom: 8 }}>{schedule.test_date} {schedule.start_time} - {schedule.end_time}</div>)}
+                      <button className="student-btn student-btn-primary" style={{ width: 'auto', padding: '8px 13px' }} disabled={q.status === 'upcoming' || q.status === 'expired'} onClick={() => setActiveQuiz(q)}>{q.status === 'upcoming' ? 'Upcoming' : q.status === 'expired' ? 'Expired' : q.user_attempts > 0 ? '🔄 Retake Quiz' : '▶️ Start Quiz'}</button>
                     </div>
                   </div>
                 ))}
