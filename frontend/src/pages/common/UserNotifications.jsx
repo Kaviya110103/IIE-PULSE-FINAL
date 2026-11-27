@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import api from '../../api/client'
+import { showAdminQuizManagement } from '../../features'
 
 const colors = {
   border: '#e5e7eb',
@@ -18,6 +19,7 @@ export default function UserNotifications() {
   const role = location.pathname.split('/')[1] || 'student'
 
   const getTargetPath = (item) => {
+    if (role === 'admin' && !showAdminQuizManagement && (item.type === 'quiz_result' || item.action_url?.startsWith('/admin/quiz'))) return ''
     if (item.type === 'batch_duration_exceeded') return ''
     if (item.action_url) return item.action_url
     const type = item.type

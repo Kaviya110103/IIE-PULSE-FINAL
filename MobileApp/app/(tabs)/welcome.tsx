@@ -350,6 +350,7 @@ export default function WelcomeScreen() {
   useEffect(() => {
     const requestedModule = Array.isArray(module) ? module[0] : module;
     const allowedModules: ModuleKey[] = ["home", "gallery", "awards", "practice", "calendar", "announcement", "news", "referral", "contact", "about"];
+    if (!showPracticeSkillset && requestedModule === "practice") { setActiveModule("home"); return; }
     if (requestedModule && allowedModules.includes(requestedModule as ModuleKey)) {
       setActiveModule(requestedModule as ModuleKey);
     }
@@ -639,7 +640,7 @@ export default function WelcomeScreen() {
               showsVerticalScrollIndicator={false}
               contentContainerStyle={styles.drawerList}
             >
-              {sideNavItems.map((item) => (
+              {sideNavItems.filter(item => showPracticeSkillset || item.module !== "practice").map((item) => (
                 (() => {
                   const active = item.module === activeModule;
                   return (
@@ -753,7 +754,7 @@ export default function WelcomeScreen() {
       </ScrollView>
 
       <View style={styles.commonBottomNav}>
-        {bottomNavItems.map((item) => {
+        {bottomNavItems.filter(item => showPracticeSkillset || item.module !== "practice").map((item) => {
           const active =
             (item.module && activeModule === item.module) ||
             (item.key === "overview" && false);
@@ -5622,3 +5623,4 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
 });
+import { showPracticeSkillset } from "@/constants/features";

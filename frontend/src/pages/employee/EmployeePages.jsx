@@ -1739,11 +1739,15 @@ function RequestCompletionSection({ batch, students, sessions, onSuccess, openSi
 
 // ─── Sessions Modal (with checkbox workflow + completion request) ────────────────
 function SessionsModal({ batch, onClose }) {
+  const sessionIconStyle = { width: 36, height: 36, padding: 0, display: 'inline-grid', placeItems: 'center' }
   const [data, setData] = useState(null)
   const [students, setStudents] = useState([])
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState('all')
   const [toggling, setToggling] = useState(null)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState({})
+  const [saving, setSaving] = useState(false)
   const [extracting, setExtracting] = useState(false)
   const [finalStudentIds, setFinalStudentIds] = useState([])
   const [finalAction, setFinalAction] = useState(null)
@@ -1758,7 +1762,7 @@ function SessionsModal({ batch, onClose }) {
     setLoading(true)
     Promise.all([
       api.get(`/batches/${batch.id}/sessions-logsheet/`),
-      api.get(`/batches/${batch.id}/students/`),
+      api.get(`/batches/${batch.id}/students/?include_reassigned=true`),
     ]).then(([dr, sr]) => {
       setData(dr.data)
       setStudents(sr.data)
@@ -1786,17 +1790,15 @@ function SessionsModal({ batch, onClose }) {
   const tabSessions = tab === 'all' ? sessions : tab === 'done' ? completed : pending
   const canUpdateLogsheet = data?.can_update_logsheet !== false && batch.accessStatus !== 'previous'
 
-  const handleToggle = async (session) => {
+  const persistSession = async (session) => {
     if (!canUpdateLogsheet) return toast.error('Previous trainers can view session history but cannot update logsheet progress.')
     setToggling(session.id)
     try {
       let response
       if (session.staff_completed) {
         response = await api.post(`/sessions/${session.id}/staff-unmark/`)
-        toast.success(`Session ${session.session_number} unmarked`)
       } else {
         response = await api.post(`/sessions/${session.id}/staff-complete/`)
-        toast.success(`Session ${session.session_number} marked complete! Students notified.`)
       }
       const updatedSession = response.data?.session || {
         ...session,
@@ -1809,9 +1811,26 @@ function SessionsModal({ batch, onClose }) {
           item.id === session.id ? { ...item, ...updatedSession } : item
         ),
       }))
+      return true
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Failed')
+      toast.error(err.response?.data?.error || `Could not save session ${session.session_number}. Retry Save.`)
+      return false
     } finally { setToggling(null) }
+  }
+
+  const saveDraft = async () => {
+    if (!editing || saving || !canUpdateLogsheet) return
+    setSaving(true)
+    try {
+      for (const session of sessions) {
+        if (draft[session.id] === undefined || draft[session.id] === Boolean(session.staff_completed)) continue
+        if (!await persistSession(session)) return
+      }
+      setDraft({})
+      setEditing(false)
+      toast.success('Session changes saved')
+      load()
+    } finally { setSaving(false) }
   }
 
   const handleExtract = async () => {
@@ -1837,7 +1856,7 @@ function SessionsModal({ batch, onClose }) {
   }
   const isEligibleForReassignment = student => {
     const completion = studentCompletionById.get(String(student.id))
-    return Number(completion?.completed_sessions || 0) > 0 && !completedFinalStudentIds.has(String(student.id))
+    return student.batch_status !== 'reassigned' && !student.reassignment_pending && Number(completion?.completed_sessions || 0) > 0 && !completedFinalStudentIds.has(String(student.id))
   }
   const selectedStudents = students.filter(student => finalStudentIds.includes(String(student.id)))
 
@@ -1877,6 +1896,7 @@ function SessionsModal({ batch, onClose }) {
           total_sessions: sessions.length,
           message,
         })))
+        setStudents(previous => previous.map(student => finalStudentIds.includes(String(student.id)) ? { ...student, reassignment_pending: true } : student))
         toast.success(`Reassignment request sent for ${finalStudentIds.length} student${finalStudentIds.length === 1 ? '' : 's'}`)
       }
       setFinalStudentIds([])
@@ -1893,7 +1913,7 @@ function SessionsModal({ batch, onClose }) {
   }
 
   return (
-    <Modal open onClose={onClose} size="lg" title={`📋 Sessions — ${getBatchDisplayName(batch)} · ${batch.course_name_display}`}>
+    <Modal open onClose={() => { if (!saving) onClose() }} size="lg" title={`📋 Sessions — ${getBatchDisplayName(batch)} · ${batch.course_name_display}`}>
       {loading ? <Spin /> : (
         <>
           <div style={{ marginBottom: 16 }}>
@@ -1939,12 +1959,15 @@ function SessionsModal({ batch, onClose }) {
           )}
 
           {sessions.length > 0 && canUpdateLogsheet && (
-            <div className="employee-alert-info" style={{ marginBottom: 14 }}>
-              <i className="fas fa-info-circle" /> <strong>How it works:</strong> Check the box next to a session to mark it as completed. Students will be notified and can confirm or raise a doubt.
+            <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+              <button type="button" className="employee-btn employee-btn-sm" style={sessionIconStyle} title={editing ? 'Save session changes' : 'Edit sessions'} aria-label={editing ? 'Save session changes' : 'Edit sessions'} disabled={saving} onClick={editing ? saveDraft : () => setEditing(true)}>
+                <i className={editing ? 'fas fa-save' : 'fas fa-edit'} />
+              </button>
+              {editing && <button type="button" className="employee-btn employee-btn-sm" style={sessionIconStyle} title="Discard unsaved changes" aria-label="Discard unsaved changes" disabled={saving} onClick={() => { setDraft({}); setEditing(false) }}><i className="fas fa-times" /></button>}
             </div>
           )}
 
-          {canUpdateLogsheet && completed.length > 0 && students.length > 0 && (
+          {canUpdateLogsheet && !editing && completed.length > 0 && students.length > 0 && (
             <div style={{
               marginBottom: 14,
               padding: 16,
@@ -1969,12 +1992,13 @@ function SessionsModal({ batch, onClose }) {
                   const eligible = isEligibleForReassignment(s)
                   const eligibleForCompletion = isEligibleForFinalAction(s)
                   const studentCompleted = completedFinalStudentIds.has(value)
+                  const requestPending = Boolean(s.reassignment_pending) && s.batch_status !== 'reassigned'
                   return (
-                    <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 10px', border: `1px solid ${finalStudentIds.includes(value) ? T.teal : T.border}`, borderRadius: 8, cursor: eligible ? 'pointer' : 'not-allowed', opacity: eligible ? 1 : .42, filter: eligible ? 'none' : 'grayscale(1)' }}>
-                      <input type="checkbox" checked={finalStudentIds.includes(value)} disabled={!eligible} onChange={() => toggleFinalStudent(value)} />
+                    <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 10px', border: `1px solid ${finalStudentIds.includes(value) || requestPending ? T.teal : T.border}`, borderRadius: 8, cursor: eligible ? 'pointer' : 'not-allowed', opacity: eligible || requestPending ? 1 : .42, filter: eligible || requestPending ? 'none' : 'grayscale(1)' }}>
+                      <input type="checkbox" checked={requestPending || finalStudentIds.includes(value)} disabled={!eligible} onChange={() => toggleFinalStudent(value)} />
                       <span style={{ fontSize: 12, fontWeight: 600 }}>{s.first_name} {s.last_name} ({s.student_id})</span>
                       <span style={{ marginLeft: 'auto', fontSize: 11, color: studentCompleted ? T.sage : eligible ? T.teal : T.slate }}>
-                        {studentCompleted ? 'Completed' : eligibleForCompletion ? 'Ready to complete' : `${completion?.completed_sessions || 0}/${completion?.total_sessions || sessions.length}`}
+                        {s.batch_status === 'reassigned' ? 'Reassigned' : requestPending ? 'Request submitted' : studentCompleted ? 'Completed' : eligibleForCompletion ? 'Ready to complete' : `${completion?.completed_sessions || 0}/${completion?.total_sessions || sessions.length}`}
                       </span>
                     </label>
                   )
@@ -2060,8 +2084,10 @@ function SessionsModal({ batch, onClose }) {
                     canUpdateLogsheet ? (
                       <input
                         type="checkbox"
-                        checked={!!s.staff_completed}
-                        onChange={() => handleToggle(s)}
+                        checked={draft[s.id] ?? !!s.staff_completed}
+                        disabled={!editing || saving}
+                        aria-label={`Session ${s.session_number} completed`}
+                        onChange={event => { const checked = event.target.checked; setDraft(prev => ({ ...prev, [s.id]: checked })) }}
                         style={{ width: 20, height: 20, cursor: 'pointer', accentColor: T.sage }}
                         title={s.staff_completed ? 'Click to unmark' : 'Click to mark as completed'}
                       />
@@ -2121,7 +2147,7 @@ function StudentsModal({ batch, onClose }) {
   const [search, setSearch] = useState('')
 
   useEffect(() => {
-    api.get(`/batches/${batch.id}/students/`).then(r => setStudents(r.data)).finally(() => setLoading(false))
+    api.get(`/batches/${batch.id}/students/?include_reassigned=true`).then(r => setStudents(r.data)).finally(() => setLoading(false))
   }, [batch.id])
 
   const filtered = students.filter(s =>
@@ -2150,10 +2176,10 @@ function StudentsModal({ batch, onClose }) {
             </thead>
             <tbody>
               {filtered.map((s, i) => (
-                <tr key={s.id}>
+                <tr key={s.id} style={{ opacity: s.batch_status === 'reassigned' ? 0.5 : 1 }}>
                   <td>{i + 1}</td>
                   <td><Badge text={s.student_id} variant="info" /></td>
-                  <td style={{ fontWeight: 600 }}>{s.first_name} {s.last_name}</td>
+                  <td style={{ fontWeight: 600 }}>{s.first_name} {s.last_name} {s.batch_status === 'reassigned' && <Badge text="Reassigned" variant="warning" />}</td>
                   <td style={{ fontSize: 12 }}>{s.email}</td>
                   <td>{s.mobile_no}</td>
                   <td>{s.course}</td>
@@ -5017,9 +5043,6 @@ export function CreateTest() {
   const [mode, setMode] = useState('manual')
   const [form, setForm] = useState({
     title: '',
-    test_date: '',
-    start_time: '',
-    duration_minutes: 60,
     instructions: '',
   })
   const [questions, setQuestions] = useState([{ question_text: 'Write a program to display palindrome words.' }])
@@ -5040,8 +5063,8 @@ export function CreateTest() {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!form.title.trim() || !form.test_date || !form.start_time) {
-      toast.error('Fill title, date and start time')
+    if (!form.title.trim()) {
+      toast.error('Enter a test title')
       return
     }
     if (mode === 'manual' && questions.some(q => !q.question_text.trim())) {
@@ -5060,9 +5083,6 @@ export function CreateTest() {
       fd.append('description', form.instructions)
       fd.append('test_type', 'technical')
       fd.append('creation_method', mode)
-      fd.append('test_date', form.test_date)
-      fd.append('start_time', form.start_time)
-      fd.append('duration_minutes', form.duration_minutes || 60)
       fd.append('instructions', form.instructions)
       if (file) fd.append('question_paper', file)
 
@@ -5110,21 +5130,6 @@ export function CreateTest() {
             <div className="employee-fg">
               <label className="employee-label">Test Title <span className="employee-req">*</span></label>
               <input type="text" className="employee-input" value={form.title} onChange={e => updateForm('title', e.target.value)} placeholder="e.g. Java String Programs" required />
-            </div>
-
-            <div className="employee-row-grid-2">
-              <div className="employee-fg">
-                <label className="employee-label">Test Date <span className="employee-req">*</span></label>
-                <input type="date" className="employee-input" value={form.test_date} onChange={e => updateForm('test_date', e.target.value)} required />
-              </div>
-              <div className="employee-fg">
-                <label className="employee-label">Start Time <span className="employee-req">*</span></label>
-                <input type="time" className="employee-input" value={form.start_time} onChange={e => updateForm('start_time', e.target.value)} required />
-              </div>
-              <div className="employee-fg">
-                <label className="employee-label">Duration</label>
-                <input type="number" min="1" className="employee-input" value={form.duration_minutes} onChange={e => updateForm('duration_minutes', e.target.value)} />
-              </div>
             </div>
 
             <div className="employee-fg">
@@ -5986,6 +5991,10 @@ export function UploadQuiz() {
       fd.append('duration_minutes', form.duration_minutes); fd.append('passing_marks', form.passing_marks); fd.append('difficulty', form.difficulty)
       fd.append('audience', isAdminQuiz ? form.audience : 'students')
       fd.append('quiz_scope', isAdminQuiz ? 'admin_global' : 'staff_batch')
+      if (!isAdminQuiz && form.start_date && form.end_date) {
+        fd.append('start_date', new Date(form.start_date).toISOString())
+        fd.append('end_date', new Date(form.end_date).toISOString())
+      }
       fd.append('source_file', file)
       const res = await api.post('/quiz/upload/', fd)
       toast.success(res.data?.message || 'Quiz uploaded successfully!')
@@ -6041,6 +6050,7 @@ export function UploadQuiz() {
 }
 
 export function ManageQuizzes() {
+  const [batchSchedules, setBatchSchedules] = useState({})
   const location = useLocation()
   const isAdminQuiz = location.pathname.startsWith('/admin')
   const [quizzes, setQuizzes] = useState([])
@@ -6119,6 +6129,7 @@ export function ManageQuizzes() {
 
   const openBatchAssignment = (quiz) => {
     setAssignQuiz(quiz)
+    setBatchSchedules(quiz.batch_schedules || {})
     setSelectedBatchIds((quiz.assigned_batch_details || []).map(batch => String(batch.id)))
   }
 
@@ -6128,10 +6139,9 @@ export function ManageQuizzes() {
   }
 
   const saveBatchAssignment = async () => {
-    if (!selectedBatchIds.length) return toast.error('Select at least one batch')
     setAssigning(true)
     try {
-      await api.post(`/quiz/${assignQuiz.id}/assign/`, { batch_ids: selectedBatchIds })
+      await api.post(`/quiz/${assignQuiz.id}/assign/`, { batch_ids: selectedBatchIds, batch_schedules: batchSchedules })
       toast.success('Quiz assigned to selected batches')
       setAssignQuiz(null)
       setSelectedBatchIds([])
@@ -6299,17 +6309,23 @@ export function ManageQuizzes() {
               const batchId = String(batch.id)
               const checked = selectedBatchIds.includes(batchId)
               return (
-                <label key={batch.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 12, border: `1px solid ${checked ? T.amber : T.border}`, borderRadius: 8, cursor: 'pointer' }}>
+                <div key={batch.id} style={{ padding: 12, border: `1px solid ${checked ? T.amber : T.border}`, borderRadius: 8 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }} title={batchSchedules[batchId] ? `${batchSchedules[batchId].test_date || ''} ${batchSchedules[batchId].start_time || ''} - ${batchSchedules[batchId].end_time || ''}` : ''}>
                   <input type="checkbox" checked={checked} onChange={() => toggleBatchSelection(batch.id)} />
                   <span style={{ fontWeight: 700 }}>{batch.batch_code || batch.batch_number}</span>
                   <span className="employee-hint">{batch.course_name_display || ''}</span>
                 </label>
+                {checked && <div style={{ display: 'grid', gap: 8, marginTop: 12 }}>
+                  {[['test_date', 'Date', 'date'], ['start_time', 'Start time', 'time'], ['end_time', 'End time', 'time']].map(([key, label, type]) => <label key={key} className="employee-label">{label}<input className="employee-input" type={type} value={(batchSchedules[batchId]?.[key] || '').slice(0, type === 'time' ? 5 : 10)} onChange={e => setBatchSchedules(previous => ({ ...previous, [batchId]: { ...previous[batchId], [key]: e.target.value } }))} /></label>)}
+                  {batchSchedules[batchId]?.start_time && batchSchedules[batchId]?.end_time && <small>Duration: {Math.max(0, (new Date(`2000-01-01T${batchSchedules[batchId].end_time}`) - new Date(`2000-01-01T${batchSchedules[batchId].start_time}`)) / 60000)} minutes</small>}
+                </div>}
+                </div>
               )
             })}
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
             <button className="employee-btn employee-btn-ghost" onClick={() => setAssignQuiz(null)}>Cancel</button>
-            <button className="employee-btn employee-btn-primary" onClick={saveBatchAssignment} disabled={assigning || !selectedBatchIds.length}>
+            <button className="employee-btn employee-btn-primary" onClick={saveBatchAssignment} disabled={assigning}>
               {assigning ? 'Assigning...' : `Assign to ${selectedBatchIds.length} Batch${selectedBatchIds.length === 1 ? '' : 'es'}`}
             </button>
           </div>

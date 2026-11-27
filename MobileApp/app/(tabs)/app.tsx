@@ -1,4 +1,5 @@
-import { router, useLocalSearchParams } from "expo-router";
+import { Redirect, router, useLocalSearchParams } from "expo-router";
+import { showPracticeSkillset } from "@/constants/features";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useEffect, useMemo, useState } from "react";
 import {
@@ -61,6 +62,11 @@ type QuizMode = "practice" | "excel" | "assigned-test";
 const PUBLIC_PRACTICE_RESULTS_KEY = "public_practice_results";
 
 export default function App() {
+  const { mode } = useLocalSearchParams();
+  if (!showPracticeSkillset && [mode].flat().includes("practice")) return <Redirect href="/welcome" />;
+  return <AttemptScreen />;
+}
+function AttemptScreen() {
   const { quizId, mode } = useLocalSearchParams<{ quizId?: string; mode?: string }>();
   const routeMode = Array.isArray(mode) ? mode[0] : mode;
   const isPracticeMode = routeMode === "practice";
@@ -166,6 +172,7 @@ export default function App() {
 
         let lastError: any = null;
         for (const endpoint of endpoints) {
+          if (!showPracticeSkillset && endpoint.mode === "practice") continue;
           try {
             const response = await api.get(endpoint.url);
             const allQuizzes: QuizItem[] = response.data?.results || [];

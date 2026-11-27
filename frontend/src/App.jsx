@@ -3,6 +3,7 @@ import { Toaster } from 'react-hot-toast'
 import { ArrowRight, LogOut, ShieldCheck } from 'lucide-react'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import AppLayout from './components/layout/AppLayout'
+import { showAdminQuizManagement } from './features'
 import Login from './pages/auth/Login'
 import { PublicLanding, PublicRegistration, PublicCertificateLookup, PublicRestrictedPage, PublicUserPortal } from './pages/public/PublicAccess'
 import logo from './assets/IIE.png'
@@ -34,7 +35,7 @@ import {
   CreateTest, ViewTests, TestResults, AddQuestions,
   UploadQuiz, ManageQuizzes, StaffQuizResults, MentorStudentMonitoring, ReassignedStudents
 } from './pages/employee/EmployeePages'
-import StaffDailyActivityResults from './pages/employee/StaffDailyActivityResults'
+import DailyActivity from './pages/DailyActivity'
 
 // ── Counselor ──────────────────────────────────────────────────────────────
 import {
@@ -243,9 +244,11 @@ function AppRoutes() {
         <Route path="attendance" element={<AdminBranchAttendance />} />
         <Route path="materials" element={<AdminMaterialsOverview />} />
         <Route path="test-results" element={<AdminTestResults />} />
+        {showAdminQuizManagement && <>
         <Route path="quiz/upload" element={<UploadQuiz />} />
         <Route path="quiz" element={<ManageQuizzes />} />
         <Route path="quiz-results" element={<QuizResults />} />
+        </>}
         <Route path="completed" element={<CompletedStudents />} />
         <Route path="notifications" element={<UserNotifications />} />
       </Route>
@@ -265,7 +268,8 @@ function AppRoutes() {
         <Route path="trainer-announcements" element={<TrainerAnnouncements />} />
         <Route path="branch-announcements" element={<BranchAnnouncements />} />
         <Route path="monitoring/students" element={<MentorStudentMonitoring />} />
-        <Route path="daily-activity-results" element={<StaffDailyActivityResults />} />
+        <Route path="daily-activity" element={<DailyActivity staff />} />
+        <Route path="daily-activity-results" element={<Navigate to="/employee/daily-activity" replace />} />
 
         {/* Leave Management Routes */}
         <Route path="student-leave/pending" element={<StaffStudentLeaveRequests />} />
@@ -333,7 +337,7 @@ function AppRoutes() {
         <Route path="desk" element={<StudentDesk />} />
         <Route path="batches" element={<StudentBatches />} />
         <Route path="sessions" element={<StudentSessions />} />
-        <Route path="challenge" element={<StudentChallenge />} />
+        <Route path="challenge" element={<DailyActivity />} />
         <Route path="login-rating-history" element={<StudentLoginRatingHistory />} />
 
         {/* Test Routes - Fixed: Different paths for different features */}

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import api from '../../api/client'
 import toast from 'react-hot-toast'
+import SearchableSelect from '../../components/common/SearchableSelect'
 import { useAuth } from '../../context/AuthContext'  // ← ADD THIS LINE
 import { useLocation, useNavigate } from 'react-router-dom'  // ← ADD THIS
 
@@ -2086,7 +2087,7 @@ export function CounselorCompletedStudents() {
             value={filters.search}
             onChange={(e) => handleFilterChange('search', e.target.value)}
           />
-          <select
+          <SearchableSelect
             className="counselor-select"
             style={{ padding: '6px 10px', fontSize: '12px', width: '130px' }}
             value={filters.batch}
@@ -2094,8 +2095,8 @@ export function CounselorCompletedStudents() {
           >
             <option value="">All Batches</option>
             {batches.map(b => <option key={b} value={b}>{b}</option>)}
-          </select>
-          <select
+          </SearchableSelect>
+          <SearchableSelect
             className="counselor-select"
             style={{ padding: '6px 10px', fontSize: '12px', width: '130px' }}
             value={filters.course}
@@ -2103,7 +2104,7 @@ export function CounselorCompletedStudents() {
           >
             <option value="">All Courses</option>
             {courses.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
+          </SearchableSelect>
           <input
             type="date"
             className="counselor-input"

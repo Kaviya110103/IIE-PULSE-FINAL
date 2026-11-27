@@ -681,6 +681,7 @@ class SupportRequest ( models.Model ) :
 class TestResult ( models.Model ) :
     student = models.ForeignKey ( Students , on_delete = models.CASCADE )
     test = models.ForeignKey ( QuizTest , on_delete = models.CASCADE )
+    assignment = models.ForeignKey('AssignedTest', on_delete=models.SET_NULL, null=True, blank=True, related_name='results')
     score = models.IntegerField ( )
     total_questions = models.IntegerField ( )
     percentage = models.FloatField ( )
@@ -690,9 +691,6 @@ class TestResult ( models.Model ) :
     evaluated_by = models.ForeignKey ( Employee , on_delete = models.SET_NULL , blank = True , null = True , related_name = 'evaluated_test_results' )
     evaluated_at = models.DateTimeField ( blank = True , null = True )
     submitted_at = models.DateTimeField ( auto_now_add = True )
-    
-    class Meta :
-        unique_together = [ 'student' , 'test' ]
     
     def __str__ ( self ) :
         return f"{self.student.first_name} - {self.test.title} - {self.percentage}%"
@@ -1068,6 +1066,29 @@ class SessionCompletion ( models.Model ) :
     
     def __str__ ( self ) :
         return f"{self.student.first_name} - {self.session.title} - {self.status}"
+
+
+class DailyActivityChallenge(models.Model):
+    is_deleted = models.BooleanField(default=False)
+    viewed_by = models.ManyToManyField(Students, blank=True, related_name='+')
+    title = models.CharField(max_length=200)
+    category = models.CharField(max_length=16, choices=[(v, v) for v in ('Aptitude', 'Grammar', 'Behaviour')])
+    uploader = models.ForeignKey(Employee, on_delete=models.PROTECT)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    questions = models.JSONField()
+
+
+class DailyActivityAttempt(models.Model):
+    challenge = models.ForeignKey(DailyActivityChallenge, on_delete=models.PROTECT)
+    student = models.ForeignKey(Students, on_delete=models.CASCADE)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    activity_day = models.DateField()
+    cycle_start = models.DateField()
+    answers = models.JSONField()
+    score = models.PositiveIntegerField()
+
+    class Meta:
+        unique_together = [('student', 'challenge')]
 
 
 class ChallengeQuestionPool ( models.Model ) :
@@ -1454,6 +1475,7 @@ class Quiz ( models.Model ) :
     is_published = models.BooleanField ( default = False )
     publish_date = models.DateTimeField ( null = True , blank = True )
     scheduled_publish_at = models.DateTimeField(null=True, blank=True)
+    batch_schedules = models.JSONField(default=dict, blank=True)
     deadline = models.DateTimeField ( null = True , blank = True )
     allow_retake = models.BooleanField ( default = False )
     max_attempts = models.IntegerField ( default = 1 )
