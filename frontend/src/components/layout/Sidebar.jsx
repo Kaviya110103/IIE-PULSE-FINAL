@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import api from '../../api/client'
+import { showAdminQuizManagement } from '../../features'
 
 const S = {
   sidebar: {
@@ -149,11 +150,11 @@ function AdminNav() {
       <NavGroup icon="fa-book-open" label="Materials">
         <SubLink to="/admin/materials" label="View Materials" />
       </NavGroup>
-      <NavGroup icon="fa-pencil-alt" label="Quiz Management">
+      {showAdminQuizManagement && <NavGroup icon="fa-pencil-alt" label="Quiz Management">
         <SubLink to="/admin/quiz/upload" label="Upload Quiz" />
         <SubLink to="/admin/quiz" label="Manage Quizzes" />
         <SubLink to="/admin/quiz-results" label="Quiz Results" />
-      </NavGroup>
+      </NavGroup>}
       <NavGroup icon="fa-user-clock" label="User Monitoring">
         <SubLink to="/admin/monitoring/employees" label="Employee Monitoring" />
         <SubLink to="/admin/monitoring/students" label="Student Monitoring" />
@@ -239,19 +240,11 @@ function EmployeeNav({ alerts = {}, onSeen = () => {} }) {
       <NavItem to="/employee/announcements" icon="fa-bullhorn" label="Admin Announcements" dot={alerts.announcements} onOpen={() => onSeen('announcements')} />
       <NavItem to="/employee/branch-announcements" icon="fa-map-marker-alt" label="Branch Announcements" />
       <NavItem to="/employee/monitoring/students" icon="fa-user-clock" label="Student Login Records" />
-      <NavItem to="/employee/daily-activity-results" icon="fa-bolt" label="Daily Activity Result" />
+      <NavItem to="/employee/daily-activity" icon="fa-bolt" label="Daily Activity" />
 
       <NavItem to="/employee/material-library" icon="fa-book" label="Materials" />
-      <NavGroup icon="fa-pencil-alt" label="Technical Tests">
-        <SubLink to="/employee/tests/create" label="Create Technical Test" />
-        <SubLink to="/employee/tests" label="Manage Technical Tests" />
-        <SubLink to="/employee/test-results" label="Test Results" dot={alerts.test_results} onOpen={() => onSeen('test_results')} />
-      </NavGroup>
-      <NavGroup icon="fa-pencil-alt" label="Quizzes">
-        <SubLink to="/employee/quiz/upload" label="Upload Quiz" />
-        <SubLink to="/employee/quiz" label="Manage Quizzes" />
-        <SubLink to="/employee/quiz-results" label="Quiz Results" dot={alerts.quiz_results} onOpen={() => onSeen('quiz_results')} />
-      </NavGroup>
+      <NavItem to="/employee/tests" icon="fa-pencil-alt" label="Technical Tests" dot={alerts.test_results} />
+      <NavItem to="/employee/quiz" icon="fa-pencil-alt" label="Quizzes" dot={alerts.quiz_results} />
       <NavGroup icon="fa-calendar-alt" label="Leave Management" dot={alerts.leave_management}>
         <SubLink to="/employee/student-leave/pending" label="Student Leave Requests" onOpen={() => onSeen('leave_management')} />
         {/* <SubLink to="/employee/student-leave/history" label="Student Leave History" /> */}
@@ -269,6 +262,15 @@ function EmployeeNav({ alerts = {}, onSeen = () => {} }) {
 
 // ── STUDENT NAV ────────────────────────────────────────────────────────────
 function StudentNav() {
+  const [unread, setUnread] = useState(false)
+  useEffect(() => {
+    let alive = true
+    const check = () => api.get('/daily-activity/inbox/').then(r => { if (alive) setUnread(r.data.unread.length > 0) }).catch(() => {})
+    check()
+    const timer = setInterval(check, 30000)
+    window.addEventListener('daily-activity-viewed', check)
+    return () => { alive = false; clearInterval(timer); window.removeEventListener('daily-activity-viewed', check) }
+  }, [])
   return (
     <>
       <NavItem to="/student" icon="fa-home" label="Dashboard" />
@@ -278,7 +280,7 @@ function StudentNav() {
       <NavItem to="/student/attendance" icon="fa-user-check" label="Attendance" />
       <NavItem to="/student/desk" icon="fa-desktop" label="Student Desk" />
       <NavItem to="/student/batches" icon="fa-layer-group" label="My Batches" />
-      <NavItem to="/student/challenge" icon="fa-bolt" label="Daily Activity" />
+      <NavItem to="/student/challenge" icon="fa-bolt" label="Daily Activity" dot={unread} />
       <NavGroup icon="fa-flask" label="Tests & Quizzes">
         <SubLink to="/student/tests" label="Upcoming Tests" />
         <SubLink to="/student/quiz" label="Excel Quizzes" />

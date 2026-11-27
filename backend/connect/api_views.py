@@ -2775,7 +2775,21 @@ def _student_current_content_batches(student):
     graduation continue to be available, while its inactive enrollment keeps
     it excluded from staff operational workflows.
     """
-    return _student_learning_batches(student) if student else []
+    return _student_accessible_batches(student) if student else []
+
+
+def _student_quiz_window_status(quiz, student):
+    now = timezone.localtime()
+    if quiz.batch_schedules:
+        ids = {str(batch.id) for batch in _student_current_content_batches(student)}
+        windows = [value for key, value in quiz.batch_schedules.items() if key in ids]
+        states = []
+        for value in windows:
+            start = timezone.make_aware(datetime.fromisoformat(f"{value['test_date']}T{value['start_time']}"))
+            end = timezone.make_aware(datetime.fromisoformat(f"{value['test_date']}T{value['end_time']}"))
+            states.append('upcoming' if now < start else 'expired' if now >= end else 'available')
+        return 'available' if 'available' in states else 'upcoming' if 'upcoming' in states else 'expired'
+    return 'upcoming' if quiz.start_date and now < quiz.start_date else 'expired' if quiz.end_date and now >= quiz.end_date else 'available'
 
 
 def _student_can_access_material(student, material):
@@ -2827,7 +2841,7 @@ def _is_previous_trainer_for_batch(batch, employee):
 def _has_active_batch_control(batch, employee):
     if not _is_batch_trainer(batch, employee):
         return False
-    return not _is_previous_trainer_for_batch(batch, employee)
+    return True
 
 
 def _previous_reassigned_batches_for_trainer(employee):
@@ -2835,7 +2849,7 @@ def _previous_reassigned_batches_for_trainer(employee):
         return Batches.objects.none()
     return Batches.objects.filter(
         reassigned_from_records__previous_trainer=employee
-    ).select_related('course_name', 'faculty').prefetch_related(
+    ).exclude(Q(faculty=employee) | Q(trainer_assignments__trainer=employee)).select_related('course_name', 'faculty').prefetch_related(
         'trainer_assignments__trainer'
     ).distinct().order_by('-reassigned_from_records__reassigned_at')
 
@@ -2881,11 +2895,6 @@ class BatchListCreateView(generics.ListAPIView):
                     # If faculty filter not provided, filter by the logged-in staff
                     if not faculty_id:
                         qs = qs.filter(Q(faculty=emp) | Q(trainer_assignments__trainer=emp)).distinct()
-                    previous_batch_ids = ReassignedStudentRecord.objects.filter(
-                        previous_trainer=emp,
-                        source_batch__isnull=False,
-                    ).values_list('source_batch_id', flat=True)
-                    qs = qs.exclude(id__in=previous_batch_ids)
             except Employee.DoesNotExist:
                 return qs.none()
         
@@ -5802,6 +5811,9 @@ class AssignedTestListView(generics.ListCreateAPIView):
             assigned = []
             for batch in batches:
                 schedule = parsed_schedules[batch.id]
+                existing = AssignedTest.objects.filter(test=test, batch=batch).first()
+                if existing and any(getattr(existing, key) != value for key, value in schedule.items()):
+                    schedule = {**schedule, 'assigned_date': timezone.now()}
                 assigned_test, _ = AssignedTest.objects.update_or_create(
                     test=test,
                     batch=batch,
@@ -6640,6 +6652,20 @@ def upload_quiz(request):
     if not questions:
         return Response({'error': 'No valid questions found in the uploaded file.'}, status=400)
 
+    start_at = end_at = None
+    if not is_admin_upload and (request.data.get('start_date') or request.data.get('end_date')):
+        try:
+            start_at = datetime.fromisoformat(request.data.get('start_date', '').replace('Z', '+00:00'))
+            end_at = datetime.fromisoformat(request.data.get('end_date', '').replace('Z', '+00:00'))
+            if timezone.is_naive(start_at):
+                start_at = timezone.make_aware(start_at)
+            if timezone.is_naive(end_at):
+                end_at = timezone.make_aware(end_at)
+            if end_at <= start_at:
+                raise ValueError('Invalid time window')
+        except (ValueError, TypeError):
+            return Response({'error': 'Choose a valid start and end date and time.'}, status=400)
+
     with transaction.atomic():
         file.seek(0)
         quiz = Quiz.objects.create(
@@ -6656,6 +6682,8 @@ def upload_quiz(request):
             total_questions=len(questions),
             total_marks=sum(item['marks'] for item in questions),
             is_published=False,
+            start_date=start_at,
+            end_date=end_at,
         )
         QuizQuestion.objects.bulk_create([
             QuizQuestion(quiz=quiz, **question)
@@ -6705,8 +6733,19 @@ def assign_quiz_to_batches(request, quiz_id):
             raw_batch_ids.append(str(value).strip())
     raw_batch_ids = [value for idx, value in enumerate(raw_batch_ids) if value and value not in raw_batch_ids[:idx]]
 
-    if not raw_batch_ids:
-        return Response({'error': 'Select at least one batch'}, status=400)
+    schedules = request.data.get('batch_schedules', {})
+    validated_schedules = {}
+    try:
+        for batch_id in raw_batch_ids:
+            value = schedules.get(str(batch_id), {})
+            day = datetime.strptime(value['test_date'], '%Y-%m-%d').date()
+            start = datetime.strptime(value['start_time'][:5], '%H:%M').time()
+            end = datetime.strptime(value['end_time'][:5], '%H:%M').time()
+            if end <= start:
+                raise ValueError('End must follow start')
+            validated_schedules[str(batch_id)] = {'test_date': day.isoformat(), 'start_time': start.isoformat(), 'end_time': end.isoformat()}
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return Response({'error': 'Choose a date, start time and later end time for every selected batch.'}, status=400)
 
     try:
         batches = list(Batches.objects.filter(id__in=raw_batch_ids))
@@ -6724,10 +6763,12 @@ def assign_quiz_to_batches(request, quiz_id):
 
     with transaction.atomic():
         quiz.assigned_batches.set(batches)
+        quiz.batch = None
+        quiz.batch_schedules = validated_schedules
         quiz.is_published = True
         quiz.publish_date = timezone.now()
         quiz.scheduled_publish_at = None
-        quiz.save(update_fields=['is_published', 'publish_date', 'scheduled_publish_at', 'updated_at'])
+        quiz.save(update_fields=['batch', 'batch_schedules', 'is_published', 'publish_date', 'scheduled_publish_at', 'updated_at'])
 
     return Response({
         'message': f'Quiz assigned to {len(batches)} batch(es).',
@@ -6744,6 +6785,9 @@ def take_quiz(request, quiz_id):
         quiz = Quiz.objects.get(id=quiz_id)
     except (Students.DoesNotExist, Quiz.DoesNotExist):
         return Response({'error': 'Not found'}, status=404)
+    now = timezone.now()
+    if _student_quiz_window_status(quiz, student) != 'available':
+        return Response({'error': 'This quiz is available only during its scheduled time.'}, status=400)
     student_batch_ids = [batch.id for batch in _student_current_content_batches(student)]
     has_access = (
         quiz.is_published and (
@@ -7845,7 +7889,7 @@ def get_batch_sessions_with_logsheet(request, batch_id):
     try:
         batch = Batches.objects.get(id=batch_id)
         emp = _get_employee_for_request(request)
-        is_previous_trainer = bool(emp and _is_previous_trainer_for_batch(batch, emp))
+        is_previous_trainer = bool(emp and _is_previous_trainer_for_batch(batch, emp) and not _is_batch_trainer(batch, emp))
         sync_missing_sessions_from_logsheet(batch)
         _sync_reassigned_student_progress_for_batch(batch)
         _reconcile_batch_completion_audit(batch)
@@ -7933,24 +7977,24 @@ def staff_mark_session_complete(request, session_id):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def staff_unmark_session(request, session_id):
+    from .models import BatchSessionProgress
+
     try:
         emp = Employee.objects.get(user=request.user)
         session = CourseSession.objects.get(id=session_id)
         if not _has_active_batch_control(session.batch, emp):
             return Response({'error': 'This batch was reassigned. Previous trainers can view history but cannot update logsheet progress.'}, status=403)
-        if session.staff_completed:
-            return Response({'error': 'Completed sessions are locked and cannot be unticked.'}, status=400)
-        session.staff_completed = False
-        session.completed_date = None
-        session.save()
-        StudentSessionStatus.objects.filter(session=session).update(
-            staff_completed=False, student_status='pending'
-        )
-        Student_Session_Progress.objects.filter(session=session).update(
-            staff_completed=False,
-            staff_completed_at=None,
-            student_status='pending',
-        )
+        with transaction.atomic():
+            batch_ids = {b.pk for b in _parallel_course_batches(session.batch)} | {session.batch_id}
+            targets = CourseSession.objects.filter(batch_id__in=batch_ids, session_number=session.session_number)
+            ids = list(targets.values_list('pk', flat=True))
+            targets.update(staff_completed=False, completed_date=None, completed_by=None)
+            DailySessionCompletion.objects.filter(session_id__in=ids).update(completed=False, completed_at=None)
+            StudentSessionStatus.objects.filter(session_id__in=ids).update(staff_completed=False, staff_completed_at=None)
+            Student_Session_Progress.objects.filter(session_id__in=ids).update(staff_completed=False, staff_completed_at=None)
+            for progress in BatchSessionProgress.objects.filter(batch_id__in=batch_ids):
+                progress.update_progress()
+            session.refresh_from_db()
         return Response({
             'success': True,
             'message': 'Session unmarked.',
@@ -8864,7 +8908,22 @@ def get_batch_students(request, batch_id):
     except Batches.DoesNotExist:
         return Response({'error': 'Batch not found'}, status=404)
     students = active_students_for_batch(batch).select_related('assigned_batch', 'assigned_staff')
-    return Response([_student_detail_payload(student) for student in students])
+    rows = [dict(_student_detail_payload(student), batch_status='active') for student in students]
+    if request.query_params.get('include_reassigned') == 'true':
+        employee = _get_employee_for_request(request)
+        if not (is_admin_user(request.user) or _is_batch_trainer(batch, employee) or _is_previous_trainer_for_batch(batch, employee)):
+            return Response({'error': 'You do not have access to this batch'}, status=403)
+        pending_ids = set(SessionCompletionRequest.objects.filter(
+            batch=batch, status='pending'
+        ).values_list('student_id', flat=True))
+        for row in rows:
+            row['reassignment_pending'] = row['id'] in pending_ids
+        active_ids = {student.id for student in students}
+        historical = Students.objects.filter(
+            id__in=ReassignedStudentRecord.objects.filter(source_batch=batch).values('student_id')
+        ).exclude(id__in=active_ids).select_related('assigned_batch', 'assigned_staff').distinct()
+        rows.extend(dict(_student_detail_payload(student), batch_status='reassigned') for student in historical)
+    return Response(rows)
 
 
 @api_view(['GET'])
@@ -13080,7 +13139,10 @@ def student_quizzes(request):
                 'max_attempts': quiz.max_attempts,
                 'user_attempts': attempts.count(),
                 'best_score': best_score.percentage if best_score else None,
-                'status': 'completed' if is_completed else 'available',
+                'status': 'completed' if is_completed else _student_quiz_window_status(quiz, student),
+                'batch_schedules': {key: value for key, value in quiz.batch_schedules.items() if int(key) in student_batch_ids},
+                'start_date': quiz.start_date,
+                'end_date': quiz.end_date,
                 'last_attempt_id': best_score.id if best_score else None,
                 'completed_at': best_score.submitted_at if best_score else None,
                 'batch_id': quiz.batch_id or next((batch.id for batch in quiz.assigned_batches.all() if batch.id in student_batch_ids), None),
@@ -13100,6 +13162,9 @@ def student_take_quiz(request, quiz_id):
     try:
         student = Students.objects.get(user=request.user)
         quiz = Quiz.objects.get(id=quiz_id, is_published=True)
+        now = timezone.now()
+        if _student_quiz_window_status(quiz, student) != 'available':
+            return Response({'error': 'This quiz is available only during its scheduled time.'}, status=400)
         
         assigned_batch_ids = [batch.id for batch in _student_current_content_batches(student)]
         assigned_to_batch = (
@@ -13413,6 +13478,7 @@ def student_assigned_tests(request):
             'status': test_status(a),
             'trainer': f"{test.created_by.first_name} {test.created_by.last_name or ''}".strip() if test.created_by else '',
             'assigned_date': a.assigned_date if hasattr(a, 'assigned_date') else None,
+            'has_submission': TestResult.objects.filter(student=student, test=test, submitted_at__gte=a.assigned_date).exists(),
             'batch_id': a.batch_id,
             'batch_number': a.batch.batch_number if a.batch else '',
             'course_name': test.course.course_name if test.course else (a.batch.course_name.course_name if a.batch and a.batch.course_name else ''),
@@ -13508,7 +13574,9 @@ def student_take_test(request, test_id):
             return Response({'error': 'This test is available only during the assigned batch time window.'}, status=400)
         
         # ? ONE TIME ATTEMPT - Check if already taken
-        if TestResult.objects.filter(student=student, test=test).exists():
+        open_assignments = [assignment for assignment in assignments if assignment_is_open(assignment)]
+        assignment = max(open_assignments, key=lambda item: item.assigned_date)
+        if TestResult.objects.filter(student=student, test=test, submitted_at__gte=assignment.assigned_date).exists():
             return Response({'error': 'You have already taken this test. Only one attempt allowed.'}, status=400)
         
         questions = Question.objects.filter(test=test)
@@ -13536,6 +13604,7 @@ def student_take_test(request, test_id):
             result = TestResult.objects.create(
                 student=student,
                 test=test,
+                assignment=assignment,
                 score=0,
                 total_questions=0,
                 percentage=0,
@@ -13603,6 +13672,7 @@ def student_take_test(request, test_id):
         result = TestResult.objects.create(
             student=student,
             test=test,
+            assignment=assignment,
             score=score,
             total_questions=total_questions,
             percentage=percentage
@@ -13732,10 +13802,15 @@ def test_results(request):
     batch_id = request.query_params.get('batch_id')
 
     # -- Only show results for students assigned to THIS staff --
+    staff_batch_ids = Batches.objects.filter(Q(faculty=employee) | Q(trainer_assignments__trainer=employee)).values('id')
+    reassigned_student_ids = ReassignedStudentRecord.objects.filter(
+        Q(previous_trainer=employee) | Q(reassigned_trainer=employee)
+    ).values('student_id')
     results = TestResult.objects.select_related(
         'student', 'test', 'student__assigned_batch', 'test__created_by'
     ).filter(
-        Q(student__assigned_staff=employee) | Q(test__created_by=employee)
+        Q(student__assigned_staff=employee) | Q(test__created_by=employee) |
+        Q(assignment__batch_id__in=staff_batch_ids, student__id__in=reassigned_student_ids)
     ).order_by('-submitted_at')
 
     if batch_id:
@@ -13793,6 +13868,10 @@ def staff_update_test_result_mark(request, result_id):
         result.student.assigned_staff_id == employee.id
         or result.test.created_by_id == employee.id
         or is_admin_user(request.user)
+        or (result.assignment_id and _is_batch_trainer(result.assignment.batch, employee) and
+            ReassignedStudentRecord.objects.filter(student=result.student).filter(
+                Q(previous_trainer=employee) | Q(reassigned_trainer=employee)
+            ).exists())
     )
     if not can_mark:
         return Response({'error': 'Access denied'}, status=403)
@@ -14328,7 +14407,7 @@ def _completion_report_pdf_response(s):
         from reportlab.lib import colors
         from reportlab.lib.styles import ParagraphStyle
         from reportlab.lib.units import mm
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable, Image as RLImage, PageBreak
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable, Image as RLImage
         from reportlab.lib.enums import TA_CENTER
     except Exception as e:
         return Response({'error': str(e)}, status=500)
@@ -14501,7 +14580,6 @@ def _completion_report_pdf_response(s):
         ]))
         return table
 
-    story.append(PageBreak())
     story.append(Paragraph('Session Completion Logsheet', section_style))
     story.append(HRFlowable(width=W, thickness=2, color=TEAL, spaceAfter=6))
     session_rows = report['sessions'] or [['-', 'No archived session records are available for this earlier completion.', '-', '-', '-']]
@@ -14622,7 +14700,6 @@ def download_completion_report(request, student_id):
 def _completion_certificate_response(request, completed_student):
     """Render an already-authorized completed student's certificate PDF."""
     try:
-        import fitz
         from PyPDF2 import PdfReader, PdfWriter
         from reportlab.lib import colors
         from reportlab.lib.utils import ImageReader
@@ -14698,13 +14775,10 @@ def _completion_certificate_response(request, completed_student):
         return Response({'error': 'Certificate template is unavailable. Please contact support.'}, status=500)
 
     try:
-        template_document = fitz.open(str(template_path))
-        template_page = template_document[0]
-        page_width = float(template_page.rect.width)
-        page_height = float(template_page.rect.height)
-        template_pdf = io.BytesIO(template_document.tobytes(garbage=4, deflate=True))
-        template_document.close()
-        base_pdf = PdfReader(template_pdf)
+        base_pdf = PdfReader(io.BytesIO(template_path.read_bytes()))
+        template_page = base_pdf.pages[0]
+        page_width = float(template_page.mediabox.width)
+        page_height = float(template_page.mediabox.height)
         overlay_buffer = io.BytesIO()
         overlay = canvas.Canvas(overlay_buffer, pagesize=(page_width, page_height))
         navy = colors.HexColor('#071640')

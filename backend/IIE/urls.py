@@ -5,6 +5,7 @@ from django.views.static import serve
 from IIE import settings
 from rest_framework_simplejwt.views import TokenRefreshView
 from connect import api_views as v
+from connect import daily_activity
 from connect.api_views import add_fee_payment, admin_fee_payment_requests, create_fee_bill_link, create_fee_payment_request, forgot_password, generate_bill, process_fee_payment_request, reset_password, student_fee_details,admin_fee_list
 
 from connect.api_views import (
@@ -39,6 +40,9 @@ urlpatterns = [
     path('api/student/login-rating/', v.student_weekly_login_rating),
     path('api/student/login-rating/history/', v.student_weekly_login_rating_history),
     path('api/student/challenge/', v.student_challenge_summary),
+    path('api/daily-activity/', daily_activity.challenges),
+    path('api/daily-activity/inbox/', daily_activity.activity_inbox),
+    path('api/daily-activity/<int:pk>/', daily_activity.challenge_detail),
     path('api/student/challenge/sessions/', v.student_challenge_sessions),
     path('api/student/challenge/today/', v.student_challenge_today),
     path('api/student/challenge/day/<int:day_id>/submit/', v.student_challenge_submit_day),

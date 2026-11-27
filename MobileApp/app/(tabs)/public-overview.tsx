@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
-import { Href, useFocusEffect, useRouter } from "expo-router";
+import { Href, Redirect, useFocusEffect, useRouter } from "expo-router";
+import { showPracticeSkillset } from "@/constants/features";
 import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -60,6 +61,9 @@ const bottomNavItems: PublicBottomNavItem[] = [
 ];
 
 export default function PublicOverview() {
+  return showPracticeSkillset ? <PracticeOverview /> : <Redirect href="/welcome" />;
+}
+function PracticeOverview() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);

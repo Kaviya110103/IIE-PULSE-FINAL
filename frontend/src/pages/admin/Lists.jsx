@@ -4,6 +4,7 @@ import api from '../../api/client'
 import { ConfirmModal } from '../../components/common/index.jsx'
 import { useAuth } from '../../context/AuthContext'
 import toast from 'react-hot-toast'
+import SearchableSelect from '../../components/common/SearchableSelect'
 
 // ── Design tokens (match AdminPages) ─────────────────────────────────────────
 const T = {
@@ -300,7 +301,7 @@ const FG = ({ label, required, children, hint }) => (
 )
 
 const Inp = (props) => <input className="ls-input" {...props} />
-const Sel = ({ children, ...props }) => <select className="ls-select" {...props}>{children}</select>
+const Sel = ({ children, ...props }) => <SearchableSelect className="ls-select" {...props}>{children}</SearchableSelect>
 
 // Modal - Normal full page behavior, no animations
 function Modal({ open, onClose, title, children, size = 'lg' }) {
@@ -768,14 +769,14 @@ export function StudentsList({ adminView = true }) {
               <option value="">All Branches</option>
               {branches.map(branch => <option key={branch} value={branch}>{branch}</option>)}
             </select>
-            <select className="ls-select" style={{ width: 150 }} value={batchFilter} onChange={e => setBatchFilter(e.target.value)}>
+            <Sel searchLabel="Search batches" style={{ width: 150 }} value={batchFilter} onChange={e => setBatchFilter(e.target.value)}>
               <option value="">All Batches</option>
               {batchOptions.map(batch => <option key={batch} value={batch}>{batch}</option>)}
-            </select>
-            <select className="ls-select" style={{ width: 160 }} value={courseFilter} onChange={e => setCourseFilter(e.target.value)}>
+            </Sel>
+            <Sel searchLabel="Search courses" style={{ width: 160 }} value={courseFilter} onChange={e => setCourseFilter(e.target.value)}>
               <option value="">All Courses</option>
               {courseOptions.map(course => <option key={course} value={course}>{course}</option>)}
-            </select>
+            </Sel>
             <select className="ls-select" style={{ width: 170 }} value={trainerFilter} onChange={e => setTrainerFilter(e.target.value)}>
               <option value="">All Trainers</option>
               {trainerOptions.map(trainer => <option key={trainer} value={trainer}>{trainer}</option>)}
@@ -1171,6 +1172,7 @@ function StudentForm({ item, publicUser, courses, counselorBranch, onClose, onSa
                 {courseIds.map((courseId, index) => (
                   <div key={index} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     <Sel
+                      integrated
                       value={courseId}
                       onChange={e => updateCourseSelection(index, e.target.value)}
                       required={index === 0}
@@ -2645,14 +2647,14 @@ export function BatchesList({ staffView = false }) {
               <option value="">All Branches</option>
               {branches.map(branch => <option key={branch} value={branch}>{branch}</option>)}
             </select>
-            <select className="ls-select" style={{ width: 150 }} value={batchFilter} onChange={e => setBatchFilter(e.target.value)}>
+            <Sel searchLabel="Search batches" style={{ width: 150 }} value={batchFilter} onChange={e => setBatchFilter(e.target.value)}>
               <option value="">All Batches</option>
               {batchOptions.map(batch => <option key={batch} value={batch}>{batch}</option>)}
-            </select>
-            <select className="ls-select" style={{ width: 170 }} value={courseFilter} onChange={e => setCourseFilter(e.target.value)}>
+            </Sel>
+            <Sel searchLabel="Search courses" style={{ width: 160 }} value={courseFilter} onChange={e => setCourseFilter(e.target.value)}>
               <option value="">All Courses</option>
               {courseOptions.map(course => <option key={course} value={course}>{course}</option>)}
-            </select>
+            </Sel>
             <select className="ls-select" style={{ width: 170 }} value={trainerFilter} onChange={e => setTrainerFilter(e.target.value)}>
               <option value="">All Trainers</option>
               {trainerOptions.map(trainer => <option key={trainer} value={trainer}>{trainer}</option>)}
@@ -2950,7 +2952,7 @@ api.get(url).then(r => setEmps(r.data.results || r.data))
 </Sel>
             </FG>
             <FG label="Course" required>
-              <Sel value={form.course_name} onChange={e => handleCourseChange(e.target.value)} required>
+              <Sel integrated value={form.course_name} onChange={e => handleCourseChange(e.target.value)} required>
                 <option value="" disabled>Select course</option>
                 {courses.map(c => <option key={c.id} value={c.id}>{c.course_name}</option>)}
               </Sel>
